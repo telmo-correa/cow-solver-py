@@ -14,7 +14,8 @@ The Rust "baseline" solver is part of the [CoW Protocol Services repository](htt
 | | Buy orders | ✅ | ✅ | Fixed buy amount, rounding protection |
 | | Limit orders | ✅ | ✅ | With order class support |
 | | Market orders | ✅ | ✅ | Protocol fees only |
-| | Partially fillable | ✅ | ✅ | Rust: binary search; Python: exact partial fills |
+| | Partially fillable (AMM) | ✅ | ❌ | Rust: binary search; Python: all-or-nothing |
+| | Partially fillable (CoW) | ❌ | ✅ | Python-only: partial CoW matching |
 | **Liquidity** | UniswapV2 (constant product) | ✅ | ✅ | 0.3% fee |
 | | UniswapV3 (concentrated) | ⚠️ | ❌ | Requires RPC config |
 | | Balancer V2 weighted | ✅ | ❌ | V0 and V3+ versions |
