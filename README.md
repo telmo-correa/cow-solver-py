@@ -2,6 +2,8 @@
 
 A Python implementation of a CoW Protocol solver for learning and benchmarking.
 
+> **Note:** This is a **work in progress** learning project and is **not intended for production use**. It is being built to explore AI-assisted development and benchmark Python vs Rust performance.
+
 ## Overview
 
 This project implements a solver for [CoW Protocol](https://cow.fi/) batch auctions in Python, with the goal of:
