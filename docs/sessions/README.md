@@ -18,13 +18,14 @@ This directory tracks progress across AI-assisted development sessions.
 | [10](session-10.md) | 2026-01-21 | CoW Matching (Slice 2.1) | Strategy pattern, peer-to-peer settlement |
 | [11](session-11.md) | 2026-01-21 | Buy Order Support | All order type combinations for CoW matching |
 | [12](session-12.md) | 2026-01-21 | Partial CoW + AMM (Slice 2.2) | Composable strategies, partial matching |
+| [13](session-13.md) | 2026-01-21 | AMM Partial Fill Support | Optimal partial fills, outperforms Rust |
 
 ## Current Status
 
 - **Phase 1:** Complete (single-order AMM routing)
-- **Phase 2:** Slice 2.2 complete (partial CoW + AMM)
-- **Tests:** 147 passing
-- **Benchmark:** 7/7 match Rust (shared functionality)
+- **Phase 2:** Slice 2.2 complete (partial CoW + AMM, partial AMM fills)
+- **Tests:** 157 passing
+- **Benchmark:** 7/9 match Rust, 2/9 improvements (Python fills more)
 
 ## Session Template
 

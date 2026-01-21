@@ -14,7 +14,7 @@ The Rust "baseline" solver is part of the [CoW Protocol Services repository](htt
 | | Buy orders | ✅ | ✅ | Fixed buy amount, rounding protection |
 | | Limit orders | ✅ | ✅ | With order class support |
 | | Market orders | ✅ | ✅ | Protocol fees only |
-| | Partially fillable (AMM) | ✅ | ❌ | Rust: binary search; Python: all-or-nothing |
+| | Partially fillable (AMM) | ✅ | ✅ | Rust: binary search; Python: exact calculation (better) |
 | | Partially fillable (CoW) | ❌ | ✅ | Python-only: partial CoW matching |
 | **Liquidity** | UniswapV2 (constant product) | ✅ | ✅ | 0.3% fee |
 | | UniswapV3 (concentrated) | ⚠️ | ❌ | Requires RPC config |
@@ -140,38 +140,47 @@ python scripts/run_benchmarks.py --python-url http://localhost:8000 \
 
 ```
 ============================================================
-CoW Protocol Solver Benchmark
+CoW Protocol Solver Benchmark (HTTP)
 ============================================================
 Auctions directory: tests/fixtures/auctions/benchmark
 Python solver: http://localhost:8000
 Rust solver:   http://localhost:8080
 
-Total auctions: 7
-Successful: 7/7
+Total auctions: 9
+Successful: 9
 
-Python found solutions: 7/7
-Rust found solutions:   7/7
-Solutions match: 7/7 (100%)
+Python found solutions: 9/9
+Rust found solutions:   9/9
 
 Individual Results:
 ------------------------------------------------------------
-  buy_usdc_with_weth (BUY ORDER):
-    Python: OK, Rust: OK, Match: YES
+  buy_usdc_with_weth:
+    Result [✓]: Solutions match
+  usdc_to_dai_multihop:
+    Result [✓]: Solutions match
+  partial_fill_sell:
+    Result [▲]: Python fills 38.7% vs Rust 25.0% (+54.6% improvement)
+  partial_fill_buy:
+    Result [▲]: Python fills 35.6% vs Rust 25.0% (+42.3% improvement)
   usdc_to_weth:
-    Python: OK, Rust: OK, Match: YES
+    Result [✓]: Solutions match
   weth_to_dai:
-    Python: OK, Rust: OK, Match: YES
+    Result [✓]: Solutions match
   weth_to_usdc:
-    Python: OK, Rust: OK, Match: YES
+    Result [✓]: Solutions match
   large_weth_to_usdc:
-    Python: OK, Rust: OK, Match: YES
-  usdc_to_dai_multihop (2-hop):
-    Python: OK, Rust: OK, Match: YES
-  dai_to_usdc_multihop (2-hop):
-    Python: OK, Rust: OK, Match: YES
+    Result [✓]: Solutions match
+  dai_to_usdc_multihop:
+    Result [✓]: Solutions match
+
+Solution Comparison Summary:
+  Matching:     7/9
+  Improvements: 2/9 (Python better)
+  Regressions:  0/9
+  OK: All differences are improvements over Rust.
 ```
 
-**Summary**: Both solvers produce identical solutions for all 7 test cases, including buy orders and multi-hop routes. Python is approximately 2x slower than Rust.
+**Summary**: Python matches Rust on 7 test cases and **outperforms** Rust on 2 partial fill cases. For partially fillable orders, Python calculates the exact maximum fill (38.7%, 35.6%) while Rust uses binary search fractions (25%). Python is approximately 2x slower than Rust.
 
 ### Python-Only Features
 

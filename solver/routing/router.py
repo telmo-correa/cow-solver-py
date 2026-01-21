@@ -4,12 +4,14 @@ This module handles routing orders through AMM pools and building solutions
 for the CoW Protocol settlement.
 
 Supports:
-- Single-order auctions (multi-order not yet implemented)
+- Single-order auctions and multi-order auctions
 - Direct and multi-hop routing through UniswapV2-style pools
 - Both sell orders (exact input) and buy orders (exact output)
+- Partial fills for partially fillable orders (single-hop only)
 
-Limitations:
-- Partially fillable orders are executed fully or not at all
+For partially fillable orders, when full fill isn't possible due to
+insufficient liquidity, the router calculates the maximum partial fill
+that still satisfies the order's limit price.
 """
 
 from collections.abc import Callable
@@ -207,6 +209,9 @@ class SingleOrderRouter:
         For sell orders:
         - sell_amount is the exact amount to sell
         - buy_amount is the minimum acceptable output
+
+        If the order is partially fillable and full fill fails, attempts
+        to find the maximum partial fill that satisfies the limit price.
         """
         swap_result = self.amm.simulate_swap(
             pool=pool,
@@ -216,6 +221,10 @@ class SingleOrderRouter:
 
         # Check if output meets minimum
         if swap_result.amount_out < min_buy_amount:
+            # Full fill fails - try partial fill if allowed
+            if order.partially_fillable:
+                return self._try_partial_sell_order(order, pool, sell_amount, min_buy_amount)
+
             return RoutingResult(
                 order=order,
                 amount_in=sell_amount,
@@ -244,6 +253,101 @@ class SingleOrderRouter:
             success=True,
         )
 
+    def _try_partial_sell_order(
+        self,
+        order: Order,
+        pool: UniswapV2Pool,
+        sell_amount: int,
+        min_buy_amount: int,
+    ) -> RoutingResult:
+        """Try to find maximum partial fill for a sell order.
+
+        Calculates the maximum input amount that satisfies the order's
+        limit price and simulates the swap at that amount.
+
+        Args:
+            order: The order to route
+            pool: The pool to swap through
+            sell_amount: Original sell amount
+            min_buy_amount: Minimum buy amount for the full order
+
+        Returns:
+            RoutingResult with the partial fill, or failure if no partial possible
+        """
+        reserve_in, reserve_out = pool.get_reserves(order.sell_token)
+
+        # Calculate maximum partial fill that satisfies limit price
+        max_input = self.amm.max_fill_sell_order(
+            reserve_in=reserve_in,
+            reserve_out=reserve_out,
+            sell_amount=sell_amount,
+            buy_amount=min_buy_amount,
+            fee_multiplier=pool.fee_multiplier,
+        )
+
+        if max_input <= 0:
+            return RoutingResult(
+                order=order,
+                amount_in=0,
+                amount_out=0,
+                pool=pool,
+                success=False,
+                error="Pool rate worse than limit price, no partial fill possible",
+            )
+
+        # Simulate swap at partial amount
+        swap_result = self.amm.simulate_swap(
+            pool=pool,
+            token_in=order.sell_token,
+            amount_in=max_input,
+        )
+
+        # Verify the partial fill satisfies the limit (defensive check)
+        # Limit: output/input >= min_buy_amount/sell_amount
+        if swap_result.amount_out * sell_amount < min_buy_amount * max_input:
+            logger.warning(
+                "partial_fill_limit_check_failed",
+                order_uid=order.uid[:18] + "...",
+                max_input=max_input,
+                amount_out=swap_result.amount_out,
+                expected_min=min_buy_amount * max_input // sell_amount,
+            )
+            return RoutingResult(
+                order=order,
+                amount_in=max_input,
+                amount_out=swap_result.amount_out,
+                pool=pool,
+                success=False,
+                error="Partial fill calculation error",
+            )
+
+        logger.info(
+            "partial_fill_sell_order",
+            order_uid=order.uid[:18] + "...",
+            original_sell=sell_amount,
+            partial_sell=max_input,
+            fill_ratio=f"{max_input * 100 // sell_amount}%",
+            amount_out=swap_result.amount_out,
+        )
+
+        hop = HopResult(
+            pool=pool,
+            input_token=normalize_address(order.sell_token),
+            output_token=normalize_address(order.buy_token),
+            amount_in=max_input,
+            amount_out=swap_result.amount_out,
+        )
+
+        return RoutingResult(
+            order=order,
+            amount_in=max_input,
+            amount_out=swap_result.amount_out,
+            pool=pool,
+            pools=[pool],
+            hops=[hop],
+            success=True,
+        )
+
     def _route_buy_order(
         self,
         order: Order,
@@ -256,6 +360,9 @@ class SingleOrderRouter:
         For buy orders:
         - buy_amount is the exact amount to receive
         - sell_amount is the maximum willing to pay
+
+        If the order is partially fillable and full fill fails, attempts
+        to find the maximum partial fill that satisfies the limit price.
         """
         swap_result = self.amm.simulate_swap_exact_output(
             pool=pool,
@@ -265,6 +372,10 @@ class SingleOrderRouter:
 
         # Check if required input exceeds maximum
         if swap_result.amount_in > max_sell_amount:
+            # Full fill fails - try partial fill if allowed
+            if order.partially_fillable:
+                return self._try_partial_buy_order(order, pool, max_sell_amount, buy_amount)
+
             return RoutingResult(
                 order=order,
                 amount_in=swap_result.amount_in,
@@ -287,6 +398,101 @@ class SingleOrderRouter:
             order=order,
             amount_in=swap_result.amount_in,
             amount_out=buy_amount,
+            pool=pool,
+            pools=[pool],
+            hops=[hop],
+            success=True,
+        )
+
+    def _try_partial_buy_order(
+        self,
+        order: Order,
+        pool: UniswapV2Pool,
+        max_sell_amount: int,
+        buy_amount: int,
+    ) -> RoutingResult:
+        """Try to find maximum partial fill for a buy order.
+
+        Calculates the maximum output amount that satisfies the order's
+        limit price and simulates the swap for that amount.
+
+        Args:
+            order: The order to route
+            pool: The pool to swap through
+            max_sell_amount: Maximum input the user is willing to pay
+            buy_amount: Desired output amount for the full order
+
+        Returns:
+            RoutingResult with the partial fill, or failure if no partial possible
+        """
+        reserve_in, reserve_out = pool.get_reserves(order.sell_token)
+
+        # Calculate maximum partial fill that satisfies limit price
+        max_output = self.amm.max_fill_buy_order(
+            reserve_in=reserve_in,
+            reserve_out=reserve_out,
+            sell_amount=max_sell_amount,
+            buy_amount=buy_amount,
+            fee_multiplier=pool.fee_multiplier,
+        )
+
+        if max_output <= 0:
+            return RoutingResult(
+                order=order,
+                amount_in=0,
+                amount_out=0,
+                pool=pool,
+                success=False,
+                error="Pool rate worse than limit price, no partial fill possible",
+            )
+
+        # Simulate swap for partial output
+        swap_result = self.amm.simulate_swap_exact_output(
+            pool=pool,
+            token_in=order.sell_token,
+            amount_out=max_output,
+        )
+
+        # Verify the partial fill satisfies the limit (defensive check)
+        # Limit: input/output <= max_sell_amount/buy_amount
+        if swap_result.amount_in * buy_amount > max_sell_amount * max_output:
+            logger.warning(
+                "partial_fill_limit_check_failed",
+                order_uid=order.uid[:18] + "...",
+                max_output=max_output,
+                amount_in=swap_result.amount_in,
+                expected_max=max_sell_amount * max_output // buy_amount,
+            )
+            return RoutingResult(
+                order=order,
+                amount_in=swap_result.amount_in,
+                amount_out=max_output,
+                pool=pool,
+                success=False,
+                error="Partial fill calculation error",
+            )
+
+        logger.info(
+            "partial_fill_buy_order",
+            order_uid=order.uid[:18] + "...",
+            original_buy=buy_amount,
+            partial_buy=max_output,
+            fill_ratio=f"{max_output * 100 // buy_amount}%",
+            amount_in=swap_result.amount_in,
+        )
+
+        hop = HopResult(
+            pool=pool,
+            input_token=normalize_address(order.sell_token),
+            output_token=normalize_address(order.buy_token),
+            amount_in=swap_result.amount_in,
+            amount_out=max_output,
+        )
+
+        return RoutingResult(
+            order=order,
+            amount_in=swap_result.amount_in,
+            amount_out=max_output,
             pool=pool,
             pools=[pool],
             hops=[hop],

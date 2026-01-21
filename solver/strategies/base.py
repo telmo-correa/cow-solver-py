@@ -67,6 +67,20 @@ class OrderFill:
         else:
             return self.buy_filled
 
+    @property
+    def fill_ratio(self) -> float:
+        """Get the fill ratio as a decimal (0.0 to 1.0).
+
+        For sell orders: sell_filled / sell_amount
+        For buy orders: buy_filled / buy_amount
+        """
+        if self.order.is_sell_order:
+            total = int(self.order.sell_amount)
+            return self.sell_filled / total if total > 0 else 0.0
+        else:
+            total = int(self.order.buy_amount)
+            return self.buy_filled / total if total > 0 else 0.0
+
     def get_remainder_order(self) -> "Order | None":
         """Create a synthetic order for the unfilled portion.
 

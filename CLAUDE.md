@@ -100,8 +100,9 @@ cow-solver-py/
 - ✅ **CoW matching** (2-order peer-to-peer settlement, all order type combinations)
 - ✅ **Composable strategies** (StrategyResult, OrderFill for partial matching)
 - ✅ **Partial CoW + AMM** (partial CoW match with AMM remainder routing)
+- ✅ **AMM partial fills** (exact calculation outperforms Rust's binary search)
 
-**Total: 147 passing tests** (unit + integration)
+**Total: 157 passing tests** (unit + integration)
 
 ### Rust Baseline Solver Limitations
 

@@ -139,6 +139,139 @@ class UniswapV2(AMM):
 
         return (numerator // denominator) + 1
 
+    def max_fill_sell_order(
+        self,
+        reserve_in: int,
+        reserve_out: int,
+        sell_amount: int,
+        buy_amount: int,
+        fee_multiplier: int = 997,
+    ) -> int:
+        """Calculate maximum input for a sell order that satisfies the limit price.
+
+        For a sell order, the user wants to sell tokens and receive at least
+        a minimum amount. This calculates the maximum input amount where the
+        output rate still satisfies the limit: output/input >= buy_amount/sell_amount.
+
+        The formula is derived from:
+        - output(x) = (x * fee * R_out) / (R_in * 1000 + x * fee)
+        - Constraint: output(x) / x >= buy_amount / sell_amount
+        - Solving: x <= R_out * sell_amount / buy_amount - R_in * 1000 / fee
+
+        Args:
+            reserve_in: Pool reserve of input token
+            reserve_out: Pool reserve of output token
+            sell_amount: Order's sell amount (used for limit rate)
+            buy_amount: Order's minimum buy amount (used for limit rate)
+            fee_multiplier: Fee multiplier (default 997 for 0.3% fee)
+
+        Returns:
+            Maximum input amount that satisfies the limit, or 0 if impossible
+        """
+        if reserve_in <= 0 or reserve_out <= 0:
+            return 0
+        if buy_amount <= 0:
+            return sell_amount  # No limit constraint, can sell full amount
+        if sell_amount <= 0:
+            return 0
+
+        # max_input = R_out * sell_amount / buy_amount - R_in * 1000 / fee
+        # Use integer math to avoid precision loss
+        # max_input = (R_out * sell_amount * fee - R_in * 1000 * buy_amount) / (buy_amount * fee)
+        numerator = reserve_out * sell_amount * fee_multiplier - reserve_in * 1000 * buy_amount
+        denominator = buy_amount * fee_multiplier
+
+        if numerator <= 0:
+            return 0  # Pool rate is worse than limit rate
+
+        max_input = numerator // denominator
+        max_input = min(max_input, sell_amount)
+
+        # Verify and adjust for integer rounding in get_amount_out
+        # Use binary search to find the exact maximum that satisfies the constraint
+        if max_input > 0:
+            actual_output = self.get_amount_out(max_input, reserve_in, reserve_out, fee_multiplier)
+            # Check: actual_output * sell_amount >= buy_amount * max_input
+            if actual_output * sell_amount < buy_amount * max_input:
+                # Binary search for the largest valid input
+                lo, hi = 0, max_input
+                while lo < hi:
+                    mid = (lo + hi + 1) // 2
+                    mid_output = self.get_amount_out(mid, reserve_in, reserve_out, fee_multiplier)
+                    if mid_output * sell_amount >= buy_amount * mid:
+                        lo = mid
+                    else:
+                        hi = mid - 1
+                max_input = lo
+
+        return max_input
+
+    def max_fill_buy_order(
+        self,
+        reserve_in: int,
+        reserve_out: int,
+        sell_amount: int,
+        buy_amount: int,
+        fee_multiplier: int = 997,
+    ) -> int:
+        """Calculate maximum output for a buy order that satisfies the limit price.
+
+        For a buy order, the user wants to receive a specific amount and is
+        willing to pay up to a maximum. This calculates the maximum output
+        where the input rate still satisfies the limit: input/output <= sell_amount/buy_amount.
+
+        The formula is derived from:
+        - input(y) = (y * R_in * 1000) / (fee * (R_out - y))
+        - Constraint: input(y) / y <= sell_amount / buy_amount
+        - Solving: y <= R_out - R_in * 1000 * buy_amount / (fee * sell_amount)
+
+        Args:
+            reserve_in: Pool reserve of input token
+            reserve_out: Pool reserve of output token
+            sell_amount: Order's maximum sell amount (used for limit rate)
+            buy_amount: Order's desired buy amount (used for limit rate)
+            fee_multiplier: Fee multiplier (default 997 for 0.3% fee)
+
+        Returns:
+            Maximum output amount that satisfies the limit, or 0 if impossible
+        """
+        if reserve_in <= 0 or reserve_out <= 0:
+            return 0
+        if sell_amount <= 0:
+            return 0  # No budget to spend
+        if buy_amount <= 0:
+            return buy_amount  # No output desired
+
+        # max_output = R_out - R_in * 1000 * buy_amount / (fee * sell_amount)
+        # Use integer math: max_output = (R_out * fee * sell_amount - R_in * 1000 * buy_amount) / (fee * sell_amount)
+        numerator = reserve_out * fee_multiplier * sell_amount - reserve_in * 1000 * buy_amount
+        denominator = fee_multiplier * sell_amount
+
+        if numerator <= 0:
+            return 0  # Pool rate is worse than limit rate
+
+        max_output = numerator // denominator
+        max_output = min(max_output, buy_amount)
+
+        # Verify and adjust for integer rounding in get_amount_in
+        # Use binary search to find the exact maximum that satisfies the constraint
+        if max_output > 0:
+            actual_input = self.get_amount_in(max_output, reserve_in, reserve_out, fee_multiplier)
+            # Check: actual_input * buy_amount <= sell_amount * max_output
+            if actual_input * buy_amount > sell_amount * max_output:
+                # Binary search for the largest valid output
+                lo, hi = 0, max_output
+                while lo < hi:
+                    mid = (lo + hi + 1) // 2
+                    mid_input = self.get_amount_in(mid, reserve_in, reserve_out, fee_multiplier)
+                    if mid_input * buy_amount <= sell_amount * mid:
+                        lo = mid
+                    else:
+                        hi = mid - 1
+                max_output = lo
+
+        return max_output
+
     def simulate_swap(
         self,
         pool: UniswapV2Pool,

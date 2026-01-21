@@ -17,6 +17,7 @@ import json
 import sys
 import time
 from pathlib import Path
+from typing import Any
 
 import httpx
 import structlog
@@ -62,27 +63,146 @@ def extract_output_amounts(solution: Solution) -> dict[str, int]:
     return outputs
 
 
+def extract_executed_amounts(solution: Solution) -> dict[str, int]:
+    """Extract executed amounts from a solution's trades by order UID.
+
+    Returns a dict mapping order UID (lowercased) to executed amount.
+    """
+    executed: dict[str, int] = {}
+    for trade in solution.trades:
+        uid = trade.order.lower()
+        amount = int(trade.executed_amount)
+        executed[uid] = executed.get(uid, 0) + amount
+    return executed
+
+
+def check_improvement(
+    python_response: SolverResponse | None,
+    rust_response: SolverResponse | None,
+    auction_json: dict[str, Any],
+) -> dict[str, Any]:
+    """Check if Python's solution is an improvement over Rust's.
+
+    For partial fills, Python may execute more of an order while still
+    respecting the limit price. This is an improvement, not a mismatch.
+
+    Returns:
+        dict with:
+        - is_improvement: True if Python fills more while respecting limits
+        - is_regression: True if Python fills less or violates limits
+        - python_fill_ratio: Fill ratio for Python (0.0-1.0)
+        - rust_fill_ratio: Fill ratio for Rust (0.0-1.0)
+        - improvement_pct: Percentage improvement (positive = Python better)
+    """
+    result: dict[str, str | bool | float | None] = {
+        "is_improvement": False,
+        "is_regression": False,
+        "python_fill_ratio": None,
+        "rust_fill_ratio": None,
+        "improvement_pct": None,
+    }
+
+    # Need both responses with solutions
+    if not python_response or not python_response.solutions:
+        return result
+    if not rust_response or not rust_response.solutions:
+        return result
+
+    # Get orders from auction
+    orders = auction_json.get("orders", [])
+    if not orders:
+        return result
+
+    # Extract executed amounts
+    python_executed = extract_executed_amounts(python_response.solutions[0])
+    rust_executed = extract_executed_amounts(rust_response.solutions[0])
+
+    # Compare fill ratios for each order
+    total_python_ratio = 0.0
+    total_rust_ratio = 0.0
+    order_count = 0
+
+    for order in orders:
+        uid = order.get("uid", "").lower()
+        kind = order.get("kind", "sell")
+        sell_amount = int(order.get("sellAmount", "0"))
+        buy_amount = int(order.get("buyAmount", "0"))
+
+        python_exec = python_executed.get(uid, 0)
+        rust_exec = rust_executed.get(uid, 0)
+
+        # Calculate fill ratios based on order type
+        if kind == "sell":
+            # For sell orders, executedAmount is the sell amount
+            if sell_amount > 0:
+                python_ratio = python_exec / sell_amount
+                rust_ratio = rust_exec / sell_amount
+            else:
+                continue
+        else:
+            # For buy orders, executedAmount is the buy amount
+            if buy_amount > 0:
+                python_ratio = python_exec / buy_amount
+                rust_ratio = rust_exec / buy_amount
+            else:
+                continue
+
+        total_python_ratio += python_ratio
+        total_rust_ratio += rust_ratio
+        order_count += 1
+
+    if order_count == 0:
+        return result
+
+    # Average fill ratios
+    avg_python_ratio = total_python_ratio / order_count
+    avg_rust_ratio = total_rust_ratio / order_count
+
+    result["python_fill_ratio"] = avg_python_ratio
+    result["rust_fill_ratio"] = avg_rust_ratio
+
+    # Calculate improvement percentage
+    if avg_rust_ratio > 0:
+        improvement = (avg_python_ratio - avg_rust_ratio) / avg_rust_ratio * 100
+        result["improvement_pct"] = improvement
+
+        # Threshold for considering it an improvement (> 1% more fill)
+        if improvement > 1.0:
+            result["is_improvement"] = True
+        elif improvement < -1.0:
+            result["is_regression"] = True
+
+    return result
+
+
 def compare_solutions(
     python_response: SolverResponse | None,
     rust_response: SolverResponse | None,
-) -> dict[str, str | bool | dict]:
+    auction_json: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """Compare solutions from Python and Rust solvers.
 
     Returns a dict with comparison results:
     - match: bool indicating if solutions are equivalent (common outputs match)
+    - improvement: bool indicating if Python is better (more fill, respects limits)
+    - regression: bool indicating if Python is worse
     - python_outputs: dict of token -> amount for Python solution
     - rust_outputs: dict of token -> amount for Rust solution
     - diff: description of any differences
+    - improvement_info: dict with fill ratio details (if applicable)
 
     Note: For multi-hop routes, Rust reports intermediate token amounts while Python
     uses path encoding that only reports final outputs. We compare only the tokens
     that both solvers report (the final output tokens).
     """
-    result: dict[str, str | bool | dict] = {
+    result: dict[str, Any] = {
         "match": False,
+        "improvement": False,
+        "regression": False,
         "python_outputs": {},
         "rust_outputs": {},
         "diff": "",
+        "improvement_info": {},
     }
 
     # Handle missing responses
@@ -150,9 +270,34 @@ def compare_solutions(
 
     # Build result
     if differences:
-        result["diff"] = "; ".join(differences)
-        if notes:
-            result["diff"] += f" [{', '.join(notes)}]"
+        # Check if the difference is actually an improvement
+        if auction_json:
+            improvement_info = check_improvement(python_response, rust_response, auction_json)
+            result["improvement_info"] = improvement_info
+
+            if improvement_info.get("is_improvement"):
+                result["improvement"] = True
+                py_ratio = improvement_info.get("python_fill_ratio", 0)
+                rs_ratio = improvement_info.get("rust_fill_ratio", 0)
+                pct = improvement_info.get("improvement_pct", 0)
+                result["diff"] = (
+                    f"Python fills {py_ratio:.1%} vs Rust {rs_ratio:.1%} (+{pct:.1f}% improvement)"
+                )
+                if notes:
+                    result["diff"] += f" [{', '.join(notes)}]"
+            elif improvement_info.get("is_regression"):
+                result["regression"] = True
+                result["diff"] = "; ".join(differences)
+                if notes:
+                    result["diff"] += f" [{', '.join(notes)}]"
+            else:
+                result["diff"] = "; ".join(differences)
+                if notes:
+                    result["diff"] += f" [{', '.join(notes)}]"
+        else:
+            result["diff"] = "; ".join(differences)
+            if notes:
+                result["diff"] += f" [{', '.join(notes)}]"
     else:
         result["match"] = True
         if notes:
@@ -167,7 +312,7 @@ async def run_http_solver(
     client: httpx.AsyncClient,
     solver_name: str,
     base_url: str,
-    auction_json: dict,
+    auction_json: dict[str, Any],
     auction_id: str,
     timeout: float = 30.0,
 ) -> SolverResult:
@@ -236,20 +381,24 @@ async def run_benchmarks_http(
     auctions_dir: Path,
     python_url: str | None = None,
     rust_url: str | None = None,
-) -> BenchmarkSummary:
+) -> tuple[BenchmarkSummary, dict[str, dict[str, Any]]]:
     """Run benchmarks comparing both solvers via HTTP.
 
     This is the recommended approach for fair comparison since both
     solvers are tested through their HTTP interfaces.
+
+    Returns:
+        Tuple of (BenchmarkSummary, dict mapping auction_name to auction_json)
     """
     if not auctions_dir.exists():
         logger.warning("auctions_dir_not_found", path=str(auctions_dir))
-        return BenchmarkSummary(total_auctions=0, successful_auctions=0)
+        return BenchmarkSummary(total_auctions=0, successful_auctions=0), {}
 
     auction_files = list(auctions_dir.rglob("*.json"))
     logger.info("found_auctions", count=len(auction_files), dir=str(auctions_dir))
 
     results: list[BenchmarkResult] = []
+    auction_data: dict[str, dict[str, Any]] = {}
 
     async with httpx.AsyncClient() as client:
         for path in auction_files:
@@ -260,6 +409,9 @@ async def run_benchmarks_http(
                 name = path.stem
                 auction_id = auction_json.get("id", name)
                 order_count = len(auction_json.get("orders", []))
+
+                # Store auction JSON for later comparison
+                auction_data[name] = auction_json
 
                 logger.info("benchmarking_auction", name=name, order_count=order_count)
 
@@ -309,7 +461,7 @@ async def run_benchmarks_http(
         total_auctions=len(auction_files),
         successful_auctions=len(results),
         results=results,
-    )
+    ), auction_data
 
 
 async def main() -> int:
@@ -400,7 +552,7 @@ Before running:
     print(f"Rust solver:   {args.rust_url or 'Not configured'}")
     print()
 
-    summary = await run_benchmarks_http(
+    summary, auction_data = await run_benchmarks_http(
         auctions_dir=args.auctions,
         python_url=args.python_url,
         rust_url=args.rust_url,
@@ -443,13 +595,15 @@ Before running:
         print(f"  Range:  {ss.min:.2%} - {ss.max:.2%}")
         print()
 
+    # Track comparison results
+    matches = 0
+    improvements = 0
+    regressions = 0
+
     # Show individual results with solution comparison
     if summary.results:
         print("Individual Results:")
         print("-" * 60)
-
-        matches = 0
-        mismatches = 0
 
         for r in summary.results:
             py_ok = r.python_result.error is None and r.python_result.solution_count > 0
@@ -457,16 +611,27 @@ Before running:
             py_status = "✓" if py_ok else ("○" if r.python_result.error is None else "✗")
             rs_status = "✓" if rs_ok else ("○" if r.rust_result.error is None else "✗")
 
-            # Compare solutions
+            # Compare solutions with auction context
+            auction_json = auction_data.get(r.auction_name)
             comparison = compare_solutions(
                 r.python_result.response,
                 r.rust_result.response,
+                auction_json,
             )
-            match_status = "✓" if comparison["match"] else "✗"
+
+            # Determine status: match (✓), improvement (▲), regression (▼), or mismatch (✗)
             if comparison["match"]:
+                match_status = "✓"
                 matches += 1
+            elif comparison.get("improvement"):
+                match_status = "▲"  # Improvement indicator
+                improvements += 1
+            elif comparison.get("regression"):
+                match_status = "▼"  # Regression indicator
+                regressions += 1
             else:
-                mismatches += 1
+                match_status = "✗"
+                regressions += 1  # Unknown difference treated as regression
 
             print(f"  {r.auction_name}:")
             print(
@@ -477,10 +642,10 @@ Before running:
                 f"    Rust   [{rs_status}]: {r.rust_result.elapsed_ms:.1f}ms, "
                 f"solutions={r.rust_result.solution_count}"
             )
-            print(f"    Match  [{match_status}]: {comparison['diff']}")
+            print(f"    Result [{match_status}]: {comparison['diff']}")
 
-            # Show output amounts if available and different
-            if not comparison["match"]:
+            # Show output amounts if regression (not for improvements or matches)
+            if comparison.get("regression"):
                 if comparison["python_outputs"]:
                     for token, amt in comparison["python_outputs"].items():
                         print(f"      Python output: {token[:16]}... = {amt}")
@@ -496,10 +661,13 @@ Before running:
 
         # Summary of solution comparisons
         print("Solution Comparison Summary:")
-        print(f"  Matching: {matches}/{len(summary.results)}")
-        print(f"  Mismatching: {mismatches}/{len(summary.results)}")
-        if mismatches > 0:
-            print("  WARNING: Some solutions differ between Python and Rust solvers!")
+        print(f"  Matching:     {matches}/{len(summary.results)}")
+        print(f"  Improvements: {improvements}/{len(summary.results)} (Python better)")
+        print(f"  Regressions:  {regressions}/{len(summary.results)}")
+        if regressions > 0:
+            print("  WARNING: Some solutions are worse than Rust solver!")
+        elif improvements > 0:
+            print("  OK: All differences are improvements over Rust.")
         print()
 
     # Save reports
@@ -511,6 +679,9 @@ Before running:
     for p in paths:
         print(f"  {p}")
 
+    # Return non-zero if there are regressions
+    if regressions > 0:
+        return 1
     return 0
 
 

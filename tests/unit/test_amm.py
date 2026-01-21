@@ -418,3 +418,178 @@ class TestSwapExactOutputEncoding:
                 amount_in_max=2000,
                 recipient="0x9008D19f58AAbD9eD0D60971565AA8510560ab41",
             )
+
+
+class TestPartialFillCalculation:
+    """Tests for partial fill calculation methods."""
+
+    def test_max_fill_sell_order_full_fill_possible(self):
+        """When full fill is possible, return full sell amount."""
+        amm = UniswapV2()
+        # Pool: 100 ETH / 250k USDC
+        reserve_in = 100 * 10**18
+        reserve_out = 250_000 * 10**6
+
+        # Order: sell 1 ETH, want at least 2400 USDC
+        sell_amount = 1 * 10**18
+        buy_amount = 2400 * 10**6
+
+        max_input = amm.max_fill_sell_order(reserve_in, reserve_out, sell_amount, buy_amount)
+
+        # Pool can provide ~2467 USDC for 1 ETH, so full fill is possible
+        assert max_input == sell_amount
+
+    def test_max_fill_sell_order_partial_fill(self):
+        """When full fill impossible, return maximum partial that satisfies limit."""
+        amm = UniswapV2()
+        # Small pool: 10 ETH / 25k USDC (same rate as large pool)
+        reserve_in = 10 * 10**18
+        reserve_out = 25_000 * 10**6
+
+        # Order: sell 5 ETH, want at least 2400 USDC per ETH (12000 USDC total)
+        # At 5 ETH input, slippage makes rate < 2400/ETH
+        sell_amount = 5 * 10**18
+        buy_amount = 12_000 * 10**6
+
+        max_input = amm.max_fill_sell_order(reserve_in, reserve_out, sell_amount, buy_amount)
+
+        # Should return partial fill amount
+        assert max_input > 0
+        assert max_input < sell_amount
+
+        # Verify the partial fill satisfies the limit rate
+        actual_output = amm.get_amount_out(max_input, reserve_in, reserve_out)
+        # output/input >= buy_amount/sell_amount
+        assert actual_output * sell_amount >= buy_amount * max_input
+
+    def test_max_fill_sell_order_impossible(self):
+        """When pool rate is worse than limit, return 0."""
+        amm = UniswapV2()
+        # Pool: 100 ETH / 200k USDC (rate: 2000 USDC/ETH)
+        reserve_in = 100 * 10**18
+        reserve_out = 200_000 * 10**6
+
+        # Order: sell 1 ETH, want at least 2500 USDC (limit rate > pool rate)
+        sell_amount = 1 * 10**18
+        buy_amount = 2500 * 10**6
+
+        max_input = amm.max_fill_sell_order(reserve_in, reserve_out, sell_amount, buy_amount)
+
+        # Pool can only provide ~1970 USDC/ETH after fee, can't meet 2500
+        assert max_input == 0
+
+    def test_max_fill_sell_order_edge_cases(self):
+        """Edge cases for max fill sell order."""
+        amm = UniswapV2()
+
+        # Zero reserves
+        assert amm.max_fill_sell_order(0, 100, 100, 50) == 0
+        assert amm.max_fill_sell_order(100, 0, 100, 50) == 0
+
+        # Zero buy amount (no limit) returns full sell amount
+        assert amm.max_fill_sell_order(100, 100, 100, 0) == 100
+
+        # Zero sell amount
+        assert amm.max_fill_sell_order(100, 100, 0, 50) == 0
+
+    def test_max_fill_buy_order_full_fill_possible(self):
+        """When full fill is possible, return full buy amount."""
+        amm = UniswapV2()
+        # Pool: 100 ETH / 250k USDC
+        reserve_in = 250_000 * 10**6
+        reserve_out = 100 * 10**18
+
+        # Order: buy 1 ETH, willing to pay up to 2600 USDC
+        buy_amount = 1 * 10**18
+        sell_amount = 2600 * 10**6
+
+        max_output = amm.max_fill_buy_order(reserve_in, reserve_out, sell_amount, buy_amount)
+
+        # Pool requires ~2533 USDC for 1 ETH, which is under 2600 limit
+        assert max_output == buy_amount
+
+    def test_max_fill_buy_order_partial_fill(self):
+        """When full fill impossible, return maximum partial that satisfies limit."""
+        amm = UniswapV2()
+        # Small pool: 25k USDC / 10 ETH
+        reserve_in = 25_000 * 10**6
+        reserve_out = 10 * 10**18
+
+        # Order: buy 5 ETH, willing to pay up to 2600 USDC per ETH (13000 USDC total)
+        # At 5 ETH output, slippage makes rate > 2600/ETH
+        buy_amount = 5 * 10**18
+        sell_amount = 13_000 * 10**6
+
+        max_output = amm.max_fill_buy_order(reserve_in, reserve_out, sell_amount, buy_amount)
+
+        # Should return partial fill amount
+        assert max_output > 0
+        assert max_output < buy_amount
+
+        # Verify the partial fill satisfies the limit rate
+        actual_input = amm.get_amount_in(max_output, reserve_in, reserve_out)
+        # input/output <= sell_amount/buy_amount
+        assert actual_input * buy_amount <= sell_amount * max_output
+
+    def test_max_fill_buy_order_impossible(self):
+        """When pool rate is worse than limit, return 0."""
+        amm = UniswapV2()
+        # Pool: 200k USDC / 100 ETH (rate: 2000 USDC/ETH)
+        reserve_in = 200_000 * 10**6
+        reserve_out = 100 * 10**18
+
+        # Order: buy 1 ETH, willing to pay up to 1900 USDC (limit rate < pool rate)
+        buy_amount = 1 * 10**18
+        sell_amount = 1900 * 10**6
+
+        max_output = amm.max_fill_buy_order(reserve_in, reserve_out, sell_amount, buy_amount)
+
+        # Pool requires ~2030 USDC/ETH after fee, can't meet 1900 limit
+        assert max_output == 0
+
+    def test_max_fill_buy_order_edge_cases(self):
+        """Edge cases for max fill buy order."""
+        amm = UniswapV2()
+
+        # Zero reserves
+        assert amm.max_fill_buy_order(0, 100, 100, 50) == 0
+        assert amm.max_fill_buy_order(100, 0, 100, 50) == 0
+
+        # Zero sell amount (no budget)
+        assert amm.max_fill_buy_order(100, 100, 0, 50) == 0
+
+    def test_partial_fill_consistency_sell(self):
+        """Partial fill for sell order should produce valid output."""
+        amm = UniswapV2()
+        reserve_in = 50 * 10**18
+        reserve_out = 125_000 * 10**6
+
+        sell_amount = 10 * 10**18
+        buy_amount = 24_000 * 10**6  # 2400 USDC/ETH limit
+
+        max_input = amm.max_fill_sell_order(reserve_in, reserve_out, sell_amount, buy_amount)
+
+        if max_input > 0:
+            output = amm.get_amount_out(max_input, reserve_in, reserve_out)
+            # The actual rate should be at or above the limit rate
+            actual_rate = output / max_input if max_input > 0 else 0
+            limit_rate = buy_amount / sell_amount
+            assert actual_rate >= limit_rate * 0.9999  # Allow tiny rounding
+
+    def test_partial_fill_consistency_buy(self):
+        """Partial fill for buy order should produce valid input."""
+        amm = UniswapV2()
+        reserve_in = 125_000 * 10**6
+        reserve_out = 50 * 10**18
+
+        sell_amount = 26_000 * 10**6  # Max willing to pay
+        buy_amount = 10 * 10**18  # Want 10 ETH
+
+        max_output = amm.max_fill_buy_order(reserve_in, reserve_out, sell_amount, buy_amount)
+
+        if max_output > 0:
+            input_required = amm.get_amount_in(max_output, reserve_in, reserve_out)
+            # The actual rate should be at or below the limit rate
+            actual_rate = input_required / max_output if max_output > 0 else float("inf")
+            limit_rate = sell_amount / buy_amount
+            assert actual_rate <= limit_rate * 1.0001  # Allow tiny rounding

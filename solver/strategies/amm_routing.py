@@ -164,28 +164,37 @@ class AmmRoutingStrategy:
     def _solve_single_order(
         self, auction: AuctionInstance, pool_registry: PoolRegistry
     ) -> StrategyResult | None:
-        """Route a single order through AMM pools."""
-        order = auction.orders[0]
+        """Route a single order through AMM pools.
 
-        # Log if order is partially fillable
-        if order.partially_fillable:
-            logger.info(
-                "partially_fillable_order",
-                order_uid=order.uid,
-                message="Partially fillable orders are executed fully or not at all",
-            )
+        For partially fillable orders, may return a partial fill with
+        a remainder order for the unfilled portion.
+        """
+        order = auction.orders[0]
 
         result = self._route_and_build(order, pool_registry)
         if result is None:
             return None
 
-        # AMM routing fully fills or fails, so no remainder
+        # Check if this is a partial fill
+        remainder_orders = []
+        if not result.fill.is_complete and order.partially_fillable:
+            remainder = result.fill.get_remainder_order()
+            if remainder is not None:
+                remainder_orders.append(remainder)
+                logger.info(
+                    "amm_partial_fill_remainder",
+                    order_uid=order.uid[:18] + "...",
+                    fill_ratio=f"{result.fill.fill_ratio:.1%}",
+                    remainder_sell=remainder.sell_amount,
+                    remainder_buy=remainder.buy_amount,
+                )
+
         return StrategyResult(
             fills=[result.fill],
             interactions=list(result.solution.interactions),
             prices=result.solution.prices,
             gas=result.solution.gas or 0,
-            remainder_orders=[],
+            remainder_orders=remainder_orders,
         )
 
     def _update_reserves_after_swap(
@@ -289,18 +298,11 @@ class AmmRoutingStrategy:
         all_fills: list[OrderFill] = []
         all_interactions: list[Interaction] = []
         all_prices: dict[str, str] = {}
+        all_remainders: list[Order] = []
         total_gas = 0
         failed_order_uids: list[str] = []
 
         for order in auction.orders:
-            # Log if order is partially fillable (same as _solve_single_order)
-            if order.partially_fillable:
-                logger.info(
-                    "partially_fillable_order",
-                    order_uid=order.uid,
-                    message="Partially fillable orders are executed fully or not at all",
-                )
-
             result = self._route_and_build(order, pool_registry)
 
             if result is not None:
@@ -311,6 +313,12 @@ class AmmRoutingStrategy:
 
                 # Update pool reserves for next order
                 self._update_reserves_after_swap(pool_registry, result.routing_result)
+
+                # Check for partial fill remainder
+                if not result.fill.is_complete and order.partially_fillable:
+                    remainder = result.fill.get_remainder_order()
+                    if remainder is not None:
+                        all_remainders.append(remainder)
             else:
                 failed_order_uids.append(order.uid[:18] + "...")
 
@@ -326,6 +334,7 @@ class AmmRoutingStrategy:
             "amm_routing_multiple_orders",
             total_orders=auction.order_count,
             routed_orders=len(all_fills),
+            partial_fills=len(all_remainders),
             failed_count=len(failed_order_uids),
             failed_order_uids=failed_order_uids if failed_order_uids else None,
         )
@@ -335,5 +344,5 @@ class AmmRoutingStrategy:
             interactions=all_interactions,
             prices=all_prices,
             gas=total_gas,
-            remainder_orders=[],
+            remainder_orders=all_remainders,
         )
