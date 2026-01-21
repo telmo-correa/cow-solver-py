@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, ClassVar
 from eth_abi import encode  # type: ignore[attr-defined]
 
 from solver.amm.base import AMM, SwapResult
+from solver.constants import POOL_SWAP_GAS_COST
 from solver.models.types import is_valid_address, normalize_address
 
 if TYPE_CHECKING:
@@ -73,9 +74,6 @@ class UniswapV2(AMM):
     # Function selectors
     SWAP_EXACT_TOKENS_SELECTOR: ClassVar[str] = "0x38ed1739"  # swapExactTokensForTokens
     SWAP_TOKENS_FOR_EXACT_SELECTOR: ClassVar[str] = "0x8803dbee"  # swapTokensForExactTokens
-
-    # Gas estimates
-    SWAP_GAS: ClassVar[int] = 150_000
 
     def get_amount_out(
         self,
@@ -167,7 +165,7 @@ class UniswapV2(AMM):
             pool_address=pool.address,
             token_in=token_in,
             token_out=token_out,
-            gas_estimate=self.SWAP_GAS,
+            gas_estimate=POOL_SWAP_GAS_COST,
         )
 
     def simulate_swap_exact_output(
@@ -196,8 +194,45 @@ class UniswapV2(AMM):
             pool_address=pool.address,
             token_in=token_in,
             token_out=token_out,
-            gas_estimate=self.SWAP_GAS,
+            gas_estimate=POOL_SWAP_GAS_COST,
         )
+
+    def _prepare_swap_encoding(
+        self,
+        token_in: str,
+        token_out: str,
+        recipient: str,
+        path: list[str] | None = None,
+    ) -> tuple[list[bytes], bytes, int]:
+        """Prepare common encoding components for swap calls.
+
+        Args:
+            token_in: Input token address
+            token_out: Output token address
+            recipient: Address to receive output tokens
+            path: Optional full path. Defaults to [token_in, token_out].
+
+        Returns:
+            Tuple of (path_bytes, recipient_bytes, deadline)
+
+        Raises:
+            ValueError: If any address is invalid
+        """
+        if path is None:
+            path = [token_in, token_out]
+
+        for i, addr in enumerate(path):
+            if not is_valid_address(addr):
+                raise ValueError(f"Invalid address in path[{i}]: {addr}")
+
+        if not is_valid_address(recipient):
+            raise ValueError(f"Invalid recipient address: {recipient}")
+
+        path_bytes = [bytes.fromhex(addr[2:]) for addr in path]
+        recipient_bytes = bytes.fromhex(recipient[2:])
+        deadline = 2**32 - 1  # Far future, replaced by driver
+
+        return path_bytes, recipient_bytes, deadline
 
     def encode_swap(
         self,
@@ -227,34 +262,16 @@ class UniswapV2(AMM):
         Raises:
             ValueError: If any address is invalid
         """
-        # Build path if not provided
-        if path is None:
-            path = [token_in, token_out]
+        path_bytes, recipient_bytes, deadline = self._prepare_swap_encoding(
+            token_in, token_out, recipient, path
+        )
 
-        # Validate all addresses in path
-        for i, addr in enumerate(path):
-            if not is_valid_address(addr):
-                raise ValueError(f"Invalid address in path[{i}]: {addr}")
-
-        if not is_valid_address(recipient):
-            raise ValueError(f"Invalid recipient address: {recipient}")
-
-        # Convert path to bytes
-        path_bytes = [bytes.fromhex(addr[2:]) for addr in path]
-        recipient_bytes = bytes.fromhex(recipient[2:])
-
-        # Deadline far in the future (will be replaced by driver)
-        deadline = 2**32 - 1
-
-        # Encode the function call
         encoded_args = encode(
             ["uint256", "uint256", "address[]", "address", "uint256"],
             [amount_in, amount_out_min, path_bytes, recipient_bytes, deadline],
         )
 
-        calldata = self.SWAP_EXACT_TOKENS_SELECTOR + encoded_args.hex()
-
-        return self.ROUTER_ADDRESS, calldata
+        return self.ROUTER_ADDRESS, self.SWAP_EXACT_TOKENS_SELECTOR + encoded_args.hex()
 
     def encode_swap_exact_output(
         self,
@@ -284,103 +301,16 @@ class UniswapV2(AMM):
         Raises:
             ValueError: If any address is invalid
         """
-        # Build path if not provided
-        if path is None:
-            path = [token_in, token_out]
+        path_bytes, recipient_bytes, deadline = self._prepare_swap_encoding(
+            token_in, token_out, recipient, path
+        )
 
-        # Validate all addresses in path
-        for i, addr in enumerate(path):
-            if not is_valid_address(addr):
-                raise ValueError(f"Invalid address in path[{i}]: {addr}")
-
-        if not is_valid_address(recipient):
-            raise ValueError(f"Invalid recipient address: {recipient}")
-
-        # Convert path to bytes
-        path_bytes = [bytes.fromhex(addr[2:]) for addr in path]
-        recipient_bytes = bytes.fromhex(recipient[2:])
-
-        # Deadline far in the future (will be replaced by driver)
-        deadline = 2**32 - 1
-
-        # Encode the function call
-        # swapTokensForExactTokens(amountOut, amountInMax, path, to, deadline)
         encoded_args = encode(
             ["uint256", "uint256", "address[]", "address", "uint256"],
             [amount_out, amount_in_max, path_bytes, recipient_bytes, deadline],
         )
 
-        calldata = self.SWAP_TOKENS_FOR_EXACT_SELECTOR + encoded_args.hex()
-
-        return self.ROUTER_ADDRESS, calldata
-
-    def encode_swap_direct(
-        self,
-        pool_address: str,
-        token_in: str,
-        token_out: str,
-        _amount_in: int,  # Not used in direct swap encoding
-        amount_out: int,
-        recipient: str,
-    ) -> tuple[str, str]:
-        """Encode a direct swap on the pair contract.
-
-        Uses swap(uint256,uint256,address,bytes) on the pair directly.
-        This is more gas efficient than going through the router.
-
-        Note: This method is currently not used but kept for future optimization.
-        Direct pool swaps save ~20k gas compared to router swaps.
-
-        Args:
-            pool_address: UniswapV2 pair contract address
-            token_in: Input token address (0x-prefixed hex)
-            token_out: Output token address (0x-prefixed hex)
-            _amount_in: Input amount (unused - pool infers from balance change)
-            amount_out: Expected output amount
-            recipient: Address to receive output tokens
-
-        Returns:
-            Tuple of (pool_address, calldata)
-
-        Raises:
-            ValueError: If any address is invalid
-        """
-        # Validate addresses (is_valid_address ensures they're valid hex)
-        for name, addr in [
-            ("pool_address", pool_address),
-            ("token_in", token_in),
-            ("token_out", token_out),
-            ("recipient", recipient),
-        ]:
-            if not is_valid_address(addr):
-                raise ValueError(f"Invalid {name} address: {addr}")
-
-        # Determine which amount goes where based on token order
-        # In UniswapV2, token0 < token1 (sorted by address bytes, not string)
-        # Note: bytes.fromhex() is safe here since is_valid_address already verified hex format
-        token_in_bytes = bytes.fromhex(token_in[2:].lower())
-        token_out_bytes = bytes.fromhex(token_out[2:].lower())
-        recipient_bytes = bytes.fromhex(recipient[2:])
-
-        if token_in_bytes < token_out_bytes:
-            # token_in is token0, so we're swapping token0 for token1
-            amount0_out = 0
-            amount1_out = amount_out
-        else:
-            # token_in is token1, so we're swapping token1 for token0
-            amount0_out = amount_out
-            amount1_out = 0
-
-        # swap(uint amount0Out, uint amount1Out, address to, bytes calldata data)
-        selector = "0x022c0d9f"
-        encoded_args = encode(
-            ["uint256", "uint256", "address", "bytes"],
-            [amount0_out, amount1_out, recipient_bytes, b""],
-        )
-
-        calldata = selector + encoded_args.hex()
-
-        return pool_address, calldata
+        return self.ROUTER_ADDRESS, self.SWAP_TOKENS_FOR_EXACT_SELECTOR + encoded_args.hex()
 
 
 # Singleton instance

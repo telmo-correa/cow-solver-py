@@ -3,10 +3,13 @@
 This module handles routing orders through AMM pools and building solutions
 for the CoW Protocol settlement.
 
-Current limitations:
-- Only single-order auctions supported
+Supports:
+- Single-order auctions (multi-order not yet implemented)
+- Direct and multi-hop routing through UniswapV2-style pools
+- Both sell orders (exact input) and buy orders (exact output)
+
+Limitations:
 - Partially fillable orders are executed fully or not at all
-- Multi-hop routing not yet implemented (Slice 1.4)
 """
 
 from collections.abc import Callable
@@ -120,6 +123,17 @@ class SingleOrderRouter:
         """Return the pool finder function (for backward compatibility)."""
         return self._pool_finder
 
+    def _error_result(self, order: Order, error: str) -> RoutingResult:
+        """Create a failed routing result with the given error message."""
+        return RoutingResult(
+            order=order,
+            amount_in=0,
+            amount_out=0,
+            pool=None,
+            success=False,
+            error=error,
+        )
+
     def route_order(self, order: Order) -> RoutingResult:
         """Find a route for a single order.
 
@@ -137,34 +151,13 @@ class SingleOrderRouter:
             sell_amount = int(order.sell_amount)
             buy_amount = int(order.buy_amount)
         except (ValueError, TypeError) as e:
-            return RoutingResult(
-                order=order,
-                amount_in=0,
-                amount_out=0,
-                pool=None,
-                success=False,
-                error=f"Invalid amount format: {e}",
-            )
+            return self._error_result(order, f"Invalid amount format: {e}")
 
         if sell_amount <= 0:
-            return RoutingResult(
-                order=order,
-                amount_in=0,
-                amount_out=0,
-                pool=None,
-                success=False,
-                error="Sell amount must be positive",
-            )
+            return self._error_result(order, "Sell amount must be positive")
 
         if buy_amount <= 0:
-            return RoutingResult(
-                order=order,
-                amount_in=0,
-                amount_out=0,
-                pool=None,
-                success=False,
-                error="Buy amount must be positive",
-            )
+            return self._error_result(order, "Buy amount must be positive")
 
         # Try direct pool first
         pool = self._pool_finder(order.sell_token, order.buy_token)
@@ -177,27 +170,15 @@ class SingleOrderRouter:
         # No direct pool - try multi-hop routing using registry
         path = self._registry.find_path(order.sell_token, order.buy_token)
         if path is None or len(path) < 2:
-            return RoutingResult(
-                order=order,
-                amount_in=0,
-                amount_out=0,
-                pool=None,
-                success=False,
-                error=f"No route found for {order.sell_token}/{order.buy_token}",
+            return self._error_result(
+                order, f"No route found for {order.sell_token}/{order.buy_token}"
             )
 
         # Get pools for the path
         try:
             pools = self._registry.get_all_pools_on_path(path)
         except ValueError as e:
-            return RoutingResult(
-                order=order,
-                amount_in=0,
-                amount_out=0,
-                pool=None,
-                success=False,
-                error=str(e),
-            )
+            return self._error_result(order, str(e))
 
         logger.info(
             "using_multihop_route",
@@ -555,8 +536,8 @@ class Solver:
     liquidity rather than hardcoded pool data.
 
     Args:
-        router: DEPRECATED - Router instance is now created per-auction.
-                Only used for testing/mocking purposes.
+        router: Optional router for dependency injection in tests.
+                If provided, bypasses normal router creation.
         amm: AMM implementation for swap math. Defaults to UniswapV2.
     """
 
@@ -568,10 +549,11 @@ class Solver:
         """Initialize the solver with optional dependencies.
 
         Args:
-            router: Legacy router for testing. If provided, used directly.
+            router: Injected router for testing. If provided, used directly
+                    instead of creating one from auction liquidity.
             amm: AMM implementation. Defaults to uniswap_v2 singleton.
         """
-        self._legacy_router = router
+        self._injected_router = router
         self.amm = amm if amm is not None else uniswap_v2
 
     def solve(self, auction: AuctionInstance) -> SolverResponse:
@@ -622,9 +604,9 @@ class Solver:
             )
 
         # Create router with auction's liquidity
-        # Use legacy router if provided (for testing), otherwise create new one
-        if self._legacy_router is not None:
-            router = self._legacy_router
+        # Use injected router if provided (for testing), otherwise create new one
+        if self._injected_router is not None:
+            router = self._injected_router
         else:
             router = SingleOrderRouter(amm=self.amm, pool_registry=pool_registry)
 

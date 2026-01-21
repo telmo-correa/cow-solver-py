@@ -183,63 +183,6 @@ class MockAMM:
             gas_estimate=self.SWAP_GAS,
         )
 
-    def simulate_multihop_swap(
-        self, pools: list[UniswapV2Pool], path: list[str], amount_in: int
-    ) -> SwapResult:
-        """Simulate a multi-hop swap."""
-        self.swap_calls.append(
-            {
-                "method": "simulate_multihop_swap",
-                "pools": [p.address for p in pools],
-                "path": path,
-                "amount_in": amount_in,
-            }
-        )
-
-        # Apply rate for each hop
-        current_amount = amount_in
-        for _ in pools:
-            current_amount = self._calculate_output(current_amount)
-
-        return SwapResult(
-            amount_in=amount_in,
-            amount_out=current_amount,
-            pool_address=pools[-1].address if pools else "",
-            token_in=path[0],
-            token_out=path[-1],
-            gas_estimate=self.SWAP_GAS * len(pools),
-        )
-
-    def simulate_multihop_swap_exact_output(
-        self, pools: list[UniswapV2Pool], path: list[str], amount_out: int
-    ) -> SwapResult:
-        """Simulate a multi-hop swap for exact output."""
-        self.swap_calls.append(
-            {
-                "method": "simulate_multihop_swap_exact_output",
-                "pools": [p.address for p in pools],
-                "path": path,
-                "amount_out": amount_out,
-            }
-        )
-
-        # Work backwards through hops (approximate)
-        current_amount = amount_out
-        for _ in pools:
-            if self.config.output_multiplier is not None:
-                current_amount = int(current_amount / self.config.output_multiplier)
-            else:
-                current_amount = int(current_amount / self.config.default_rate * 10**12)
-
-        return SwapResult(
-            amount_in=current_amount,
-            amount_out=amount_out,
-            pool_address=pools[0].address if pools else "",
-            token_in=path[0],
-            token_out=path[-1],
-            gas_estimate=self.SWAP_GAS * len(pools),
-        )
-
     def encode_swap(
         self,
         token_in: str,

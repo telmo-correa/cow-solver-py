@@ -226,12 +226,14 @@ async def run_benchmarks(
         BenchmarkSummary with results
     """
     # Import here to avoid circular imports
-    from solver.api.endpoints import solve
+    from solver.api.endpoints import get_solver, solve
 
-    # Create a simple adapter for the solve function
+    # Create a simple adapter for the solve endpoint
     class SolverAdapter:
         async def solve(self, auction: AuctionInstance) -> SolverResponse:
-            return await solve("benchmark", "mainnet", auction)
+            # Manually resolve the dependency since we're calling outside FastAPI
+            solver_instance = get_solver()
+            return await solve("benchmark", "mainnet", auction, solver_instance)
 
     harness = BenchmarkHarness(
         python_solver=SolverAdapter(),
