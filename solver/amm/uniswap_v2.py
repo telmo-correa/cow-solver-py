@@ -7,7 +7,7 @@ With a 0.3% fee on input amounts.
 from dataclasses import dataclass
 from typing import ClassVar
 
-from eth_abi import encode
+from eth_abi import encode  # type: ignore[attr-defined]
 
 from solver.amm.base import AMM, SwapResult
 from solver.models.types import is_valid_address, normalize_address

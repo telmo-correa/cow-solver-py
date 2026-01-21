@@ -27,5 +27,7 @@ repos:
           - pydantic>=2.5.0
           - fastapi>=0.109.0
           - structlog>=24.1.0
+          - eth-abi>=4.0.0
         args: [--ignore-missing-imports]
-        files: ^solver/
+        pass_filenames: false
+        entry: mypy solver

@@ -49,7 +49,7 @@ def format_markdown_report(
                 f"| Std Dev | {ts.stdev:.2f}x |" if ts.stdev else "",
                 "",
                 f"Python was faster in {metrics.python_faster_count}/{ts.count} auctions "
-                f"({100*metrics.python_faster_count/ts.count:.1f}%)",
+                f"({100 * metrics.python_faster_count / ts.count:.1f}%)",
                 "",
             ]
         )
@@ -70,7 +70,7 @@ def format_markdown_report(
                 f"| Std Dev | {ss.stdev:.2%} |" if ss.stdev else "",
                 "",
                 f"Python found better score in {metrics.python_better_score_count}/{ss.count} auctions "
-                f"({100*metrics.python_better_score_count/ss.count:.1f}%)",
+                f"({100 * metrics.python_better_score_count / ss.count:.1f}%)",
                 "",
             ]
         )
