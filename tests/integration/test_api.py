@@ -1,21 +1,35 @@
 """Integration tests for the solver API."""
 
 import json
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 
+from solver.api.endpoints import get_solver
 from solver.api.main import app
 from solver.models.solution import SolverResponse
+from solver.routing.router import Solver
 
 FIXTURES_DIR = Path(__file__).parent.parent / "fixtures" / "auctions"
 
 
 @pytest.fixture
-def client():
+def client() -> Iterator[TestClient]:
     """Create a test client for the API."""
-    return TestClient(app)
+    # Ensure dependency overrides are cleared after test
+    yield TestClient(app)
+    app.dependency_overrides.clear()
+
+
+@pytest.fixture
+def client_with_mock_solver(mock_router_success) -> Iterator[TestClient]:
+    """Create a test client with an injected mock solver."""
+    mock_solver = Solver(router=mock_router_success)
+    app.dependency_overrides[get_solver] = lambda: mock_solver
+    yield TestClient(app)
+    app.dependency_overrides.clear()
 
 
 class TestSolveEndpoint:
@@ -149,3 +163,108 @@ class TestSolveEndpoint:
 
         # Mainnet should return solutions (if route found)
         assert len(solver_response.solutions) >= 1
+
+
+class TestDependencyInjection:
+    """Tests demonstrating FastAPI dependency injection for the solver."""
+
+    def test_can_override_solver_dependency(self, injected_solver):
+        """Verify solver can be overridden via FastAPI dependency_overrides."""
+        app.dependency_overrides[get_solver] = lambda: injected_solver
+
+        client = TestClient(app)
+        auction = {
+            "id": "test_di",
+            "orders": [
+                {
+                    "uid": "0x" + "01" * 56,
+                    "sellToken": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+                    "buyToken": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+                    "sellAmount": "1000000000000000000",
+                    "buyAmount": "2000000000",
+                    "kind": "sell",
+                    "class": "limit",
+                }
+            ],
+        }
+
+        response = client.post("/production/mainnet", json=auction)
+        assert response.status_code == 200
+
+        # Clean up
+        app.dependency_overrides.clear()
+
+    def test_mock_solver_controls_response(self, mock_router_failure):
+        """Mock solver can force specific behavior (e.g., always fail)."""
+        failing_solver = Solver(router=mock_router_failure)
+        app.dependency_overrides[get_solver] = lambda: failing_solver
+
+        client = TestClient(app)
+        auction = {
+            "id": "test_fail",
+            "orders": [
+                {
+                    "uid": "0x" + "01" * 56,
+                    "sellToken": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+                    "buyToken": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+                    "sellAmount": "1000000000000000000",
+                    "buyAmount": "2000000000",
+                    "kind": "sell",
+                    "class": "limit",
+                }
+            ],
+        }
+
+        response = client.post("/production/mainnet", json=auction)
+        assert response.status_code == 200
+
+        data = response.json()
+        # Mock router always fails, so no solutions
+        assert len(data["solutions"]) == 0
+
+        # Verify the mock was called
+        assert len(mock_router_failure.route_calls) == 1
+
+        # Clean up
+        app.dependency_overrides.clear()
+
+    def test_injected_solver_uses_mock_amm(self, mock_amm, mock_pool_finder):
+        """Verify mock AMM is called when using injected solver."""
+        from solver.routing.router import SingleOrderRouter
+
+        router = SingleOrderRouter(amm=mock_amm, pool_finder=mock_pool_finder)
+        solver = Solver(router=router)
+        app.dependency_overrides[get_solver] = lambda: solver
+
+        client = TestClient(app)
+        auction = {
+            "id": "test_mock_amm",
+            "orders": [
+                {
+                    "uid": "0x" + "01" * 56,
+                    "sellToken": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+                    "buyToken": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+                    "sellAmount": "1000000000000000000",  # 1 WETH
+                    "buyAmount": "2000000000",  # 2000 USDC
+                    "kind": "sell",
+                    "class": "limit",
+                }
+            ],
+        }
+
+        response = client.post("/production/mainnet", json=auction)
+        assert response.status_code == 200
+
+        # Verify mock AMM was called
+        assert len(mock_amm.swap_calls) == 1
+        assert mock_amm.swap_calls[0]["amount_in"] == 1000000000000000000
+
+        # Verify mock pool finder was called
+        assert len(mock_pool_finder.calls) == 1
+
+        data = response.json()
+        # Should have a solution since mock AMM returns realistic values
+        assert len(data["solutions"]) == 1
+
+        # Clean up
+        app.dependency_overrides.clear()

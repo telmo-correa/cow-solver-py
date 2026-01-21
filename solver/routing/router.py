@@ -10,11 +10,12 @@ Current limitations:
 - Multi-hop routing not yet implemented (Slice 1.4)
 """
 
+from collections.abc import Callable
 from dataclasses import dataclass
 
 import structlog
 
-from solver.amm.uniswap_v2 import UniswapV2Pool, get_pool, uniswap_v2
+from solver.amm.uniswap_v2 import UniswapV2, UniswapV2Pool, get_pool, uniswap_v2
 from solver.constants import COW_SETTLEMENT, PRICE_SCALE
 from solver.models.auction import AuctionInstance, Order
 from solver.models.solution import (
@@ -43,11 +44,31 @@ class RoutingResult:
 
 
 class SingleOrderRouter:
-    """Routes single orders through UniswapV2 pools.
+    """Routes single orders through AMM pools.
 
-    This is a simple router that handles one order at a time,
-    finding the best direct pool for the token pair.
+    This router handles one order at a time, finding the best direct pool
+    for the token pair.
+
+    Args:
+        amm: AMM implementation for swap simulation and encoding.
+             Defaults to the UniswapV2 singleton.
+        pool_finder: Callable to find a pool for a token pair.
+                     Defaults to the get_pool function.
     """
+
+    def __init__(
+        self,
+        amm: UniswapV2 | None = None,
+        pool_finder: Callable[[str, str], UniswapV2Pool | None] | None = None,
+    ) -> None:
+        """Initialize the router with optional dependencies.
+
+        Args:
+            amm: AMM implementation. Defaults to uniswap_v2 singleton.
+            pool_finder: Pool lookup function. Defaults to get_pool.
+        """
+        self.amm = amm if amm is not None else uniswap_v2
+        self.pool_finder = pool_finder if pool_finder is not None else get_pool
 
     def route_order(self, order: Order) -> RoutingResult:
         """Find a route for a single order.
@@ -93,7 +114,7 @@ class SingleOrderRouter:
             )
 
         # Find a pool for this token pair
-        pool = get_pool(order.sell_token, order.buy_token)
+        pool = self.pool_finder(order.sell_token, order.buy_token)
         if pool is None:
             return RoutingResult(
                 order=order,
@@ -105,7 +126,7 @@ class SingleOrderRouter:
             )
 
         # Simulate the swap
-        swap_result = uniswap_v2.simulate_swap(
+        swap_result = self.amm.simulate_swap(
             pool=pool,
             token_in=order.sell_token,
             amount_in=sell_amount,
@@ -170,7 +191,7 @@ class SingleOrderRouter:
         # The solver only needs to encode the swap interaction. The driver/settlement
         # contract handles all token movements based on the solution's trades and
         # interaction inputs/outputs.
-        target, calldata = uniswap_v2.encode_swap(
+        target, calldata = self.amm.encode_swap(
             token_in=order.sell_token,
             token_out=order.buy_token,
             amount_in=routing_result.amount_in,
@@ -223,7 +244,7 @@ class SingleOrderRouter:
         }
 
         # Estimate gas for the solution
-        gas_estimate = uniswap_v2.SWAP_GAS
+        gas_estimate = self.amm.SWAP_GAS
 
         return Solution(
             id=solution_id,
@@ -235,10 +256,20 @@ class SingleOrderRouter:
 
 
 class Solver:
-    """Main solver that processes auction instances."""
+    """Main solver that processes auction instances.
 
-    def __init__(self) -> None:
-        self.router = SingleOrderRouter()
+    Args:
+        router: Router implementation for order routing.
+                Defaults to a new SingleOrderRouter instance.
+    """
+
+    def __init__(self, router: SingleOrderRouter | None = None) -> None:
+        """Initialize the solver with optional dependencies.
+
+        Args:
+            router: Router for order routing. Defaults to SingleOrderRouter().
+        """
+        self.router = router if router is not None else SingleOrderRouter()
 
     def solve(self, auction: AuctionInstance) -> SolverResponse:
         """Solve an auction batch.

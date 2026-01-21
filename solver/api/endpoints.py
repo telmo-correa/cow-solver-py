@@ -1,11 +1,11 @@
 """API endpoints for the CoW solver."""
 
 import structlog
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
 from solver.models.auction import AuctionInstance
 from solver.models.solution import SolverResponse
-from solver.routing.router import solver
+from solver.routing.router import Solver, solver
 
 logger = structlog.get_logger()
 
@@ -18,11 +18,24 @@ SUPPORTED_NETWORKS = {"mainnet"}
 VALID_ENVIRONMENTS = {"production", "staging", "shadow", "local"}
 
 
+def get_solver() -> Solver:
+    """Dependency provider for the solver instance.
+
+    Override this in tests to inject a mock solver:
+        app.dependency_overrides[get_solver] = lambda: mock_solver
+
+    Returns:
+        The solver instance to use for solving auctions.
+    """
+    return solver
+
+
 @router.post("/{environment}/{network}")
 async def solve(
     environment: str,
     network: str,
     auction: AuctionInstance,
+    solver_instance: Solver = Depends(get_solver),
 ) -> SolverResponse:
     """Solve an auction batch.
 
@@ -32,6 +45,7 @@ async def solve(
         environment: Environment name (e.g., "production", "staging", "shadow")
         network: Network name (e.g., "mainnet", "arbitrum-one", "xdai")
         auction: The auction instance to solve
+        solver_instance: Injected solver (via FastAPI Depends)
 
     Returns:
         SolverResponse containing proposed solutions
@@ -64,7 +78,7 @@ async def solve(
         return SolverResponse.empty()
 
     # Use the solver to find solutions
-    response = solver.solve(auction)
+    response = solver_instance.solve(auction)
 
     logger.info(
         "returning_solutions",

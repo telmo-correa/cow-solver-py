@@ -1,16 +1,22 @@
 """Integration tests for single order routing."""
 
+from collections.abc import Iterator
+
 import pytest
 from fastapi.testclient import TestClient
 
+from solver.api.endpoints import get_solver
 from solver.api.main import app
 from solver.models.solution import SolverResponse
+from solver.routing.router import SingleOrderRouter, Solver
+from tests.conftest import MockAMM, MockPoolFinder, MockSwapConfig
 
 
 @pytest.fixture
-def client():
+def client() -> Iterator[TestClient]:
     """Create a test client for the API."""
-    return TestClient(app)
+    yield TestClient(app)
+    app.dependency_overrides.clear()
 
 
 class TestSingleSellOrderRouting:
@@ -295,3 +301,160 @@ class TestSolverBehavior:
         data = response.json()
         # Multi-order not yet implemented
         assert len(data["solutions"]) == 0
+
+
+class TestRoutingWithMocks:
+    """Tests using dependency injection for controlled, deterministic behavior."""
+
+    def test_exact_output_with_mock_amm(self, mock_weth_usdc_pool):
+        """Mock AMM allows testing with exact, predictable outputs."""
+        # Configure mock to return exactly 3000 USDC for any swap
+        mock_amm = MockAMM(MockSwapConfig(fixed_output=3000_000_000))
+        mock_finder = MockPoolFinder(default_pool=mock_weth_usdc_pool)
+
+        router = SingleOrderRouter(amm=mock_amm, pool_finder=mock_finder)
+        solver = Solver(router=router)
+        app.dependency_overrides[get_solver] = lambda: solver
+
+        client = TestClient(app)
+        auction = {
+            "id": "test_exact_output",
+            "orders": [
+                {
+                    "uid": "0x" + "01" * 56,
+                    "sellToken": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+                    "buyToken": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+                    "sellAmount": "1000000000000000000",  # 1 WETH
+                    "buyAmount": "2500000000",  # Min 2500 USDC
+                    "kind": "sell",
+                    "class": "limit",
+                }
+            ],
+        }
+
+        response = client.post("/production/mainnet", json=auction)
+        data = response.json()
+
+        # Should succeed since 3000 USDC > 2500 USDC minimum
+        assert len(data["solutions"]) == 1
+
+        # The solution should reflect the exact mock output
+        solution = data["solutions"][0]
+        assert len(solution["trades"]) == 1
+
+        app.dependency_overrides.clear()
+
+    def test_limit_price_rejection_with_mock(self, mock_weth_usdc_pool):
+        """Test limit price rejection with controlled mock output."""
+        # Configure mock to return only 1000 USDC (below limit)
+        mock_amm = MockAMM(MockSwapConfig(fixed_output=1000_000_000))
+        mock_finder = MockPoolFinder(default_pool=mock_weth_usdc_pool)
+
+        router = SingleOrderRouter(amm=mock_amm, pool_finder=mock_finder)
+        solver = Solver(router=router)
+        app.dependency_overrides[get_solver] = lambda: solver
+
+        client = TestClient(app)
+        auction = {
+            "id": "test_limit_rejection",
+            "orders": [
+                {
+                    "uid": "0x" + "01" * 56,
+                    "sellToken": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+                    "buyToken": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+                    "sellAmount": "1000000000000000000",  # 1 WETH
+                    "buyAmount": "2000000000",  # Min 2000 USDC
+                    "kind": "sell",
+                    "class": "limit",
+                }
+            ],
+        }
+
+        response = client.post("/production/mainnet", json=auction)
+        data = response.json()
+
+        # Should fail since 1000 USDC < 2000 USDC minimum
+        assert len(data["solutions"]) == 0
+
+        app.dependency_overrides.clear()
+
+    def test_no_pool_scenario_with_mock(self):
+        """Test behavior when no pool is found."""
+        # Pool finder that returns None for all pairs
+        mock_finder = MockPoolFinder(default_pool=None)
+        mock_amm = MockAMM()
+
+        router = SingleOrderRouter(amm=mock_amm, pool_finder=mock_finder)
+        solver = Solver(router=router)
+        app.dependency_overrides[get_solver] = lambda: solver
+
+        client = TestClient(app)
+        auction = {
+            "id": "test_no_pool",
+            "orders": [
+                {
+                    "uid": "0x" + "01" * 56,
+                    "sellToken": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+                    "buyToken": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+                    "sellAmount": "1000000000000000000",
+                    "buyAmount": "1",  # Very low limit to isolate pool finding
+                    "kind": "sell",
+                    "class": "limit",
+                }
+            ],
+        }
+
+        response = client.post("/production/mainnet", json=auction)
+        data = response.json()
+
+        # Should return empty - no pool found
+        assert len(data["solutions"]) == 0
+
+        # Verify pool finder was called but AMM was not
+        assert len(mock_finder.calls) == 1
+        assert len(mock_amm.swap_calls) == 0
+
+        app.dependency_overrides.clear()
+
+    def test_swap_call_tracking(self, mock_weth_usdc_pool):
+        """Verify we can inspect mock calls for detailed assertions."""
+        mock_amm = MockAMM(MockSwapConfig(fixed_output=3000_000_000))
+        mock_finder = MockPoolFinder(default_pool=mock_weth_usdc_pool)
+
+        router = SingleOrderRouter(amm=mock_amm, pool_finder=mock_finder)
+        solver = Solver(router=router)
+        app.dependency_overrides[get_solver] = lambda: solver
+
+        client = TestClient(app)
+        sell_amount = 2_500_000_000_000_000_000  # 2.5 WETH
+        auction = {
+            "id": "test_tracking",
+            "orders": [
+                {
+                    "uid": "0x" + "01" * 56,
+                    "sellToken": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+                    "buyToken": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+                    "sellAmount": str(sell_amount),
+                    "buyAmount": "1",
+                    "kind": "sell",
+                    "class": "limit",
+                }
+            ],
+        }
+
+        response = client.post("/production/mainnet", json=auction)
+        assert response.status_code == 200
+
+        # Verify the exact parameters passed to the mock
+        assert len(mock_amm.swap_calls) == 1
+        call = mock_amm.swap_calls[0]
+        assert call["amount_in"] == sell_amount
+        assert call["pool"] == mock_weth_usdc_pool.address
+
+        # Verify pool finder received the correct tokens
+        assert len(mock_finder.calls) == 1
+        token_a, token_b = mock_finder.calls[0]
+        assert "c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2" in token_a.lower()
+        assert "a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48" in token_b.lower()
+
+        app.dependency_overrides.clear()

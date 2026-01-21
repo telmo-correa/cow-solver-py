@@ -61,3 +61,4 @@ benchmarks/reports/
 
 # macOS
 .DS_Store
+.local-notes

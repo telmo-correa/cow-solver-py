@@ -62,15 +62,13 @@ python -m scripts.collect_auctions --count 50
 solver/          # Main solver package
   api/           # FastAPI endpoints
   models/        # Pydantic schemas
-  amm/           # AMM math (UniswapV2, V3, Balancer)
-  graph/         # Token liquidity graph
-  matching/      # CoW detection
-  routing/       # Order routing
-  scoring/       # Solution evaluation
+  amm/           # AMM math (UniswapV2)
+  routing/       # Order routing and solution building
+  constants.py   # Centralized constants
 
 benchmarks/      # Performance comparison harness
 scripts/         # Utility scripts
-tests/           # Test suite
+tests/           # Test suite with mock fixtures for DI
 ```
 
 ## Documentation

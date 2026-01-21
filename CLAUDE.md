@@ -36,20 +36,22 @@ cow-solver-py/
 ├── CLAUDE.md              # THIS FILE - read first
 ├── PLAN.md                # Detailed implementation plan with slices
 ├── SESSIONS.md            # Session handoff log
+├── BENCHMARKS.md          # Benchmarking guide
 ├── pyproject.toml         # Dependencies and config
 │
 ├── solver/                # Main package
 │   ├── api/               # FastAPI app
 │   │   ├── main.py        # App entry point
-│   │   └── endpoints.py   # POST /solve endpoint (currently returns empty)
+│   │   └── endpoints.py   # POST /solve endpoint with DI support
 │   ├── models/            # Pydantic schemas
 │   │   ├── auction.py     # AuctionInstance, Order, Token
 │   │   └── solution.py    # Solution, Trade, Interaction
-│   ├── amm/               # AMM math (EMPTY - next to implement)
-│   ├── graph/             # Token graph (EMPTY)
-│   ├── matching/          # CoW detection (EMPTY)
-│   ├── routing/           # Order routing (EMPTY)
-│   └── scoring/           # Solution scoring (EMPTY)
+│   ├── amm/               # AMM math
+│   │   ├── base.py        # SwapResult dataclass
+│   │   └── uniswap_v2.py  # UniswapV2 implementation
+│   ├── routing/           # Order routing
+│   │   └── router.py      # SingleOrderRouter, Solver (with DI)
+│   └── constants.py       # Centralized constants (addresses, etc.)
 │
 ├── benchmarks/            # Performance comparison
 │   ├── harness.py         # Main runner
@@ -58,14 +60,17 @@ cow-solver-py/
 │   └── report.py          # Output formatting
 │
 ├── scripts/
-│   └── collect_auctions.py  # Fetch historical auctions from CoW API
+│   ├── collect_auctions.py  # Fetch historical auctions from CoW API
+│   └── run_benchmarks.py    # HTTP benchmark runner
 │
 └── tests/
-    ├── conftest.py        # Fixtures
-    ├── unit/test_models.py
+    ├── conftest.py        # Fixtures + mock classes for DI testing
+    ├── unit/              # Unit tests
+    ├── integration/       # Integration tests
     └── fixtures/auctions/ # JSON test data
-        ├── single_order/basic_sell.json
-        └── cow_pairs/basic_cow.json
+        ├── single_order/  # Single order fixtures
+        ├── cow_pairs/     # CoW pair fixtures
+        └── benchmark/     # Benchmark fixtures
 ```
 
 ## Current State
@@ -77,14 +82,14 @@ cow-solver-py/
 - ✅ Benchmark harness for Python vs Rust comparison
 - ✅ Auction collector script
 - ✅ Sample fixture auctions
-- ✅ Unit tests for models (13 tests)
 - ✅ **UniswapV2 AMM math** (constant product formula)
 - ✅ **Single order router** (routes sell orders through UniV2)
 - ✅ **Solution builder** (trades, interactions, clearing prices)
-- ✅ AMM unit tests (15 tests)
-- ✅ Integration tests (11 tests)
+- ✅ **Dependency injection** for testability (router, solver, AMM)
+- ✅ **Mock fixtures** for isolated testing (MockAMM, MockPoolFinder, MockRouter)
+- ✅ Centralized constants (`solver/constants.py`)
 
-**Total: 39 passing tests**
+**Total: 69 passing tests** (unit + integration)
 
 ### What's Next (Phase 1 continued)
 See `PLAN.md` for full details. Next slices:
@@ -103,15 +108,42 @@ See `PLAN.md` for full details. Next slices:
 
 | File | Purpose |
 |------|---------|
-| `solver/api/endpoints.py` | The `/solve` endpoint - main entry point |
+| `solver/api/endpoints.py` | The `/solve` endpoint with DI support |
 | `solver/models/auction.py` | Input data structures |
 | `solver/models/solution.py` | Output data structures |
 | `solver/amm/uniswap_v2.py` | UniswapV2 AMM math and encoding |
-| `solver/routing/router.py` | Order routing and solution building |
+| `solver/routing/router.py` | Order routing and solution building (with DI) |
+| `solver/constants.py` | Centralized addresses and constants |
+| `tests/conftest.py` | Mock fixtures for DI testing |
 | `benchmarks/harness.py` | Run both solvers and compare |
-| `tests/fixtures/auctions/` | Test data |
 | `PLAN.md` | Detailed slice breakdown |
-| `SESSIONS.md` | Progress log |
+| `BENCHMARKS.md` | How to run benchmarks |
+
+## Dependency Injection for Testing
+
+The solver supports dependency injection for isolated testing:
+
+```python
+# Inject mock AMM and pool finder into router
+from tests.conftest import MockAMM, MockPoolFinder, MockSwapConfig
+
+mock_amm = MockAMM(MockSwapConfig(fixed_output=3000_000_000))
+mock_finder = MockPoolFinder(default_pool=my_pool)
+router = SingleOrderRouter(amm=mock_amm, pool_finder=mock_finder)
+
+# Inject mock router into solver
+solver = Solver(router=mock_router)
+
+# Override FastAPI dependency for API tests
+from solver.api.endpoints import get_solver
+app.dependency_overrides[get_solver] = lambda: my_mock_solver
+```
+
+Available mock classes in `tests/conftest.py`:
+- `MockAMM` - Configurable swap outputs with call tracking
+- `MockPoolFinder` - Returns configured pools for token pairs
+- `MockRouter` - Returns configured routing results
+- `MockSwapConfig` - Configure fixed output, multiplier, or default rate
 
 ## Development Workflow
 
@@ -215,4 +247,5 @@ python -m benchmarks.harness    # Run comparison
 3. **Keep changes minimal** — each slice should be small and focused
 4. **Run tests after changes** — verify nothing broke
 5. **Check PLAN.md** for what's next if unsure
-6. **The solver currently returns empty** — that's intentional, it's the starting point
+6. **Use DI for testing** — inject mocks via `tests/conftest.py` fixtures
+7. **Run benchmarks** — see `BENCHMARKS.md` for setup (Rust solver at `/Users/telmo/project/cow-services`)

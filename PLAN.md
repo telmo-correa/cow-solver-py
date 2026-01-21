@@ -239,42 +239,30 @@ cow-solver-py/
 ├── README.md
 ├── PLAN.md                    # This file
 ├── SESSIONS.md                # Session handoff log
+├── BENCHMARKS.md              # Benchmarking guide
 │
 ├── solver/
 │   ├── __init__.py
+│   ├── constants.py           # Centralized constants
 │   ├── api/
 │   │   ├── __init__.py
 │   │   ├── main.py            # FastAPI app
-│   │   └── endpoints.py       # /solve endpoint
+│   │   └── endpoints.py       # /solve endpoint (with DI)
 │   │
 │   ├── models/
 │   │   ├── __init__.py
 │   │   ├── auction.py         # AuctionInstance, Order, Token
-│   │   └── solution.py        # Solution, Trade, Interaction
+│   │   ├── solution.py        # Solution, Trade, Interaction
+│   │   └── types.py           # Shared types (HexAddress, etc.)
 │   │
 │   ├── amm/
 │   │   ├── __init__.py
-│   │   ├── base.py            # AMM protocol/ABC
-│   │   ├── uniswap_v2.py
-│   │   ├── uniswap_v3.py
-│   │   └── balancer.py
+│   │   ├── base.py            # SwapResult dataclass
+│   │   └── uniswap_v2.py      # UniswapV2 implementation
 │   │
-│   ├── graph/
-│   │   ├── __init__.py
-│   │   ├── token_graph.py     # Liquidity graph
-│   │   └── pathfinding.py     # Route finding
-│   │
-│   ├── matching/
-│   │   ├── __init__.py
-│   │   └── cow.py             # CoW detection
-│   │
-│   ├── routing/
-│   │   ├── __init__.py
-│   │   └── router.py          # Order routing logic
-│   │
-│   └── scoring/
+│   └── routing/
 │       ├── __init__.py
-│       └── evaluator.py       # Solution scoring
+│       └── router.py          # Order routing logic (with DI)
 │
 ├── benchmarks/
 │   ├── __init__.py
@@ -285,25 +273,25 @@ cow-solver-py/
 │
 ├── scripts/
 │   ├── collect_auctions.py    # Fetch historical data
-│   └── categorize_auctions.py # Classify by complexity
+│   └── run_benchmarks.py      # HTTP benchmark runner
 │
 ├── tests/
-│   ├── conftest.py
+│   ├── conftest.py            # Fixtures + mock classes for DI
 │   ├── fixtures/
 │   │   └── auctions/          # Historical auction JSON files
 │   │       ├── single_order/
 │   │       ├── cow_pairs/
-│   │       └── multi_hop/
+│   │       ├── multi_hop/
+│   │       └── benchmark/
 │   │
 │   ├── unit/
 │   │   ├── test_models.py
 │   │   ├── test_amm.py
-│   │   └── test_matching.py
+│   │   └── test_router.py
 │   │
 │   └── integration/
-│       ├── test_single_order.py
-│       ├── test_cow.py
-│       └── test_routing.py
+│       ├── test_api.py
+│       └── test_single_order.py
 │
 └── cython_modules/            # Added in Phase 4
     ├── setup.py
