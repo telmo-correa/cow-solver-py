@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 from solver.api.endpoints import get_solver
 from solver.api.main import app
 from solver.models.solution import SolverResponse
-from solver.routing.router import Solver
+from solver.solver import Solver
 
 FIXTURES_DIR = Path(__file__).parent.parent / "fixtures" / "auctions"
 

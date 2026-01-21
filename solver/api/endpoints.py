@@ -1,18 +1,21 @@
 """API endpoints for the CoW solver."""
 
+import os
+
 import structlog
 from fastapi import APIRouter, Depends
 
 from solver.models.auction import AuctionInstance
 from solver.models.solution import SolverResponse
-from solver.routing.router import Solver, solver
+from solver.solver import Solver, solver
 
 logger = structlog.get_logger()
 
 router = APIRouter()
 
 # Networks that this solver supports (has liquidity data for)
-SUPPORTED_NETWORKS = {"mainnet"}
+# Configurable via environment variable COW_SUPPORTED_NETWORKS (comma-separated)
+SUPPORTED_NETWORKS = set(os.environ.get("COW_SUPPORTED_NETWORKS", "mainnet").split(","))
 
 # Valid environment values
 VALID_ENVIRONMENTS = {"production", "staging", "shadow", "local"}

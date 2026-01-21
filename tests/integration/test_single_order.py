@@ -8,7 +8,8 @@ from fastapi.testclient import TestClient
 from solver.api.endpoints import get_solver
 from solver.api.main import app
 from solver.models.solution import SolverResponse
-from solver.routing.router import SingleOrderRouter, Solver
+from solver.routing.router import SingleOrderRouter
+from solver.solver import Solver
 from tests.conftest import MockAMM, MockPoolFinder, MockSwapConfig
 
 # Standard token addresses for tests

@@ -50,9 +50,9 @@ class OrderFill:
         For buy orders: complete when buy_filled == buy_amount
         """
         if self.order.is_sell_order:
-            return self.sell_filled >= int(self.order.sell_amount)
+            return self.sell_filled >= self.order.sell_amount_int
         else:
-            return self.buy_filled >= int(self.order.buy_amount)
+            return self.buy_filled >= self.order.buy_amount_int
 
     @property
     def executed_amount(self) -> int:
@@ -75,10 +75,10 @@ class OrderFill:
         For buy orders: buy_filled / buy_amount
         """
         if self.order.is_sell_order:
-            total = int(self.order.sell_amount)
+            total = self.order.sell_amount_int
             return self.sell_filled / total if total > 0 else 0.0
         else:
-            total = int(self.order.buy_amount)
+            total = self.order.buy_amount_int
             return self.buy_filled / total if total > 0 else 0.0
 
     def get_remainder_order(self) -> "Order | None":
@@ -95,8 +95,8 @@ class OrderFill:
         if self.is_complete:
             return None
 
-        original_sell = int(self.order.sell_amount)
-        original_buy = int(self.order.buy_amount)
+        original_sell = self.order.sell_amount_int
+        original_buy = self.order.buy_amount_int
 
         remaining_sell = original_sell - self.sell_filled
         remaining_buy = original_buy - self.buy_filled
@@ -313,8 +313,8 @@ class StrategyResult:
             order = fill.order
 
             # Order's limit amounts
-            sell_amount = int(order.sell_amount)
-            buy_amount = int(order.buy_amount)
+            sell_amount = order.sell_amount_int
+            buy_amount = order.buy_amount_int
 
             if sell_amount == 0 or fill.sell_filled == 0:
                 continue

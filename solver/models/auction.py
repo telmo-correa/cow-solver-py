@@ -118,6 +118,8 @@ class Order(BaseModel):
     buy_token: Address = Field(alias="buyToken")
     sell_amount: Uint256 = Field(alias="sellAmount")
     buy_amount: Uint256 = Field(alias="buyAmount")
+    full_sell_amount: Uint256 | None = Field(default=None, alias="fullSellAmount")
+    full_buy_amount: Uint256 | None = Field(default=None, alias="fullBuyAmount")
     fee_amount: Uint256 = Field(default="0", alias="feeAmount")
     kind: OrderKind
     partially_fillable: bool = Field(default=False, alias="partiallyFillable")
@@ -148,6 +150,30 @@ class Order(BaseModel):
     model_config = {"populate_by_name": True}
 
     @property
+    def sell_amount_int(self) -> int:
+        """Sell amount as integer for calculations."""
+        return int(self.sell_amount)
+
+    @property
+    def buy_amount_int(self) -> int:
+        """Buy amount as integer for calculations."""
+        return int(self.buy_amount)
+
+    @property
+    def full_sell_amount_int(self) -> int:
+        """Full sell amount as integer (falls back to sell_amount if not set)."""
+        if self.full_sell_amount is not None:
+            return int(self.full_sell_amount)
+        return int(self.sell_amount)
+
+    @property
+    def full_buy_amount_int(self) -> int:
+        """Full buy amount as integer (falls back to buy_amount if not set)."""
+        if self.full_buy_amount is not None:
+            return int(self.full_buy_amount)
+        return int(self.buy_amount)
+
+    @property
     def is_sell_order(self) -> bool:
         """Return True if this is a sell order."""
         return self.kind == OrderKind.SELL
@@ -160,8 +186,8 @@ class Order(BaseModel):
     @property
     def limit_price(self) -> float:
         """Return the limit price (buy_amount / sell_amount for sell orders)."""
-        sell = int(self.sell_amount)
-        buy = int(self.buy_amount)
+        sell = self.sell_amount_int
+        buy = self.buy_amount_int
         if sell == 0:
             return float("inf")
         return buy / sell

@@ -3,7 +3,8 @@
 from solver.amm.base import SwapResult
 from solver.amm.uniswap_v2 import UniswapV2Pool
 from solver.models.auction import Order, OrderClass, OrderKind
-from solver.routing.router import SingleOrderRouter, Solver
+from solver.routing.router import SingleOrderRouter
+from solver.solver import Solver
 
 # Note: The `router` fixture is defined in conftest.py with test pools
 
@@ -504,3 +505,80 @@ class TestDependencyInjection:
 
         # Mock router always fails, so no solutions
         assert len(response.solutions) == 0
+
+
+class TestBuildSolutionErrorPaths:
+    """Tests for build_solution error handling."""
+
+    def test_build_solution_returns_none_for_no_hops(self):
+        """build_solution returns None when routing result has no hops."""
+        from solver.routing.router import RoutingResult, SingleOrderRouter
+
+        router = SingleOrderRouter()
+        order = make_order()
+
+        # Create a routing result with success=True but no hops
+        # This is an inconsistent state that should be handled gracefully
+        result = RoutingResult(
+            order=order,
+            amount_in=1000,
+            amount_out=2000,
+            pool=None,
+            success=True,
+            hops=None,  # No hops
+        )
+
+        solution = router.build_solution(result)
+        assert solution is None
+
+    def test_build_solution_returns_none_for_empty_hops(self):
+        """build_solution returns None when routing result has empty hops list."""
+        from solver.routing.router import RoutingResult, SingleOrderRouter
+
+        router = SingleOrderRouter()
+        order = make_order()
+
+        result = RoutingResult(
+            order=order,
+            amount_in=1000,
+            amount_out=2000,
+            pool=None,
+            success=True,
+            hops=[],  # Empty hops
+        )
+
+        solution = router.build_solution(result)
+        assert solution is None
+
+
+class TestNetworkConfiguration:
+    """Tests for network configuration."""
+
+    def test_supported_networks_default(self):
+        """Default supported networks includes mainnet."""
+        from solver.api.endpoints import SUPPORTED_NETWORKS
+
+        assert "mainnet" in SUPPORTED_NETWORKS
+
+    def test_supported_networks_from_environment(self, monkeypatch):
+        """SUPPORTED_NETWORKS can be configured via environment."""
+        # Set the environment variable
+        monkeypatch.setenv("COW_SUPPORTED_NETWORKS", "mainnet,arbitrum-one,gnosis")
+
+        # Re-import to pick up the new environment variable
+        # (Note: In practice, this would require restarting the app)
+        import importlib
+
+        import solver.api.endpoints
+
+        importlib.reload(solver.api.endpoints)
+
+        from solver.api.endpoints import SUPPORTED_NETWORKS
+
+        assert "mainnet" in SUPPORTED_NETWORKS
+        assert "arbitrum-one" in SUPPORTED_NETWORKS
+        assert "gnosis" in SUPPORTED_NETWORKS
+
+        # Reset to default
+        monkeypatch.delenv("COW_SUPPORTED_NETWORKS", raising=False)
+        importlib.reload(solver.api.endpoints)

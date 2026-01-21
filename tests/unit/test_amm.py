@@ -593,3 +593,128 @@ class TestPartialFillCalculation:
             actual_rate = input_required / max_output if max_output > 0 else float("inf")
             limit_rate = sell_amount / buy_amount
             assert actual_rate <= limit_rate * 1.0001  # Allow tiny rounding
+
+
+class TestFeeParsingFallback:
+    """Tests for fee parsing error handling in parse_liquidity_to_pool."""
+
+    def test_valid_fee_parsing(self):
+        """Test parsing a valid fee string."""
+        from solver.amm.uniswap_v2 import parse_liquidity_to_pool
+        from solver.models.auction import Liquidity
+
+        liquidity = Liquidity(
+            id="test-pool",
+            kind="constantProduct",
+            tokens={
+                "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2": {"balance": "1000000000000000000"},
+                "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48": {"balance": "2500000000"},
+            },
+            address="0x1234567890123456789012345678901234567890",
+            fee="0.003",  # 0.3%
+        )
+
+        pool = parse_liquidity_to_pool(liquidity)
+        assert pool is not None
+        assert pool.fee_bps == 30  # 0.3% = 30 bps
+
+    def test_custom_fee_parsing(self):
+        """Test parsing a custom fee (e.g., 0.05% = 5 bps)."""
+        from solver.amm.uniswap_v2 import parse_liquidity_to_pool
+        from solver.models.auction import Liquidity
+
+        liquidity = Liquidity(
+            id="test-pool",
+            kind="constantProduct",
+            tokens={
+                "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2": {"balance": "1000000000000000000"},
+                "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48": {"balance": "2500000000"},
+            },
+            address="0x1234567890123456789012345678901234567890",
+            fee="0.0005",  # 0.05%
+        )
+
+        pool = parse_liquidity_to_pool(liquidity)
+        assert pool is not None
+        assert pool.fee_bps == 5  # 0.05% = 5 bps
+
+    def test_invalid_fee_falls_back_to_default(self):
+        """Test that invalid fee string falls back to default 30 bps."""
+        from solver.amm.uniswap_v2 import parse_liquidity_to_pool
+        from solver.models.auction import Liquidity
+
+        liquidity = Liquidity(
+            id="test-pool",
+            kind="constantProduct",
+            tokens={
+                "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2": {"balance": "1000000000000000000"},
+                "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48": {"balance": "2500000000"},
+            },
+            address="0x1234567890123456789012345678901234567890",
+            fee="not-a-number",  # Invalid fee string
+        )
+
+        pool = parse_liquidity_to_pool(liquidity)
+        assert pool is not None
+        assert pool.fee_bps == 30  # Falls back to default 30 bps
+
+    def test_no_fee_uses_default(self):
+        """Test that missing fee uses default 30 bps."""
+        from solver.amm.uniswap_v2 import parse_liquidity_to_pool
+        from solver.models.auction import Liquidity
+
+        liquidity = Liquidity(
+            id="test-pool",
+            kind="constantProduct",
+            tokens={
+                "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2": {"balance": "1000000000000000000"},
+                "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48": {"balance": "2500000000"},
+            },
+            address="0x1234567890123456789012345678901234567890",
+            # No fee field
+        )
+
+        pool = parse_liquidity_to_pool(liquidity)
+        assert pool is not None
+        assert pool.fee_bps == 30  # Default 30 bps
+
+
+class TestParseNonConstantProduct:
+    """Tests for parsing non-constantProduct liquidity."""
+
+    def test_non_constant_product_returns_none(self):
+        """Test that non-constantProduct liquidity returns None."""
+        from solver.amm.uniswap_v2 import parse_liquidity_to_pool
+        from solver.models.auction import Liquidity
+
+        liquidity = Liquidity(
+            id="test-pool",
+            kind="weightedProduct",  # Not constantProduct
+            tokens=[
+                "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+                "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+            ],
+            address="0x1234567890123456789012345678901234567890",
+        )
+
+        pool = parse_liquidity_to_pool(liquidity)
+        assert pool is None  # Should return None for non-constantProduct
+
+    def test_three_token_pool_returns_none(self):
+        """Test that pools with != 2 tokens return None."""
+        from solver.amm.uniswap_v2 import parse_liquidity_to_pool
+        from solver.models.auction import Liquidity
+
+        liquidity = Liquidity(
+            id="test-pool",
+            kind="constantProduct",
+            tokens={
+                "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2": {"balance": "1000"},
+                "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48": {"balance": "1000"},
+                "0x6B175474E89094C44Da98b954EeDeAC495271d0F": {"balance": "1000"},  # 3 tokens
+            },
+            address="0x1234567890123456789012345678901234567890",
+        )
+
+        pool = parse_liquidity_to_pool(liquidity)
+        assert pool is None  # Should return None for non-2-token pools

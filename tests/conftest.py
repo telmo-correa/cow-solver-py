@@ -10,7 +10,8 @@ import pytest
 from solver.amm.base import SwapResult
 from solver.amm.uniswap_v2 import PoolRegistry, UniswapV2Pool
 from solver.models import AuctionInstance
-from solver.routing.router import RoutingResult, SingleOrderRouter, Solver
+from solver.routing.router import RoutingResult, SingleOrderRouter
+from solver.solver import Solver
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 AUCTIONS_DIR = FIXTURES_DIR / "auctions"

@@ -16,12 +16,8 @@ that still satisfies the order's limit price.
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
 
 import structlog
-
-if TYPE_CHECKING:
-    from solver.strategies.base import SolutionStrategy
 
 from solver.amm.uniswap_v2 import (
     PoolRegistry,
@@ -30,12 +26,11 @@ from solver.amm.uniswap_v2 import (
     uniswap_v2,
 )
 from solver.constants import POOL_SWAP_GAS_COST, SETTLEMENT_OVERHEAD
-from solver.models.auction import AuctionInstance, Order
+from solver.models.auction import Order
 from solver.models.solution import (
     Interaction,
     LiquidityInteraction,
     Solution,
-    SolverResponse,
     Trade,
     TradeKind,
 )
@@ -139,6 +134,48 @@ class SingleOrderRouter:
             error=error,
         )
 
+    def _partial_fill_result(
+        self,
+        order: Order,
+        pool: UniswapV2Pool,
+        amount_in: int,
+        amount_out: int,
+        success: bool,
+        error: str | None = None,
+    ) -> RoutingResult:
+        """Create a routing result for partial fill attempts.
+
+        Used by both _try_partial_sell_order and _try_partial_buy_order
+        to reduce duplication in result construction.
+        """
+        if not success:
+            return RoutingResult(
+                order=order,
+                amount_in=amount_in,
+                amount_out=amount_out,
+                pool=pool,
+                success=False,
+                error=error,
+            )
+
+        hop = HopResult(
+            pool=pool,
+            input_token=normalize_address(order.sell_token),
+            output_token=normalize_address(order.buy_token),
+            amount_in=amount_in,
+            amount_out=amount_out,
+        )
+
+        return RoutingResult(
+            order=order,
+            amount_in=amount_in,
+            amount_out=amount_out,
+            pool=pool,
+            pools=[pool],
+            hops=[hop],
+            success=True,
+        )
+
     def route_order(self, order: Order) -> RoutingResult:
         """Find a route for a single order.
 
@@ -153,8 +190,8 @@ class SingleOrderRouter:
         """
         # Validate input amounts
         try:
-            sell_amount = int(order.sell_amount)
-            buy_amount = int(order.buy_amount)
+            sell_amount = order.sell_amount_int
+            buy_amount = order.buy_amount_int
         except (ValueError, TypeError) as e:
             return self._error_result(order, f"Invalid amount format: {e}")
 
@@ -264,15 +301,6 @@ class SingleOrderRouter:
 
         Calculates the maximum input amount that satisfies the order's
         limit price and simulates the swap at that amount.
-
-        Args:
-            order: The order to route
-            pool: The pool to swap through
-            sell_amount: Original sell amount
-            min_buy_amount: Minimum buy amount for the full order
-
-        Returns:
-            RoutingResult with the partial fill, or failure if no partial possible
         """
         reserve_in, reserve_out = pool.get_reserves(order.sell_token)
 
@@ -286,11 +314,18 @@ class SingleOrderRouter:
         )
 
         if max_input <= 0:
-            return RoutingResult(
-                order=order,
-                amount_in=0,
-                amount_out=0,
-                pool=pool,
+            logger.debug(
+                "partial_sell_order_no_valid_fill",
+                order_uid=order.uid[:18] + "...",
+                reason="pool_rate_worse_than_limit",
+                sell_amount=sell_amount,
+                min_buy_amount=min_buy_amount,
+            )
+            return self._partial_fill_result(
+                order,
+                pool,
+                0,
+                0,
                 success=False,
                 error="Pool rate worse than limit price, no partial fill possible",
             )
@@ -312,11 +347,11 @@ class SingleOrderRouter:
                 amount_out=swap_result.amount_out,
                 expected_min=min_buy_amount * max_input // sell_amount,
             )
-            return RoutingResult(
-                order=order,
-                amount_in=max_input,
-                amount_out=swap_result.amount_out,
-                pool=pool,
+            return self._partial_fill_result(
+                order,
+                pool,
+                max_input,
+                swap_result.amount_out,
                 success=False,
                 error="Partial fill calculation error",
             )
@@ -330,21 +365,11 @@ class SingleOrderRouter:
             amount_out=swap_result.amount_out,
         )
 
-        hop = HopResult(
-            pool=pool,
-            input_token=normalize_address(order.sell_token),
-            output_token=normalize_address(order.buy_token),
-            amount_in=max_input,
-            amount_out=swap_result.amount_out,
-        )
-
-        return RoutingResult(
-            order=order,
-            amount_in=max_input,
-            amount_out=swap_result.amount_out,
-            pool=pool,
-            pools=[pool],
-            hops=[hop],
+        return self._partial_fill_result(
+            order,
+            pool,
+            max_input,
+            swap_result.amount_out,
             success=True,
         )
 
@@ -415,15 +440,6 @@ class SingleOrderRouter:
 
         Calculates the maximum output amount that satisfies the order's
         limit price and simulates the swap for that amount.
-
-        Args:
-            order: The order to route
-            pool: The pool to swap through
-            max_sell_amount: Maximum input the user is willing to pay
-            buy_amount: Desired output amount for the full order
-
-        Returns:
-            RoutingResult with the partial fill, or failure if no partial possible
         """
         reserve_in, reserve_out = pool.get_reserves(order.sell_token)
 
@@ -437,11 +453,18 @@ class SingleOrderRouter:
         )
 
         if max_output <= 0:
-            return RoutingResult(
-                order=order,
-                amount_in=0,
-                amount_out=0,
-                pool=pool,
+            logger.debug(
+                "partial_buy_order_no_valid_fill",
+                order_uid=order.uid[:18] + "...",
+                reason="pool_rate_worse_than_limit",
+                max_sell_amount=max_sell_amount,
+                buy_amount=buy_amount,
+            )
+            return self._partial_fill_result(
+                order,
+                pool,
+                0,
+                0,
                 success=False,
                 error="Pool rate worse than limit price, no partial fill possible",
             )
@@ -463,11 +486,11 @@ class SingleOrderRouter:
                 amount_in=swap_result.amount_in,
                 expected_max=max_sell_amount * max_output // buy_amount,
             )
-            return RoutingResult(
-                order=order,
-                amount_in=swap_result.amount_in,
-                amount_out=max_output,
-                pool=pool,
+            return self._partial_fill_result(
+                order,
+                pool,
+                swap_result.amount_in,
+                max_output,
                 success=False,
                 error="Partial fill calculation error",
             )
@@ -481,21 +504,11 @@ class SingleOrderRouter:
             amount_in=swap_result.amount_in,
         )
 
-        hop = HopResult(
-            pool=pool,
-            input_token=normalize_address(order.sell_token),
-            output_token=normalize_address(order.buy_token),
-            amount_in=swap_result.amount_in,
-            amount_out=max_output,
-        )
-
-        return RoutingResult(
-            order=order,
-            amount_in=swap_result.amount_in,
-            amount_out=max_output,
-            pool=pool,
-            pools=[pool],
-            hops=[hop],
+        return self._partial_fill_result(
+            order,
+            pool,
+            swap_result.amount_in,
+            max_output,
             success=True,
         )
 
@@ -656,6 +669,11 @@ class SingleOrderRouter:
             Solution if successful, None otherwise
         """
         if not routing_result.success:
+            logger.debug(
+                "build_solution_skipped_failed_routing",
+                order_uid=routing_result.order.uid[:18] + "...",
+                error=routing_result.error,
+            )
             return None
 
         if not routing_result.hops:
@@ -737,144 +755,4 @@ class SingleOrderRouter:
         )
 
 
-class Solver:
-    """Main solver that processes auction instances using a strategy pattern.
-
-    The solver tries each strategy in order, composing partial results.
-    If a strategy returns a result with unfilled remainders, subsequent
-    strategies are tried on the remainder orders.
-
-    Default strategies (in priority order):
-    1. CowMatchStrategy - Direct peer-to-peer matching (no AMM fees)
-    2. AmmRoutingStrategy - Route through liquidity pools
-
-    Args:
-        strategies: List of strategies to try in order. If None, uses defaults.
-        router: Deprecated. Use AmmRoutingStrategy with injected router instead.
-        amm: Deprecated. Use AmmRoutingStrategy with injected AMM instead.
-    """
-
-    def __init__(
-        self,
-        strategies: "list[SolutionStrategy] | None" = None,
-        router: SingleOrderRouter | None = None,
-        amm: UniswapV2 | None = None,
-    ) -> None:
-        """Initialize the solver with strategies.
-
-        Args:
-            strategies: List of SolutionStrategy instances to try in order.
-                       If None, uses [CowMatchStrategy(), AmmRoutingStrategy()].
-            router: Deprecated. For backwards compatibility, if provided,
-                    creates AmmRoutingStrategy with this router.
-            amm: Deprecated. For backwards compatibility, if provided,
-                 creates AmmRoutingStrategy with this AMM.
-        """
-        if strategies is not None:
-            self.strategies = strategies
-        elif router is not None or amm is not None:
-            # Backwards compatibility: create strategies from legacy params
-            from solver.strategies import AmmRoutingStrategy, CowMatchStrategy
-
-            self.strategies = [
-                CowMatchStrategy(),
-                AmmRoutingStrategy(amm=amm, router=router),
-            ]
-        else:
-            # Default strategies
-            from solver.strategies import AmmRoutingStrategy, CowMatchStrategy
-
-            self.strategies = [
-                CowMatchStrategy(),
-                AmmRoutingStrategy(),
-            ]
-
-    def solve(self, auction: AuctionInstance) -> SolverResponse:
-        """Solve an auction batch by composing strategy results.
-
-        Strategies are tried in priority order. Each strategy may return
-        a partial result with remainder orders. Subsequent strategies
-        are tried on the remainders until all orders are filled or no
-        strategy can make progress.
-
-        This enables composition: e.g., CoW matching fills part of orders,
-        then AMM routing fills the remainder.
-
-        Args:
-            auction: The auction to solve
-
-        Returns:
-            SolverResponse with proposed solutions
-        """
-        from solver.strategies.base import StrategyResult
-
-        if auction.order_count == 0:
-            return SolverResponse.empty()
-
-        # Collect results from strategies
-        results: list[StrategyResult] = []
-        current_auction = auction
-
-        for strategy in self.strategies:
-            if current_auction.order_count == 0:
-                break
-
-            result = strategy.try_solve(current_auction)
-            if result is not None and result.has_fills:
-                logger.info(
-                    "strategy_succeeded",
-                    strategy=type(strategy).__name__,
-                    order_count=current_auction.order_count,
-                    fills=len(result.fills),
-                    remainders=len(result.remainder_orders),
-                )
-                results.append(result)
-
-                # If there are remainders, create a sub-auction for next strategy
-                if result.remainder_orders:
-                    current_auction = self._create_sub_auction(
-                        current_auction, result.remainder_orders
-                    )
-                else:
-                    # All orders filled, we're done
-                    break
-
-        if not results:
-            logger.debug(
-                "no_strategy_found_solution",
-                order_count=auction.order_count,
-                strategies_tried=[type(s).__name__ for s in self.strategies],
-            )
-            return SolverResponse.empty()
-
-        # Combine all results into final solution
-        combined = StrategyResult.combine(results)
-        solution = combined.build_solution(solution_id=0)
-
-        return SolverResponse(solutions=[solution])
-
-    def _create_sub_auction(
-        self, original: AuctionInstance, orders: list[Order]
-    ) -> AuctionInstance:
-        """Create a sub-auction with the given orders.
-
-        Preserves tokens and liquidity from the original auction.
-
-        Args:
-            original: The original auction
-            orders: Orders to include in the sub-auction
-
-        Returns:
-            A new AuctionInstance with the specified orders
-        """
-        logger.debug(
-            "sub_auction_created",
-            original_order_count=original.order_count,
-            remainder_order_count=len(orders),
-            order_uids=[o.uid[:18] + "..." for o in orders],
-        )
-        return original.model_copy(update={"orders": orders})
-
-
-# Singleton solver instance
-solver = Solver()
+__all__ = ["SingleOrderRouter", "RoutingResult", "HopResult"]

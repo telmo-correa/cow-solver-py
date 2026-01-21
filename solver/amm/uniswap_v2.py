@@ -7,6 +7,7 @@ With a 0.3% fee on input amounts.
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, ClassVar
 
+import structlog
 from eth_abi import encode  # type: ignore[attr-defined]
 
 from solver.amm.base import AMM, SwapResult
@@ -15,6 +16,8 @@ from solver.models.types import is_valid_address, normalize_address
 
 if TYPE_CHECKING:
     from solver.models.auction import Liquidity
+
+logger = structlog.get_logger()
 
 
 @dataclass
@@ -641,7 +644,12 @@ def parse_liquidity_to_pool(liquidity: "Liquidity") -> UniswapV2Pool | None:
             fee_decimal = float(liquidity.fee)
             fee_bps = int(fee_decimal * 10000)
         except ValueError:
-            pass
+            logger.warning(
+                "fee_parse_failed",
+                pool_id=liquidity.id,
+                raw_fee=liquidity.fee,
+                using_default="0.003 (30 bps)",
+            )
 
     return UniswapV2Pool(
         address=normalize_address(liquidity.address),
