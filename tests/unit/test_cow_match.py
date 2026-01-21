@@ -224,24 +224,62 @@ class TestCowMatchDetection:
 
         assert solution is None
 
-    def test_no_match_buy_orders(self):
-        """Buy orders are not yet supported for CoW matching."""
-        # Order A: buy order wanting 1 WETH, willing to pay up to 3000 USDC
+    def test_sell_buy_match(self):
+        """Sell order matched with buy order (sell-buy)."""
+        # Order A (sell): sells 1 WETH, wants min 2500 USDC
+        # Order B (buy): wants 1 WETH, willing to pay up to 3000 USDC
         order_a = make_order(
             uid="0x" + "01" * 56,
-            sell_token=USDC,
-            buy_token=WETH,
-            sell_amount="3000000000",  # max to sell
-            buy_amount="1000000000000000000",  # wants 1 WETH
-            kind="buy",
-        )
-        # Order B: sell order selling 1 WETH for 3000 USDC
-        order_b = make_order(
-            uid="0x" + "02" * 56,
             sell_token=WETH,
             buy_token=USDC,
-            sell_amount="1000000000000000000",
-            buy_amount="3000000000",
+            sell_amount="1000000000000000000",  # sells 1 WETH
+            buy_amount="2500000000",  # wants min 2500 USDC
+            kind="sell",
+        )
+        order_b = make_order(
+            uid="0x" + "02" * 56,
+            sell_token=USDC,
+            buy_token=WETH,
+            sell_amount="3000000000",  # max to pay: 3000 USDC
+            buy_amount="1000000000000000000",  # wants exactly 1 WETH
+            kind="buy",
+        )
+
+        strategy = CowMatchStrategy()
+        auction = make_auction([order_a, order_b])
+        solution = strategy.try_solve(auction)
+
+        assert solution is not None
+        assert len(solution.trades) == 2
+        assert len(solution.interactions) == 0
+
+        # Find trades by order UID
+        trade_a = next(t for t in solution.trades if t.order == order_a.uid)
+        trade_b = next(t for t in solution.trades if t.order == order_b.uid)
+
+        # A (sell): executed_amount = sell amount
+        assert trade_a.executed_amount == "1000000000000000000"
+        # B (buy): executed_amount = buy amount
+        assert trade_b.executed_amount == "1000000000000000000"
+
+    def test_buy_sell_match(self):
+        """Buy order matched with sell order (buy-sell)."""
+        # Order A (buy): wants 3000 USDC, willing to pay up to 1 WETH
+        # Order B (sell): sells 3000 USDC, wants min 1 WETH
+        order_a = make_order(
+            uid="0x" + "01" * 56,
+            sell_token=WETH,
+            buy_token=USDC,
+            sell_amount="1000000000000000000",  # max to pay: 1 WETH
+            buy_amount="3000000000",  # wants exactly 3000 USDC
+            kind="buy",
+        )
+        order_b = make_order(
+            uid="0x" + "02" * 56,
+            sell_token=USDC,
+            buy_token=WETH,
+            sell_amount="3000000000",  # sells 3000 USDC
+            buy_amount="1000000000000000000",  # wants min 1 WETH
             kind="sell",
         )
 
@@ -249,7 +287,167 @@ class TestCowMatchDetection:
         auction = make_auction([order_a, order_b])
         solution = strategy.try_solve(auction)
 
-        # Buy orders should not match (not yet supported)
+        assert solution is not None
+        assert len(solution.trades) == 2
+        assert len(solution.interactions) == 0
+
+        # Find trades by order UID
+        trade_a = next(t for t in solution.trades if t.order == order_a.uid)
+        trade_b = next(t for t in solution.trades if t.order == order_b.uid)
+
+        # A (buy): executed_amount = buy amount
+        assert trade_a.executed_amount == "3000000000"
+        # B (sell): executed_amount = sell amount
+        assert trade_b.executed_amount == "3000000000"
+
+    def test_buy_buy_match(self):
+        """Two buy orders matched (buy-buy)."""
+        # Order A (buy): wants 1 WETH, willing to pay up to 3000 USDC
+        # Order B (buy): wants 2500 USDC, willing to pay up to 1 WETH
+        order_a = make_order(
+            uid="0x" + "01" * 56,
+            sell_token=USDC,
+            buy_token=WETH,
+            sell_amount="3000000000",  # max to pay: 3000 USDC
+            buy_amount="1000000000000000000",  # wants 1 WETH
+            kind="buy",
+        )
+        order_b = make_order(
+            uid="0x" + "02" * 56,
+            sell_token=WETH,
+            buy_token=USDC,
+            sell_amount="1000000000000000000",  # max to pay: 1 WETH
+            buy_amount="2500000000",  # wants 2500 USDC
+            kind="buy",
+        )
+
+        strategy = CowMatchStrategy()
+        auction = make_auction([order_a, order_b])
+        solution = strategy.try_solve(auction)
+
+        assert solution is not None
+        assert len(solution.trades) == 2
+        assert len(solution.interactions) == 0
+
+        # Find trades by order UID
+        trade_a = next(t for t in solution.trades if t.order == order_a.uid)
+        trade_b = next(t for t in solution.trades if t.order == order_b.uid)
+
+        # A (buy): executed_amount = buy amount (1 WETH)
+        assert trade_a.executed_amount == "1000000000000000000"
+        # B (buy): executed_amount = buy amount (2500 USDC)
+        assert trade_b.executed_amount == "2500000000"
+
+    def test_sell_buy_no_match_amounts_differ(self):
+        """Sell-buy doesn't match when sell amount != buy amount."""
+        # Order A (sell): sells 2 WETH
+        # Order B (buy): wants only 1 WETH
+        # Can't fully fill both
+        order_a = make_order(
+            uid="0x" + "01" * 56,
+            sell_token=WETH,
+            buy_token=USDC,
+            sell_amount="2000000000000000000",  # 2 WETH
+            buy_amount="5000000000",
+            kind="sell",
+        )
+        order_b = make_order(
+            uid="0x" + "02" * 56,
+            sell_token=USDC,
+            buy_token=WETH,
+            sell_amount="3000000000",
+            buy_amount="1000000000000000000",  # wants only 1 WETH
+            kind="buy",
+        )
+
+        strategy = CowMatchStrategy()
+        auction = make_auction([order_a, order_b])
+        solution = strategy.try_solve(auction)
+
+        assert solution is None
+
+    def test_sell_buy_no_match_limit_not_met(self):
+        """Sell-buy doesn't match when sell order's limit not satisfied."""
+        # Order A (sell): sells 1 WETH, wants min 3500 USDC
+        # Order B (buy): wants 1 WETH, max payment 3000 USDC
+        # B can't pay enough for A's limit
+        order_a = make_order(
+            uid="0x" + "01" * 56,
+            sell_token=WETH,
+            buy_token=USDC,
+            sell_amount="1000000000000000000",
+            buy_amount="3500000000",  # wants 3500 USDC
+            kind="sell",
+        )
+        order_b = make_order(
+            uid="0x" + "02" * 56,
+            sell_token=USDC,
+            buy_token=WETH,
+            sell_amount="3000000000",  # can only pay 3000 USDC
+            buy_amount="1000000000000000000",
+            kind="buy",
+        )
+
+        strategy = CowMatchStrategy()
+        auction = make_auction([order_a, order_b])
+        solution = strategy.try_solve(auction)
+
+        assert solution is None
+
+    def test_buy_buy_no_match_a_cant_afford(self):
+        """Buy-buy doesn't match when A can't afford what B wants."""
+        # Order A (buy): wants 1 WETH, max payment 2000 USDC
+        # Order B (buy): wants 2500 USDC, max payment 1 WETH
+        # A can only pay 2000 USDC but B wants 2500
+        order_a = make_order(
+            uid="0x" + "01" * 56,
+            sell_token=USDC,
+            buy_token=WETH,
+            sell_amount="2000000000",  # max payment: 2000 USDC
+            buy_amount="1000000000000000000",
+            kind="buy",
+        )
+        order_b = make_order(
+            uid="0x" + "02" * 56,
+            sell_token=WETH,
+            buy_token=USDC,
+            sell_amount="1000000000000000000",
+            buy_amount="2500000000",  # wants 2500 USDC
+            kind="buy",
+        )
+
+        strategy = CowMatchStrategy()
+        auction = make_auction([order_a, order_b])
+        solution = strategy.try_solve(auction)
+
+        assert solution is None
+
+    def test_buy_buy_no_match_b_cant_afford(self):
+        """Buy-buy doesn't match when B can't afford what A wants."""
+        # Order A (buy): wants 1 WETH, max payment 3000 USDC
+        # Order B (buy): wants 2500 USDC, max payment 0.5 WETH
+        # B can only pay 0.5 WETH but A wants 1 WETH
+        order_a = make_order(
+            uid="0x" + "01" * 56,
+            sell_token=USDC,
+            buy_token=WETH,
+            sell_amount="3000000000",
+            buy_amount="1000000000000000000",  # wants 1 WETH
+            kind="buy",
+        )
+        order_b = make_order(
+            uid="0x" + "02" * 56,
+            sell_token=WETH,
+            buy_token=USDC,
+            sell_amount="500000000000000000",  # max payment: 0.5 WETH
+            buy_amount="2500000000",
+            kind="buy",
+        )
+
+        strategy = CowMatchStrategy()
+        auction = make_auction([order_a, order_b])
+        solution = strategy.try_solve(auction)
+
         assert solution is None
 
 

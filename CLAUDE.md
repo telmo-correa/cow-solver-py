@@ -99,7 +99,7 @@ cow-solver-py/
 - ✅ **Strategy pattern** for solution finding (SolutionStrategy protocol)
 - ✅ **CoW matching** (2-order peer-to-peer settlement without AMM)
 
-**Total: 99 passing tests** (unit + integration)
+**Total: 105 passing tests** (unit + integration)
 
 ### Rust Baseline Solver Limitations
 

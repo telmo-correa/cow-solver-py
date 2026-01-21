@@ -91,6 +91,9 @@ Location: `tests/fixtures/auctions/benchmark_python_only/`
 
 These test Python-only features not available in the Rust baseline:
 - CoW matching (2-order peer-to-peer settlement)
+  - sell-sell matches (`cow_pair_basic.json`)
+  - sell-buy matches (`cow_pair_sell_buy.json`)
+  - buy-buy matches (`cow_pair_buy_buy.json`)
 - Future: multi-order batching, partial CoW + AMM remainder
 
 **Use for**: Python-only validation (no Rust comparison possible)

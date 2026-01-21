@@ -102,7 +102,7 @@ Each slice delivers end-to-end functionality for a specific auction type, with t
 - [x] Order pair detection (opposite directions, same tokens)
 - [x] Direct settlement without AMM (0 interactions, gas=0)
 - [x] Uniform clearing price calculation
-- [x] Test: 14 unit tests for CoW matching
+- [x] Test: 20 unit tests for CoW matching (all order type combinations)
 - [x] Benchmark: Python-only (Rust baseline doesn't support CoW matching)
 
 ### Slice 2.2: Partial CoW + AMM Remainder
