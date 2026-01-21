@@ -93,7 +93,7 @@ cow-solver-py/
 - ✅ Centralized constants (`solver/constants.py`)
 - ✅ Server management script (`scripts/servers.sh`)
 
-**Total: 88 passing tests** (unit + integration)
+**Total: 85 passing tests** (unit + integration)
 
 ### What's Next (Phase 2: Coincidence of Wants)
 See `PLAN.md` for full details. Next slices:

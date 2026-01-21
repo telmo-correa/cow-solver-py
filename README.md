@@ -13,7 +13,7 @@ This project implements a solver for [CoW Protocol](https://cow.fi/) batch aucti
 
 ## Status
 
-🚧 **Work in Progress** — Currently in Phase 1 (Single Order via DEX)
+✅ **Phase 1 Complete** — Single order routing via UniswapV2 (direct + multi-hop)
 
 See [PLAN.md](PLAN.md) for the detailed implementation roadmap.
 

@@ -29,44 +29,38 @@ python scripts/run_benchmarks.py --python-url http://localhost:8000 --rust-url h
 
 ```
 ============================================================
-CoW Protocol Solver Benchmark (HTTP)
+CoW Protocol Solver Benchmark
 ============================================================
 Auctions directory: tests/fixtures/auctions/benchmark
 Python solver: http://localhost:8000
 Rust solver:   http://localhost:8080
 
-Total auctions: 5
-Successful: 5
+Total auctions: 7
+Successful: 7/7
 
-Python found solutions: 5/5
-Rust found solutions:   5/5
-
-Time Comparison (Python / Rust):
-  Mean:   1.95x
-  Median: 1.67x
-  Range:  1.49x - 3.15x
-  Faster: Rust
+Python found solutions: 7/7
+Rust found solutions:   7/7
+Solutions match: 7/7 (100%)
 
 Individual Results:
 ------------------------------------------------------------
   buy_usdc_with_weth (BUY ORDER):
-    Python: 6.4ms, solutions=1
-    Rust:   2.0ms, solutions=1
+    Python: ✓, Rust: ✓, Match: ✓
   usdc_to_weth:
-    Python: 1.5ms, solutions=1
-    Rust:   0.9ms, solutions=1
+    Python: ✓, Rust: ✓, Match: ✓
   weth_to_dai:
-    Python: 1.4ms, solutions=1
-    Rust:   0.8ms, solutions=1
+    Python: ✓, Rust: ✓, Match: ✓
   weth_to_usdc:
-    Python: 1.3ms, solutions=1
-    Rust:   0.8ms, solutions=1
+    Python: ✓, Rust: ✓, Match: ✓
   large_weth_to_usdc:
-    Python: 1.1ms, solutions=1
-    Rust:   0.8ms, solutions=1
+    Python: ✓, Rust: ✓, Match: ✓
+  usdc_to_dai_multihop (2-hop):
+    Python: ✓, Rust: ✓, Match: ✓
+  dai_to_usdc_multihop (2-hop):
+    Python: ✓, Rust: ✓, Match: ✓
 ```
 
-**Summary**: The Rust solver is approximately 2x faster than the Python solver. Both solvers find valid solutions for all test cases, including buy orders.
+**Summary**: Both solvers produce identical solutions for all 7 test cases, including buy orders and multi-hop routes. Python is approximately 2x slower than Rust.
 
 ## Setting Up the Rust Solver
 

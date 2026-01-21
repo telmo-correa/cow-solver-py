@@ -82,6 +82,7 @@ Each slice delivers end-to-end functionality for a specific auction type, with t
 - [x] Benchmark: Python 7/7 solutions, Rust 7/7 solutions (both match, ~2x slower)
 - [x] Refactored solver to use auction-provided liquidity instead of hardcoded pools
 - [x] Configured Rust baseline solver for multi-hop routing (max-hops=1, base-tokens=[WETH])
+- [x] Gas estimation: 60k per hop (`POOL_SWAP_GAS_COST`) + 106k settlement overhead
 
 **Exit Criteria:** Solver handles any single-order auction with UniV2 liquidity. ✅
 
