@@ -159,6 +159,55 @@ class TestSwapSimulation:
         assert result.token_in == "0xTokenA"
         assert result.token_out == "0xTokenB"
 
+    def test_simulate_swap_exact_output(self):
+        """Simulate a swap for exact output amount."""
+        pool = UniswapV2Pool(
+            address="0xPoolAddress",
+            token0="0xTokenA",
+            token1="0xTokenB",
+            reserve0=100 * 10**18,
+            reserve1=200 * 10**18,
+        )
+
+        result = uniswap_v2.simulate_swap_exact_output(
+            pool=pool,
+            token_in="0xTokenA",
+            amount_out=1 * 10**18,
+        )
+
+        assert result.amount_out == 1 * 10**18
+        assert result.amount_in > 0
+        assert result.pool_address == "0xPoolAddress"
+        assert result.token_in == "0xTokenA"
+        assert result.token_out == "0xTokenB"
+
+    def test_simulate_swap_exact_output_consistency(self):
+        """Exact output simulation should be consistent with exact input."""
+        pool = UniswapV2Pool(
+            address="0xPoolAddress",
+            token0="0xTokenA",
+            token1="0xTokenB",
+            reserve0=100 * 10**18,
+            reserve1=200 * 10**18,
+        )
+
+        # Get required input for 1 token output
+        exact_out_result = uniswap_v2.simulate_swap_exact_output(
+            pool=pool,
+            token_in="0xTokenA",
+            amount_out=1 * 10**18,
+        )
+
+        # Use that input amount and verify output
+        exact_in_result = uniswap_v2.simulate_swap(
+            pool=pool,
+            token_in="0xTokenA",
+            amount_in=exact_out_result.amount_in,
+        )
+
+        # Should get at least the desired output (get_amount_in rounds up)
+        assert exact_in_result.amount_out >= exact_out_result.amount_out
+
 
 class TestPoolRegistry:
     """Tests for pool lookup."""
@@ -278,6 +327,77 @@ class TestSwapEncoding:
                 amount_in=1000,
                 amount_out_min=900,
                 recipient="invalid",
+            )
+
+
+class TestSwapExactOutputEncoding:
+    """Tests for exact output swap calldata encoding (buy orders)."""
+
+    def test_encode_swap_exact_output_returns_valid_calldata(self):
+        """Encoded exact output swap has correct format."""
+        amm = UniswapV2()
+        target, calldata = amm.encode_swap_exact_output(
+            token_in="0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+            token_out="0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+            amount_out=2400 * 10**6,
+            amount_in_max=1 * 10**18,
+            recipient="0x9008D19f58AAbD9eD0D60971565AA8510560ab41",
+        )
+
+        assert target == UniswapV2.ROUTER_ADDRESS
+        assert calldata.startswith("0x8803dbee")  # swapTokensForExactTokens selector
+        assert len(calldata) > 10
+
+    def test_encode_swap_exact_output_encodes_correct_values(self):
+        """Verify the encoded calldata contains correct values."""
+        from eth_abi import decode
+
+        amm = UniswapV2()
+        weth = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
+        usdc = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
+        recipient = "0x9008D19f58AAbD9eD0D60971565AA8510560ab41"
+        amount_out = 2400 * 10**6
+        amount_in_max = 1 * 10**18
+
+        _, calldata = amm.encode_swap_exact_output(
+            token_in=weth,
+            token_out=usdc,
+            amount_out=amount_out,
+            amount_in_max=amount_in_max,
+            recipient=recipient,
+        )
+
+        # Remove selector (first 4 bytes = 8 hex chars + "0x")
+        encoded_args = bytes.fromhex(calldata[10:])
+
+        # Decode the arguments
+        # swapTokensForExactTokens(uint256,uint256,address[],address,uint256)
+        decoded = decode(
+            ["uint256", "uint256", "address[]", "address", "uint256"],
+            encoded_args,
+        )
+
+        decoded_amount_out, decoded_amount_in_max, path, decoded_recipient, deadline = decoded
+
+        assert decoded_amount_out == amount_out
+        assert decoded_amount_in_max == amount_in_max
+        assert len(path) == 2
+        assert path[0].lower() == weth.lower()
+        assert path[1].lower() == usdc.lower()
+        assert decoded_recipient.lower() == recipient.lower()
+        assert deadline == 2**32 - 1
+
+    def test_encode_swap_exact_output_validates_addresses(self):
+        """encode_swap_exact_output should reject invalid addresses."""
+        amm = UniswapV2()
+
+        with pytest.raises(ValueError, match="Invalid token_in"):
+            amm.encode_swap_exact_output(
+                token_in="invalid",
+                token_out="0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+                amount_out=1000,
+                amount_in_max=2000,
+                recipient="0x9008D19f58AAbD9eD0D60971565AA8510560ab41",
             )
 
 

@@ -5,7 +5,6 @@ for the CoW Protocol settlement.
 
 Current limitations:
 - Only single-order auctions supported
-- Only sell orders supported (buy orders in Slice 1.3)
 - Partially fillable orders are executed fully or not at all
 - Multi-hop routing not yet implemented (Slice 1.4)
 """
@@ -73,6 +72,8 @@ class SingleOrderRouter:
     def route_order(self, order: Order) -> RoutingResult:
         """Find a route for a single order.
 
+        Handles both sell orders (exact input) and buy orders (exact output).
+
         Args:
             order: The order to route
 
@@ -82,7 +83,7 @@ class SingleOrderRouter:
         # Validate input amounts
         try:
             sell_amount = int(order.sell_amount)
-            min_buy_amount = int(order.buy_amount)
+            buy_amount = int(order.buy_amount)
         except (ValueError, TypeError) as e:
             return RoutingResult(
                 order=order,
@@ -103,7 +104,7 @@ class SingleOrderRouter:
                 error="Sell amount must be positive",
             )
 
-        if min_buy_amount <= 0:
+        if buy_amount <= 0:
             return RoutingResult(
                 order=order,
                 amount_in=0,
@@ -125,14 +126,31 @@ class SingleOrderRouter:
                 error=f"No pool found for {order.sell_token}/{order.buy_token}",
             )
 
-        # Simulate the swap
+        if order.is_sell_order:
+            return self._route_sell_order(order, pool, sell_amount, buy_amount)
+        else:
+            return self._route_buy_order(order, pool, sell_amount, buy_amount)
+
+    def _route_sell_order(
+        self,
+        order: Order,
+        pool: UniswapV2Pool,
+        sell_amount: int,
+        min_buy_amount: int,
+    ) -> RoutingResult:
+        """Route a sell order (exact input, minimum output).
+
+        For sell orders:
+        - sell_amount is the exact amount to sell
+        - buy_amount is the minimum acceptable output
+        """
         swap_result = self.amm.simulate_swap(
             pool=pool,
             token_in=order.sell_token,
             amount_in=sell_amount,
         )
 
-        # Check if output meets minimum (buy_amount is the minimum acceptable)
+        # Check if output meets minimum
         if swap_result.amount_out < min_buy_amount:
             return RoutingResult(
                 order=order,
@@ -147,6 +165,44 @@ class SingleOrderRouter:
             order=order,
             amount_in=sell_amount,
             amount_out=swap_result.amount_out,
+            pool=pool,
+            success=True,
+        )
+
+    def _route_buy_order(
+        self,
+        order: Order,
+        pool: UniswapV2Pool,
+        max_sell_amount: int,
+        buy_amount: int,
+    ) -> RoutingResult:
+        """Route a buy order (exact output, maximum input).
+
+        For buy orders:
+        - buy_amount is the exact amount to receive
+        - sell_amount is the maximum willing to pay
+        """
+        swap_result = self.amm.simulate_swap_exact_output(
+            pool=pool,
+            token_in=order.sell_token,
+            amount_out=buy_amount,
+        )
+
+        # Check if required input exceeds maximum
+        if swap_result.amount_in > max_sell_amount:
+            return RoutingResult(
+                order=order,
+                amount_in=swap_result.amount_in,
+                amount_out=buy_amount,
+                pool=pool,
+                success=False,
+                error=f"Required input {swap_result.amount_in} exceeds maximum {max_sell_amount}",
+            )
+
+        return RoutingResult(
+            order=order,
+            amount_in=swap_result.amount_in,
+            amount_out=buy_amount,
             pool=pool,
             success=True,
         )
@@ -171,15 +227,21 @@ class SingleOrderRouter:
         order = routing_result.order
 
         # Build the trade (order execution)
+        # executedAmount semantics:
+        # - For sell orders: the amount sold (amount_in)
+        # - For buy orders: the amount bought (amount_out)
+        if order.is_sell_order:
+            executed_amount = routing_result.amount_in
+        else:
+            executed_amount = routing_result.amount_out
+
         trade = Trade(
             kind=TradeKind.FULFILLMENT,
             order=order.uid,
-            executedAmount=str(routing_result.amount_in),
+            executedAmount=str(executed_amount),
         )
 
         # Encode the swap interaction
-        # For a sell order, we swap exact input for minimum output
-        #
         # NOTE on token transfers in CoW Protocol:
         # The CoW Settlement contract (0x9008D19f58AAbD9eD0D60971565AA8510560ab41)
         # already has custody of user tokens via ERC20 approvals. The settlement
@@ -191,13 +253,24 @@ class SingleOrderRouter:
         # The solver only needs to encode the swap interaction. The driver/settlement
         # contract handles all token movements based on the solution's trades and
         # interaction inputs/outputs.
-        target, calldata = self.amm.encode_swap(
-            token_in=order.sell_token,
-            token_out=order.buy_token,
-            amount_in=routing_result.amount_in,
-            amount_out_min=int(order.buy_amount),  # Minimum acceptable
-            recipient=COW_SETTLEMENT,
-        )
+        if order.is_sell_order:
+            # Sell order: exact input, minimum output
+            target, calldata = self.amm.encode_swap(
+                token_in=order.sell_token,
+                token_out=order.buy_token,
+                amount_in=routing_result.amount_in,
+                amount_out_min=int(order.buy_amount),  # Minimum acceptable
+                recipient=COW_SETTLEMENT,
+            )
+        else:
+            # Buy order: exact output, maximum input
+            target, calldata = self.amm.encode_swap_exact_output(
+                token_in=order.sell_token,
+                token_out=order.buy_token,
+                amount_out=routing_result.amount_out,
+                amount_in_max=int(order.sell_amount),  # Maximum acceptable
+                recipient=COW_SETTLEMENT,
+            )
 
         interaction = CustomInteraction(
             target=target,
@@ -225,7 +298,7 @@ class SingleOrderRouter:
         # CoW Protocol uses uniform clearing prices where:
         #   executed_sell * price[sell_token] >= executed_buy * price[buy_token]
         #
-        # For a sell order that sells `amount_in` of sell_token for `amount_out` of buy_token:
+        # The pricing works the same for both sell and buy orders:
         # We set prices such that the exchange rate is amount_out / amount_in
         #
         # Using sell_token as the reference (price = PRICE_SCALE = 1e18):
@@ -295,15 +368,6 @@ class Solver:
     def _solve_single_order(self, auction: AuctionInstance) -> SolverResponse:
         """Solve a single-order auction."""
         order = auction.orders[0]
-
-        # Only handle sell orders for now
-        if not order.is_sell_order:
-            logger.info(
-                "skipping_buy_order",
-                order_uid=order.uid,
-                message="Buy orders not yet supported (Slice 1.3)",
-            )
-            return SolverResponse.empty()
 
         # Log if order is partially fillable (we still process it, but execute fully)
         if order.partially_fillable:

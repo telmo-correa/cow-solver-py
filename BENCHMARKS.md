@@ -35,35 +35,38 @@ Auctions directory: tests/fixtures/auctions/benchmark
 Python solver: http://localhost:8000
 Rust solver:   http://localhost:8080
 
-Total auctions: 4
-Successful: 4
+Total auctions: 5
+Successful: 5
 
-Python found solutions: 4/4
-Rust found solutions:   4/4
+Python found solutions: 5/5
+Rust found solutions:   5/5
 
 Time Comparison (Python / Rust):
-  Mean:   2.11x
-  Median: 1.71x
-  Range:  1.55x - 3.46x
+  Mean:   1.95x
+  Median: 1.67x
+  Range:  1.49x - 3.15x
   Faster: Rust
 
 Individual Results:
 ------------------------------------------------------------
-  usdc_to_weth:
-    Python: 7.0ms, solutions=1
+  buy_usdc_with_weth (BUY ORDER):
+    Python: 6.4ms, solutions=1
     Rust:   2.0ms, solutions=1
-  weth_to_dai:
+  usdc_to_weth:
     Python: 1.5ms, solutions=1
+    Rust:   0.9ms, solutions=1
+  weth_to_dai:
+    Python: 1.4ms, solutions=1
     Rust:   0.8ms, solutions=1
   weth_to_usdc:
     Python: 1.3ms, solutions=1
     Rust:   0.8ms, solutions=1
   large_weth_to_usdc:
-    Python: 1.3ms, solutions=1
-    Rust:   0.9ms, solutions=1
+    Python: 1.1ms, solutions=1
+    Rust:   0.8ms, solutions=1
 ```
 
-**Summary**: The Rust solver is approximately 2x faster than the Python solver. Both solvers find valid solutions for all test cases.
+**Summary**: The Rust solver is approximately 2x faster than the Python solver. Both solvers find valid solutions for all test cases, including buy orders.
 
 ## Setting Up the Rust Solver
 

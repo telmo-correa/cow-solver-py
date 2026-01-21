@@ -143,7 +143,7 @@ class UniswapV2(AMM):
         token_in: str,
         amount_in: int,
     ) -> SwapResult:
-        """Simulate a swap through a pool.
+        """Simulate a swap through a pool (exact input).
 
         Args:
             pool: The liquidity pool
@@ -156,6 +156,35 @@ class UniswapV2(AMM):
         reserve_in, reserve_out = pool.get_reserves(token_in)
         token_out = pool.get_token_out(token_in)
         amount_out = self.get_amount_out(amount_in, reserve_in, reserve_out, pool.fee_multiplier)
+
+        return SwapResult(
+            amount_in=amount_in,
+            amount_out=amount_out,
+            pool_address=pool.address,
+            token_in=token_in,
+            token_out=token_out,
+            gas_estimate=self.SWAP_GAS,
+        )
+
+    def simulate_swap_exact_output(
+        self,
+        pool: UniswapV2Pool,
+        token_in: str,
+        amount_out: int,
+    ) -> SwapResult:
+        """Simulate a swap to get exact output amount.
+
+        Args:
+            pool: The liquidity pool
+            token_in: Input token address
+            amount_out: Desired output amount
+
+        Returns:
+            SwapResult with required input and desired output
+        """
+        reserve_in, reserve_out = pool.get_reserves(token_in)
+        token_out = pool.get_token_out(token_in)
+        amount_in = self.get_amount_in(amount_out, reserve_in, reserve_out, pool.fee_multiplier)
 
         return SwapResult(
             amount_in=amount_in,
@@ -218,6 +247,61 @@ class UniswapV2(AMM):
         )
 
         calldata = self.SWAP_EXACT_TOKENS_SELECTOR + encoded_args.hex()
+
+        return self.ROUTER_ADDRESS, calldata
+
+    def encode_swap_exact_output(
+        self,
+        token_in: str,
+        token_out: str,
+        amount_out: int,
+        amount_in_max: int,
+        recipient: str,
+    ) -> tuple[str, str]:
+        """Encode a swap for exact output as calldata for UniswapV2 Router.
+
+        Uses swapTokensForExactTokens(uint256,uint256,address[],address,uint256)
+
+        Args:
+            token_in: Input token address (0x-prefixed hex)
+            token_out: Output token address (0x-prefixed hex)
+            amount_out: Exact amount of output token desired
+            amount_in_max: Maximum input amount (slippage protection)
+            recipient: Address to receive output tokens
+
+        Returns:
+            Tuple of (router_address, calldata)
+
+        Raises:
+            ValueError: If any address is invalid
+        """
+        # Validate addresses
+        for name, addr in [
+            ("token_in", token_in),
+            ("token_out", token_out),
+            ("recipient", recipient),
+        ]:
+            if not is_valid_address(addr):
+                raise ValueError(f"Invalid {name} address: {addr}")
+
+        # Path is [token_in, token_out]
+        path = [
+            bytes.fromhex(token_in[2:]),
+            bytes.fromhex(token_out[2:]),
+        ]
+        recipient_bytes = bytes.fromhex(recipient[2:])
+
+        # Deadline far in the future (will be replaced by driver)
+        deadline = 2**32 - 1
+
+        # Encode the function call
+        # swapTokensForExactTokens(amountOut, amountInMax, path, to, deadline)
+        encoded_args = encode(
+            ["uint256", "uint256", "address[]", "address", "uint256"],
+            [amount_out, amount_in_max, path, recipient_bytes, deadline],
+        )
+
+        calldata = self.SWAP_TOKENS_FOR_EXACT_SELECTOR + encoded_args.hex()
 
         return self.ROUTER_ADDRESS, calldata
 

@@ -63,13 +63,13 @@ Each slice delivers end-to-end functionality for a specific auction type, with t
 - [x] Test: solution scores > 0 on single-order auctions
 - [x] Benchmark: compare score and time vs Rust baseline (Python 1.74x slower, 4/4 solutions)
 
-### Slice 1.3: Single Buy Order → UniswapV2
+### Slice 1.3: Single Buy Order → UniswapV2 ✅ COMPLETE
 **Goal:** Handle buy orders (fixed output, variable input)
 
-- [ ] Inverse AMM math (input given output)
-- [ ] Adjust solution encoding for buy semantics
-- [ ] Test: buy order auctions pass
-- [ ] Benchmark
+- [x] Inverse AMM math (input given output)
+- [x] Adjust solution encoding for buy semantics
+- [x] Test: buy order auctions pass
+- [x] Benchmark: Python 1.95x slower, 5/5 solutions (including buy order)
 
 ### Slice 1.4: Multi-hop Routing (A→B→C)
 **Goal:** Route through intermediate tokens when direct pool doesn't exist

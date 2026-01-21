@@ -121,6 +121,75 @@ class TestRouterErrorHandling:
         assert result.amount_out > 2000000000  # Should get more than minimum
 
 
+class TestBuyOrderRouting:
+    """Tests for buy order routing (exact output)."""
+
+    def test_buy_order_success(self, router):
+        """Buy order with valid limit price succeeds."""
+        order = make_order(
+            sell_amount="1000000000000000000",  # 1 WETH max to pay
+            buy_amount="2000000000",  # Want exactly 2000 USDC
+            kind=OrderKind.BUY,
+        )
+        result = router.route_order(order)
+
+        assert result.success is True
+        assert result.error is None
+        assert result.amount_out == 2000000000  # Exact output
+        assert result.amount_in <= 1000000000000000000  # Within max
+
+    def test_buy_order_exceeds_max_input(self, router):
+        """Buy order requiring more than max input fails."""
+        order = make_order(
+            sell_amount="100000000000000",  # 0.0001 WETH (way too little)
+            buy_amount="2000000000",  # Want 2000 USDC
+            kind=OrderKind.BUY,
+        )
+        result = router.route_order(order)
+
+        assert result.success is False
+        assert "exceeds maximum" in result.error
+
+    def test_buy_order_with_realistic_amounts(self, router):
+        """Buy order with realistic WETH/USDC amounts."""
+        # Want to buy 2400 USDC, willing to pay up to 1 WETH
+        # Pool has 50M USDC and 20K WETH, so rate is ~2500 USDC/WETH
+        # With 0.3% fee, buying 2400 USDC should require ~0.97 WETH
+        order = make_order(
+            sell_amount="1000000000000000000",  # 1 WETH max
+            buy_amount="2400000000",  # 2400 USDC (6 decimals)
+            kind=OrderKind.BUY,
+        )
+        result = router.route_order(order)
+
+        assert result.success is True
+        assert result.amount_out == 2400000000
+        assert result.amount_in < 1000000000000000000  # Less than max
+
+    def test_buy_order_vs_sell_order_amounts(self, router):
+        """Compare buy and sell order for same trade."""
+        # Sell 1 WETH, see how much USDC we get
+        sell_order = make_order(
+            sell_amount="1000000000000000000",
+            buy_amount="1",  # Low min
+            kind=OrderKind.SELL,
+        )
+        sell_result = router.route_order(sell_order)
+
+        # Now place a buy order for that USDC amount
+        buy_order = make_order(
+            sell_amount="1100000000000000000",  # More WETH than needed
+            buy_amount=str(sell_result.amount_out),  # Exact USDC from sell
+            kind=OrderKind.BUY,
+        )
+        buy_result = router.route_order(buy_order)
+
+        assert buy_result.success is True
+        # Required input should be approximately 1 WETH
+        # Due to rounding, it's slightly higher
+        assert abs(buy_result.amount_in - sell_result.amount_in) < 10**15  # Within 0.001 WETH
+
+
 class TestBuildSolution:
     """Tests for solution building."""
 
@@ -151,6 +220,53 @@ class TestBuildSolution:
 
         assert expected_sell in solution.prices
         assert expected_buy in solution.prices
+
+    def test_build_solution_sell_order_executed_amount(self, router):
+        """Sell order solution uses amount_in as executedAmount."""
+        order = make_order(
+            sell_amount="1000000000000000000",  # 1 WETH
+            buy_amount="2000000000",
+            kind=OrderKind.SELL,
+        )
+        routing_result = router.route_order(order)
+        assert routing_result.success
+
+        solution = router.build_solution(routing_result)
+        assert solution is not None
+        assert len(solution.trades) == 1
+        # For sell orders, executed_amount = amount sold
+        assert solution.trades[0].executed_amount == str(routing_result.amount_in)
+
+    def test_build_solution_buy_order_executed_amount(self, router):
+        """Buy order solution uses amount_out as executedAmount."""
+        order = make_order(
+            sell_amount="1000000000000000000",  # 1 WETH max
+            buy_amount="2000000000",  # Want 2000 USDC
+            kind=OrderKind.BUY,
+        )
+        routing_result = router.route_order(order)
+        assert routing_result.success
+
+        solution = router.build_solution(routing_result)
+        assert solution is not None
+        assert len(solution.trades) == 1
+        # For buy orders, executed_amount = amount bought
+        assert solution.trades[0].executed_amount == str(routing_result.amount_out)
+
+    def test_build_solution_buy_order_uses_exact_output_encoding(self, router):
+        """Buy order solution uses swapTokensForExactTokens encoding."""
+        order = make_order(
+            sell_amount="1000000000000000000",
+            buy_amount="2000000000",
+            kind=OrderKind.BUY,
+        )
+        routing_result = router.route_order(order)
+        solution = router.build_solution(routing_result)
+
+        assert solution is not None
+        assert len(solution.interactions) == 1
+        # Should use swapTokensForExactTokens selector (0x8803dbee)
+        assert solution.interactions[0].call_data.startswith("0x8803dbee")
 
 
 class TestDependencyInjection:
