@@ -1,6 +1,5 @@
 """Unit tests for the order router."""
 
-
 from solver.amm.base import SwapResult
 from solver.amm.uniswap_v2 import UniswapV2Pool
 from solver.models.auction import Order, OrderClass, OrderKind
