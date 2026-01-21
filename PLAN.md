@@ -61,7 +61,7 @@ Each slice delivers end-to-end functionality for a specific auction type, with t
 - [x] Build `Interaction` with swap calldata
 - [x] Calculate clearing prices
 - [x] Test: solution scores > 0 on single-order auctions
-- [ ] Benchmark: compare score and time vs Rust baseline (deferred)
+- [x] Benchmark: compare score and time vs Rust baseline (Python 1.74x slower, 4/4 solutions)
 
 ### Slice 1.3: Single Buy Order → UniswapV2
 **Goal:** Handle buy orders (fixed output, variable input)
