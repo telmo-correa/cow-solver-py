@@ -17,8 +17,7 @@ import structlog
 from solver.amm.uniswap_v2 import UniswapV2Pool, get_pool, uniswap_v2
 from solver.models.auction import AuctionInstance, Order
 from solver.models.solution import (
-    Interaction,
-    InteractionKind,
+    CustomInteraction,
     Solution,
     SolverResponse,
     TokenAmount,
@@ -184,11 +183,10 @@ class SingleOrderRouter:
             recipient=COW_SETTLEMENT,
         )
 
-        interaction = Interaction(
-            kind=InteractionKind.LIQUIDITY,
+        interaction = CustomInteraction(
             target=target,
             value="0",
-            callData=calldata,
+            callData=calldata,  # Using alias for mypy compatibility
             internalize=False,
             # Inputs: tokens the interaction consumes from the settlement contract
             # Note: Addresses normalized to lowercase for consistency

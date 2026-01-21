@@ -5,8 +5,9 @@ https://github.com/cowprotocol/services/blob/main/crates/solvers/openapi.yml
 """
 
 from enum import Enum
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Discriminator, Field, Tag
 
 from solver.models.types import Address, Bytes, OrderUid, Uint256
 
@@ -31,8 +32,8 @@ class TradeKind(str, Enum):
 class InteractionKind(str, Enum):
     """The kind of interaction."""
 
-    LIQUIDITY = "liquidity"  # AMM swap
-    CUSTOM = "custom"  # Custom interaction
+    LIQUIDITY = "liquidity"  # Reference to auction liquidity
+    CUSTOM = "custom"  # Custom on-chain interaction
 
 
 class Trade(BaseModel):
@@ -78,22 +79,41 @@ class JitTrade(BaseModel):
     model_config = {"populate_by_name": True}
 
 
-class Interaction(BaseModel):
-    """An on-chain interaction (contract call) within a solution.
+class LiquidityInteraction(BaseModel):
+    """Interaction referencing liquidity provided in the auction.
 
-    Typically represents AMM swaps or other DeFi operations.
+    Used by the Rust solver to reference AMM pools by their auction ID
+    rather than encoding the actual swap calldata.
     """
 
-    kind: InteractionKind = InteractionKind.CUSTOM
+    kind: Literal["liquidity"] = "liquidity"
     internalize: bool = Field(
         default=False,
-        description="Whether to use internal buffers instead of executing on-chain.",
+        description="Whether to use internal buffers instead of on-chain (CIP-2).",
+    )
+    id: str | int = Field(description="Liquidity source ID from auction.")
+    input_token: Address = Field(alias="inputToken", description="Input token address.")
+    output_token: Address = Field(alias="outputToken", description="Output token address.")
+    input_amount: Uint256 = Field(alias="inputAmount", description="Input amount.")
+    output_amount: Uint256 = Field(alias="outputAmount", description="Output amount.")
+
+    model_config = {"populate_by_name": True}
+
+
+class CustomInteraction(BaseModel):
+    """Custom on-chain interaction with encoded calldata.
+
+    Used by the Python solver to encode actual swap calls to DEX routers.
+    """
+
+    kind: Literal["custom"] = "custom"
+    internalize: bool = Field(
+        default=False,
+        description="Whether to use internal buffers instead of on-chain (CIP-2).",
     )
     target: Address = Field(description="Contract address to call.")
     value: Uint256 = Field(default="0", description="ETH value to send.")
     call_data: Bytes = Field(alias="callData", description="Encoded function call.")
-
-    # Optional: link to liquidity source for liquidity interactions
     allowances: list[dict[str, str]] = Field(
         default_factory=list,
         description="Token approvals needed for this interaction.",
@@ -106,6 +126,30 @@ class Interaction(BaseModel):
         default_factory=list,
         description="Output token amounts produced by this interaction.",
     )
+
+    model_config = {"populate_by_name": True}
+
+
+def _get_interaction_kind(v: dict[str, Any] | LiquidityInteraction | CustomInteraction) -> str:
+    """Discriminator function for Interaction union type."""
+    if isinstance(v, dict):
+        return str(v.get("kind", "custom"))
+    return v.kind
+
+
+# Discriminated union: Pydantic will use the 'kind' field to determine the type
+Interaction = Annotated[
+    Annotated[LiquidityInteraction, Tag("liquidity")] | Annotated[CustomInteraction, Tag("custom")],
+    Discriminator(_get_interaction_kind),
+]
+
+
+class Call(BaseModel):
+    """A simple contract call for pre/post interactions."""
+
+    target: Address
+    value: Uint256 = Field(default="0")
+    call_data: Bytes = Field(alias="callData")
 
     model_config = {"populate_by_name": True}
 
@@ -125,9 +169,19 @@ class Solution(BaseModel):
         default_factory=list,
         description="Order executions in this solution.",
     )
+    pre_interactions: list[Call] = Field(
+        default_factory=list,
+        alias="preInteractions",
+        description="Interactions to execute before settlement.",
+    )
     interactions: list[Interaction] = Field(
         default_factory=list,
         description="On-chain interactions (AMM swaps, etc.).",
+    )
+    post_interactions: list[Call] = Field(
+        default_factory=list,
+        alias="postInteractions",
+        description="Interactions to execute after settlement.",
     )
     score: Uint256 | None = Field(
         default=None,

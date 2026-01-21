@@ -9,8 +9,15 @@ from enum import Enum
 from typing import Any
 
 from pydantic import BaseModel, Field
+from typing_extensions import TypedDict
 
 from solver.models.types import Address, Bytes, OrderUid, Uint256, normalize_address
+
+
+class TokenBalance(TypedDict):
+    """Token balance information in liquidity pools."""
+
+    balance: str
 
 
 class OrderKind(str, Enum):
@@ -158,17 +165,30 @@ class Order(BaseModel):
 class Liquidity(BaseModel):
     """On-chain liquidity source available for routing.
 
-    This is a simplified representation - the actual schema varies by AMM type.
+    Supports both simplified format (tokens as list) and full Rust solver format
+    (tokens as dict with balances).
+
+    For constantProduct pools, the full format includes:
+    - address: Pool contract address
+    - router: DEX router address
+    - gasEstimate: Estimated gas for swap
+    - tokens: Dict mapping token address to {balance: amount}
+    - fee: Fee as decimal string (e.g., "0.003" for 0.3%)
     """
 
     id: str
     kind: str
-    tokens: list[Address]
-    # Additional fields depend on the AMM type (reserves, fee, etc.)
-    # We store them as extra data for now
+    # Tokens: list of addresses OR dict mapping address to balance info
+    tokens: list[Address] | dict[Address, TokenBalance]
+    # Optional fields for full format
+    address: Address | None = None
+    router: Address | None = None
+    gas_estimate: Uint256 | None = Field(default=None, alias="gasEstimate")
+    fee: str | None = None
+    # Additional fields depend on the AMM type
     extra: dict[str, Any] = Field(default_factory=dict)
 
-    model_config = {"extra": "allow"}
+    model_config = {"extra": "allow", "populate_by_name": True}
 
 
 class AuctionInstance(BaseModel):

@@ -1,0 +1,36 @@
+{
+  "id": "test_unknown_pair",
+  "tokens": {
+    "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984": {
+      "decimals": 18,
+      "symbol": "UNI",
+      "referencePrice": "100000000000000000",
+      "availableBalance": "1000000000000000000000",
+      "trusted": true
+    },
+    "0x7Fc66500c84A76Ad7e9c93437bFc5Ac33E2DDaE9": {
+      "decimals": 18,
+      "symbol": "AAVE",
+      "referencePrice": "50000000000000000000",
+      "availableBalance": "100000000000000000000",
+      "trusted": true
+    }
+  },
+  "orders": [
+    {
+      "uid": "0x4102030405060708091011121314151617181920212223242526272829303132333435363738394041424344454647484950515253545556",
+      "sellToken": "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984",
+      "buyToken": "0x7Fc66500c84A76Ad7e9c93437bFc5Ac33E2DDaE9",
+      "sellAmount": "100000000000000000000",
+      "buyAmount": "1000000000000000000",
+      "feeAmount": "0",
+      "kind": "sell",
+      "partiallyFillable": false,
+      "class": "limit"
+    }
+  ],
+  "liquidity": [],
+  "effectiveGasPrice": "30000000000",
+  "deadline": null,
+  "surplusCapturingJitOrderOwners": []
+}

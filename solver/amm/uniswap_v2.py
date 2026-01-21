@@ -81,7 +81,7 @@ class UniswapV2(AMM):
     ) -> int:
         """Calculate output amount using constant product formula.
 
-        amount_out = (amount_in * fee_multiplier * reserve_out) / (reserve_in * 1000 + amount_in * fee_multiplier)
+        Formula: amount_out = (in * fee * res_out) / (res_in * 1000 + in * fee)
 
         Args:
             amount_in: Input token amount
@@ -112,7 +112,7 @@ class UniswapV2(AMM):
     ) -> int:
         """Calculate required input for desired output.
 
-        amount_in = (reserve_in * amount_out * 1000) / ((reserve_out - amount_out) * fee_multiplier) + 1
+        Formula: amount_in = (res_in * out * 1000) / ((res_out - out) * fee) + 1
 
         Args:
             amount_out: Desired output token amount

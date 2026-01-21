@@ -1,28 +1,28 @@
 {
-  "id": "test_single_sell_001",
+  "id": "test_weth_to_dai",
   "tokens": {
     "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2": {
       "decimals": 18,
       "symbol": "WETH",
       "referencePrice": "1000000000000000000",
-      "availableBalance": "1000000000000000000",
+      "availableBalance": "5000000000000000000",
       "trusted": true
     },
-    "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48": {
-      "decimals": 6,
-      "symbol": "USDC",
+    "0x6B175474E89094C44Da98b954EecdeCB5F6F8FA0": {
+      "decimals": 18,
+      "symbol": "DAI",
       "referencePrice": "400000000000000",
-      "availableBalance": "1000000000",
+      "availableBalance": "10000000000000000000000",
       "trusted": true
     }
   },
   "orders": [
     {
-      "uid": "0x0102030405060708091011121314151617181920212223242526272829303132333435363738394041424344454647484950515253545556",
+      "uid": "0x3102030405060708091011121314151617181920212223242526272829303132333435363738394041424344454647484950515253545556",
       "sellToken": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
-      "buyToken": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+      "buyToken": "0x6B175474E89094C44Da98b954EecdeCB5F6F8FA0",
       "sellAmount": "1000000000000000000",
-      "buyAmount": "2400000000",
+      "buyAmount": "2400000000000000000000",
       "feeAmount": "0",
       "kind": "sell",
       "partiallyFillable": false,

@@ -194,8 +194,11 @@ class RustSolverRunner:
 class RustSolverHTTPRunner:
     """Runner for the Rust solver via HTTP (when running as a server).
 
-    Use this when the Rust solver is running as an HTTP server,
-    similar to how the Python solver operates.
+    Use this when the Rust solver is running as an HTTP server.
+
+    Note: The auction must already be in the Rust solver's expected format,
+    including fields like fullSellAmount, fullBuyAmount, validTo, owner, etc.
+    Use fixtures from tests/fixtures/auctions/benchmark/ as examples.
     """
 
     def __init__(
@@ -212,15 +215,18 @@ class RustSolverHTTPRunner:
 
         from benchmarks.harness import SolverResult
 
-        url = f"{self.base_url}/benchmark/mainnet"
+        url = f"{self.base_url}/solve"
 
         start = time.perf_counter()
+
+        # Serialize auction to JSON (must already be in Rust-compatible format)
+        auction_json = auction.model_dump(by_alias=True, exclude_none=True, mode="json")
 
         try:
             async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
                 response = await client.post(
                     url,
-                    json=auction.model_dump(by_alias=True, mode="json"),
+                    json=auction_json,
                 )
                 response.raise_for_status()
                 data = response.json()

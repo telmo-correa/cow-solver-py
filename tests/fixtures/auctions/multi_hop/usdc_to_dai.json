@@ -1,0 +1,43 @@
+{
+  "id": "test_multi_hop_usdc_dai",
+  "tokens": {
+    "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48": {
+      "decimals": 6,
+      "symbol": "USDC",
+      "referencePrice": "400000000000000",
+      "availableBalance": "10000000000",
+      "trusted": true
+    },
+    "0x6B175474E89094C44Da98b954EecdeCB5F6F8FA0": {
+      "decimals": 18,
+      "symbol": "DAI",
+      "referencePrice": "400000000000000",
+      "availableBalance": "10000000000000000000000",
+      "trusted": true
+    },
+    "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2": {
+      "decimals": 18,
+      "symbol": "WETH",
+      "referencePrice": "1000000000000000000",
+      "availableBalance": "10000000000000000000",
+      "trusted": true
+    }
+  },
+  "orders": [
+    {
+      "uid": "0x5102030405060708091011121314151617181920212223242526272829303132333435363738394041424344454647484950515253545556",
+      "sellToken": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+      "buyToken": "0x6B175474E89094C44Da98b954EecdeCB5F6F8FA0",
+      "sellAmount": "1000000000",
+      "buyAmount": "900000000000000000000",
+      "feeAmount": "0",
+      "kind": "sell",
+      "partiallyFillable": false,
+      "class": "limit"
+    }
+  ],
+  "liquidity": [],
+  "effectiveGasPrice": "30000000000",
+  "deadline": null,
+  "surplusCapturingJitOrderOwners": []
+}

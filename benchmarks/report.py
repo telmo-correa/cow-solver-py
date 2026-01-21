@@ -69,8 +69,8 @@ def format_markdown_report(
                 f"| Max | {ss.max:.2%} |",
                 f"| Std Dev | {ss.stdev:.2%} |" if ss.stdev else "",
                 "",
-                f"Python found better score in {metrics.python_better_score_count}/{ss.count} auctions "
-                f"({100 * metrics.python_better_score_count / ss.count:.1f}%)",
+                f"Python found better score in {metrics.python_better_score_count}/{ss.count} "
+                f"auctions ({100 * metrics.python_better_score_count / ss.count:.1f}%)",
                 "",
             ]
         )

@@ -1,0 +1,64 @@
+{
+  "id": "3",
+  "tokens": {
+    "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2": {
+      "decimals": 18,
+      "symbol": "WETH",
+      "referencePrice": "2500000000000000000000",
+      "availableBalance": "5000000000000000000",
+      "trusted": true
+    },
+    "0x6b175474e89094c44da98b954eecdecb5f6f8fa0": {
+      "decimals": 18,
+      "symbol": "DAI",
+      "referencePrice": "1000000000000000000",
+      "availableBalance": "10000000000000000000000",
+      "trusted": true
+    }
+  },
+  "orders": [
+    {
+      "uid": "0x2102030405060708091011121314151617181920212223242526272829303132333435363738394041424344454647484950515253545556",
+      "sellToken": "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",
+      "buyToken": "0x6b175474e89094c44da98b954eecdecb5f6f8fa0",
+      "sellAmount": "1000000000000000000",
+      "fullSellAmount": "1000000000000000000",
+      "buyAmount": "2400000000000000000000",
+      "fullBuyAmount": "2400000000000000000000",
+      "feePolicies": [],
+      "validTo": 0,
+      "kind": "sell",
+      "owner": "0x5b1e2c2762667331bc91648052f646d1b0d35984",
+      "partiallyFillable": false,
+      "preInteractions": [],
+      "postInteractions": [],
+      "sellTokenSource": "erc20",
+      "buyTokenDestination": "erc20",
+      "class": "market",
+      "appData": "0x0000000000000000000000000000000000000000000000000000000000000000",
+      "signingScheme": "presign",
+      "signature": "0x"
+    }
+  ],
+  "liquidity": [
+    {
+      "kind": "constantProduct",
+      "id": "uniswap-v2-weth-dai",
+      "address": "0xa478c2975ab1ea89e8196811f51a7b7ade33eb11",
+      "router": "0x7a250d5630b4cf539739df2c5dacb4c659f2488d",
+      "gasEstimate": "110000",
+      "tokens": {
+        "0x6b175474e89094c44da98b954eecdecb5f6f8fa0": {
+          "balance": "30000000000000000000000000"
+        },
+        "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2": {
+          "balance": "12000000000000000000000"
+        }
+      },
+      "fee": "0.003"
+    }
+  ],
+  "effectiveGasPrice": "30000000000",
+  "deadline": "2030-01-01T00:00:00Z",
+  "surplusCapturingJitOrderOwners": []
+}

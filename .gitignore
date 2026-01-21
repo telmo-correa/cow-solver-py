@@ -51,6 +51,7 @@ dmypy.json
 cython_modules/*.so
 
 # Project specific
+benchmarks/results/
 benchmarks/reports/
 *.log
 
