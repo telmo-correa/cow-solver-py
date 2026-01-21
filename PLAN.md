@@ -109,12 +109,17 @@ Each slice delivers end-to-end functionality for a specific auction type, with t
 **Goal:** Match what we can peer-to-peer, route remainder through AMM
 
 - [x] Composable strategy architecture (StrategyResult, OrderFill)
-- [x] Calculate matchable volume for sell-sell partial matches
+- [x] Partial matching for ALL order type combinations (sell-sell, sell-buy, buy-sell, buy-buy)
+- [x] Fill-or-kill semantics (partiallyFillable=false enforcement)
+- [x] New UID generation for remainder orders (SHA-256 derived)
+- [x] original_uid tracking for fill merging across strategies
+- [x] PriceWorsened exception for limit price validation
+- [x] Multi-order AMM routing with pool reserve updates
 - [x] Split order execution (CoW portion + AMM portion)
 - [x] Merged fills from multiple strategies into single trades
-- [x] Test: 24 CoW match tests (including partial scenarios)
-- [x] Test: 2 integration tests for partial CoW + AMM composition
-- [x] Benchmark fixture: `partial_cow_amm.json`
+- [x] Test: 47 CoW match tests (including partial scenarios, all order types)
+- [x] Test: Integration tests for partial CoW + AMM composition
+- [x] Benchmark fixtures: `partial_cow_amm.json`, `fok_perfect_match.json`, `mixed_partial_fok.json`
 
 ### Slice 2.3: Multi-Order CoW Detection
 **Goal:** Find CoW opportunities across N orders

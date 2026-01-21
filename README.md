@@ -16,7 +16,7 @@ This project implements a solver for [CoW Protocol](https://cow.fi/) batch aucti
 ## Status
 
 ✅ **Phase 1 Complete** — Single order routing via UniswapV2 (direct + multi-hop)
-✅ **Phase 2 Slice 2.1 Complete** — CoW matching (peer-to-peer settlement)
+✅ **Phase 2 Slice 2.2 Complete** — Partial CoW + AMM composition (all order types, fill-or-kill)
 
 See [PLAN.md](PLAN.md) for the detailed implementation roadmap.
 

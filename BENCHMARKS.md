@@ -14,7 +14,7 @@ The Rust "baseline" solver is part of the [CoW Protocol Services repository](htt
 | | Buy orders | ✅ | ✅ | Fixed buy amount, rounding protection |
 | | Limit orders | ✅ | ✅ | With order class support |
 | | Market orders | ✅ | ✅ | Protocol fees only |
-| | Partially fillable | ✅ | ❌ | Binary search (configurable attempts) |
+| | Partially fillable | ✅ | ✅ | Rust: binary search; Python: exact partial fills |
 | **Liquidity** | UniswapV2 (constant product) | ✅ | ✅ | 0.3% fee |
 | | UniswapV3 (concentrated) | ⚠️ | ❌ | Requires RPC config |
 | | Balancer V2 weighted | ✅ | ❌ | V0 and V3+ versions |
@@ -96,6 +96,9 @@ These test Python-only features not available in the Rust baseline:
   - buy-buy matches (`cow_pair_buy_buy.json`)
 - Partial CoW + AMM remainder
   - partial match with AMM routing for remainder (`partial_cow_amm.json`)
+- Fill-or-kill semantics
+  - perfect match with fill-or-kill orders (`fok_perfect_match.json`)
+  - mixed partial + fill-or-kill orders (`mixed_partial_fok.json`)
 - Future: multi-order batching
 
 **Use for**: Python-only validation (no Rust comparison possible)
@@ -177,17 +180,23 @@ Python-Only Benchmarks
 ============================================================
 Auctions directory: tests/fixtures/auctions/benchmark_python_only
 
-Total auctions: 1
-Python found solutions: 1/1
+Total auctions: 3
+Python found solutions: 3/3
 
 Individual Results:
 ------------------------------------------------------------
-  cow_pair_basic (CoW Match):
+  partial_cow_amm (Partial CoW + AMM):
+    Python: OK (2 trades, 1 interaction)
+    Rust: N/A (not supported by baseline solver)
+  fok_perfect_match (Fill-or-Kill Perfect Match):
     Python: OK (2 trades, 0 interactions, gas=0)
+    Rust: N/A (not supported by baseline solver)
+  mixed_partial_fok (Mixed Partial + FoK):
+    Python: OK (2 trades, 1 interaction)
     Rust: N/A (not supported by baseline solver)
 ```
 
-**Summary**: Python CoW matching produces mathematically correct solutions. Order A (sell 1 WETH, want 2500 USDC) matches with Order B (sell 2600 USDC, want 1 WETH). Both parties receive at least their limit prices, with Order A receiving 100 USDC surplus.
+**Summary**: Python supports CoW matching with partial fills and fill-or-kill semantics. Partial matches route remainders through AMM pools. Fill-or-kill orders must be completely filled or not at all, but can participate in partial matches if they get completely filled.
 
 ## Setting Up the Rust Solver
 

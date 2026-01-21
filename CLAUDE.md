@@ -101,7 +101,7 @@ cow-solver-py/
 - ✅ **Composable strategies** (StrategyResult, OrderFill for partial matching)
 - ✅ **Partial CoW + AMM** (partial CoW match with AMM remainder routing)
 
-**Total: 109 passing tests** (unit + integration)
+**Total: 147 passing tests** (unit + integration)
 
 ### Rust Baseline Solver Limitations
 
