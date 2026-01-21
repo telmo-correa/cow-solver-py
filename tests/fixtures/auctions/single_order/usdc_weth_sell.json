@@ -22,15 +22,27 @@
       "sellToken": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
       "buyToken": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
       "sellAmount": "2500000000",
+      "fullSellAmount": "2500000000",
       "buyAmount": "900000000000000000",
+      "fullBuyAmount": "900000000000000000",
       "feeAmount": "0",
+      "feePolicies": [],
+      "validTo": 0,
       "kind": "sell",
+      "owner": "0x5b1e2c2762667331bc91648052f646d1b0d35984",
       "partiallyFillable": false,
-      "class": "limit"
+      "preInteractions": [],
+      "postInteractions": [],
+      "sellTokenSource": "erc20",
+      "buyTokenDestination": "erc20",
+      "class": "limit",
+      "appData": "0x0000000000000000000000000000000000000000000000000000000000000000",
+      "signingScheme": "presign",
+      "signature": "0x"
     }
   ],
   "liquidity": [],
   "effectiveGasPrice": "30000000000",
-  "deadline": null,
+  "deadline": "2106-01-01T00:00:00.000Z",
   "surplusCapturingJitOrderOwners": []
 }

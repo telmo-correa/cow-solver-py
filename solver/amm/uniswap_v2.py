@@ -10,6 +10,7 @@ from typing import ClassVar
 from eth_abi import encode  # type: ignore[attr-defined]
 
 from solver.amm.base import AMM, SwapResult
+from solver.constants import DAI, USDC, USDT, WETH
 from solver.models.types import is_valid_address, normalize_address
 
 
@@ -292,31 +293,6 @@ class UniswapV2(AMM):
 # Singleton instance
 uniswap_v2 = UniswapV2()
 
-
-def _validate_token_address(name: str, address: str) -> str:
-    """Validate and return a token address.
-
-    Args:
-        name: Name of the token (for error messages)
-        address: The address to validate
-
-    Returns:
-        The validated address
-
-    Raises:
-        ValueError: If the address is invalid
-    """
-    if not is_valid_address(address):
-        raise ValueError(f"Invalid {name} address: {address} (must be 0x + 40 hex chars)")
-    return address
-
-
-# Well-known token addresses (lowercase for consistency)
-# All addresses are validated at import time to catch typos early
-WETH = _validate_token_address("WETH", "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2")
-USDC = _validate_token_address("USDC", "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48")
-USDT = _validate_token_address("USDT", "0xdac17f958d2ee523a2206206994597c13d831ec7")
-DAI = _validate_token_address("DAI", "0x6b175474e89094c44da98b954eecdecb5f6f8fa0")
 
 # Well-known pools on mainnet (reserve values are examples - would be fetched on-chain)
 # All addresses are stored in lowercase for consistent comparison

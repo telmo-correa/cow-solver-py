@@ -29,13 +29,6 @@ class TradeKind(str, Enum):
     JIT = "jit"  # Just-in-time liquidity
 
 
-class InteractionKind(str, Enum):
-    """The kind of interaction."""
-
-    LIQUIDITY = "liquidity"  # Reference to auction liquidity
-    CUSTOM = "custom"  # Custom on-chain interaction
-
-
 class Trade(BaseModel):
     """A trade execution within a solution.
 
@@ -52,29 +45,6 @@ class Trade(BaseModel):
         default=None,
         description="Fee amount taken from the sell token.",
     )
-
-    model_config = {"populate_by_name": True}
-
-
-class JitTrade(BaseModel):
-    """A just-in-time (JIT) liquidity trade.
-
-    JIT trades allow solvers to provide liquidity on-the-fly by creating
-    orders that exist only for the duration of a single settlement.
-
-    This is an advanced feature used by sophisticated solvers to:
-    1. Provide better prices by temporarily adding liquidity
-    2. Capture arbitrage opportunities
-    3. Fill orders that can't be matched through existing AMM pools
-
-    Note: This model is defined for API completeness but not yet used
-    in the current solver implementation. JIT liquidity requires careful
-    economic analysis and is planned for a future phase.
-    """
-
-    kind: TradeKind = TradeKind.JIT
-    order: dict[str, str] = Field(description="The JIT order details.")
-    executed_amount: Uint256 = Field(alias="executedAmount")
 
     model_config = {"populate_by_name": True}
 

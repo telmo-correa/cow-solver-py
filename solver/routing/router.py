@@ -15,6 +15,7 @@ from dataclasses import dataclass
 import structlog
 
 from solver.amm.uniswap_v2 import UniswapV2Pool, get_pool, uniswap_v2
+from solver.constants import COW_SETTLEMENT, PRICE_SCALE
 from solver.models.auction import AuctionInstance, Order
 from solver.models.solution import (
     CustomInteraction,
@@ -27,12 +28,6 @@ from solver.models.solution import (
 from solver.models.types import normalize_address
 
 logger = structlog.get_logger()
-
-# CoW Protocol Settlement contract address (lowercase for consistency)
-COW_SETTLEMENT = "0x9008d19f58aabd9ed0d60971565aa8510560ab41"
-
-# Reference price scaling factor (1e18 for precision)
-PRICE_SCALE = 10**18
 
 
 @dataclass
