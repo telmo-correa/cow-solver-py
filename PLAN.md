@@ -17,8 +17,8 @@ Each slice delivers end-to-end functionality for a specific auction type, with t
 ### 0.1 Project Skeleton
 - [x] `pyproject.toml` with dependencies (FastAPI, Pydantic, web3, httpx, pytest)
 - [x] Directory structure
-- [ ] CI setup (GitHub Actions) — deferred
-- [ ] Pre-commit hooks (ruff, mypy) — deferred
+- [x] CI setup (GitHub Actions)
+- [x] Pre-commit hooks (ruff, mypy)
 
 ### 0.2 Pydantic Models
 - [x] `AuctionInstance` - incoming auction request
