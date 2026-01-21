@@ -94,7 +94,9 @@ class TestAuctionInstance:
 
     def test_load_from_fixture(self):
         """AuctionInstance can be loaded from fixture file."""
-        fixture_path = Path(__file__).parent.parent / "fixtures/auctions/single_order/basic_sell.json"
+        fixture_path = (
+            Path(__file__).parent.parent / "fixtures/auctions/single_order/basic_sell.json"
+        )
         if not fixture_path.exists():
             pytest.skip("Fixture not found")
 

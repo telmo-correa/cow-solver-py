@@ -8,7 +8,9 @@ from benchmarks.harness import BenchmarkResult, BenchmarkSummary
 from benchmarks.metrics import BenchmarkMetrics, compute_metrics
 
 
-def format_markdown_report(summary: BenchmarkSummary, metrics: BenchmarkMetrics | None = None) -> str:
+def format_markdown_report(
+    summary: BenchmarkSummary, metrics: BenchmarkMetrics | None = None
+) -> str:
     """Generate a markdown report from benchmark results."""
     if metrics is None:
         metrics = compute_metrics(summary.results)
@@ -34,49 +36,55 @@ def format_markdown_report(summary: BenchmarkSummary, metrics: BenchmarkMetrics 
     # Time comparison
     if metrics.time_ratio_stats:
         ts = metrics.time_ratio_stats
-        lines.extend([
-            "## Time Comparison (Python / Rust)",
-            "",
-            "| Statistic | Value |",
-            "|-----------|-------|",
-            f"| Mean | {ts.mean:.2f}x |",
-            f"| Median | {ts.median:.2f}x |",
-            f"| Min | {ts.min:.2f}x |",
-            f"| Max | {ts.max:.2f}x |",
-            f"| Std Dev | {ts.stdev:.2f}x |" if ts.stdev else "",
-            "",
-            f"Python was faster in {metrics.python_faster_count}/{ts.count} auctions "
-            f"({100*metrics.python_faster_count/ts.count:.1f}%)",
-            "",
-        ])
+        lines.extend(
+            [
+                "## Time Comparison (Python / Rust)",
+                "",
+                "| Statistic | Value |",
+                "|-----------|-------|",
+                f"| Mean | {ts.mean:.2f}x |",
+                f"| Median | {ts.median:.2f}x |",
+                f"| Min | {ts.min:.2f}x |",
+                f"| Max | {ts.max:.2f}x |",
+                f"| Std Dev | {ts.stdev:.2f}x |" if ts.stdev else "",
+                "",
+                f"Python was faster in {metrics.python_faster_count}/{ts.count} auctions "
+                f"({100*metrics.python_faster_count/ts.count:.1f}%)",
+                "",
+            ]
+        )
 
     # Score comparison
     if metrics.score_ratio_stats:
         ss = metrics.score_ratio_stats
-        lines.extend([
-            "## Score Comparison (Python / Rust)",
-            "",
-            "| Statistic | Value |",
-            "|-----------|-------|",
-            f"| Mean | {ss.mean:.2%} |",
-            f"| Median | {ss.median:.2%} |",
-            f"| Min | {ss.min:.2%} |",
-            f"| Max | {ss.max:.2%} |",
-            f"| Std Dev | {ss.stdev:.2%} |" if ss.stdev else "",
-            "",
-            f"Python found better score in {metrics.python_better_score_count}/{ss.count} auctions "
-            f"({100*metrics.python_better_score_count/ss.count:.1f}%)",
-            "",
-        ])
+        lines.extend(
+            [
+                "## Score Comparison (Python / Rust)",
+                "",
+                "| Statistic | Value |",
+                "|-----------|-------|",
+                f"| Mean | {ss.mean:.2%} |",
+                f"| Median | {ss.median:.2%} |",
+                f"| Min | {ss.min:.2%} |",
+                f"| Max | {ss.max:.2%} |",
+                f"| Std Dev | {ss.stdev:.2%} |" if ss.stdev else "",
+                "",
+                f"Python found better score in {metrics.python_better_score_count}/{ss.count} auctions "
+                f"({100*metrics.python_better_score_count/ss.count:.1f}%)",
+                "",
+            ]
+        )
 
     # Individual results table
     if summary.results:
-        lines.extend([
-            "## Individual Results",
-            "",
-            "| Auction | Orders | Python (ms) | Rust (ms) | Time Ratio | Score Ratio |",
-            "|---------|--------|-------------|-----------|------------|-------------|",
-        ])
+        lines.extend(
+            [
+                "## Individual Results",
+                "",
+                "| Auction | Orders | Python (ms) | Rust (ms) | Time Ratio | Score Ratio |",
+                "|---------|--------|-------------|-----------|------------|-------------|",
+            ]
+        )
 
         for r in summary.results:
             time_ratio = f"{r.time_ratio:.2f}x" if r.time_ratio else "N/A"

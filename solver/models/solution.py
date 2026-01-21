@@ -72,7 +72,7 @@ class JitTrade(BaseModel):
     """
 
     kind: TradeKind = TradeKind.JIT
-    order: dict = Field(description="The JIT order details.")
+    order: dict[str, str] = Field(description="The JIT order details.")
     executed_amount: Uint256 = Field(alias="executedAmount")
 
     model_config = {"populate_by_name": True}

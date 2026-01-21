@@ -159,7 +159,7 @@ class SingleOrderRouter:
         trade = Trade(
             kind=TradeKind.FULFILLMENT,
             order=order.uid,
-            executed_amount=str(routing_result.amount_in),
+            executedAmount=str(routing_result.amount_in),
         )
 
         # Encode the swap interaction
@@ -188,7 +188,7 @@ class SingleOrderRouter:
             kind=InteractionKind.LIQUIDITY,
             target=target,
             value="0",
-            call_data=calldata,
+            callData=calldata,
             internalize=False,
             # Inputs: tokens the interaction consumes from the settlement contract
             # Note: Addresses normalized to lowercase for consistency
@@ -244,7 +244,7 @@ class SingleOrderRouter:
 class Solver:
     """Main solver that processes auction instances."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.router = SingleOrderRouter()
 
     def solve(self, auction: AuctionInstance) -> SolverResponse:

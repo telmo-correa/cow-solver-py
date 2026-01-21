@@ -97,17 +97,19 @@ def synthesize_auction_from_orders(
     # Transform orders to match auction schema
     auction_orders = []
     for order in orders:
-        auction_orders.append({
-            "uid": order.get("uid", ""),
-            "sellToken": order.get("sellToken", ""),
-            "buyToken": order.get("buyToken", ""),
-            "sellAmount": order.get("sellAmount", "0"),
-            "buyAmount": order.get("buyAmount", "0"),
-            "feeAmount": order.get("feeAmount", "0"),
-            "kind": order.get("kind", "sell"),
-            "partiallyFillable": order.get("partiallyFillable", False),
-            "class": order.get("class", "limit"),
-        })
+        auction_orders.append(
+            {
+                "uid": order.get("uid", ""),
+                "sellToken": order.get("sellToken", ""),
+                "buyToken": order.get("buyToken", ""),
+                "sellAmount": order.get("sellAmount", "0"),
+                "buyAmount": order.get("buyAmount", "0"),
+                "feeAmount": order.get("feeAmount", "0"),
+                "kind": order.get("kind", "sell"),
+                "partiallyFillable": order.get("partiallyFillable", False),
+                "class": order.get("class", "limit"),
+            }
+        )
 
     return {
         "id": auction_id or f"synthetic_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
@@ -167,7 +169,7 @@ async def collect_auctions(
     output_dir: Path,
     network: str = "mainnet",
     count: int = 100,
-    batch_size: int = 10,
+    _batch_size: int = 10,  # Reserved for future batched fetching
 ) -> int:
     """Collect historical auctions and save as fixtures.
 
@@ -195,7 +197,7 @@ async def collect_auctions(
     auctions_saved = 0
 
     # Single-order auctions
-    for i, order in enumerate(orders[:count // 2]):
+    for i, order in enumerate(orders[: count // 2]):
         auction = synthesize_auction_from_orders(
             [order],
             auction_id=f"single_{i}",
@@ -209,7 +211,7 @@ async def collect_auctions(
         auctions_saved += 1
 
     # Multi-order auctions (batches of 2-5 orders)
-    remaining_orders = orders[count // 2:]
+    remaining_orders = orders[count // 2 :]
     batch_start = 0
 
     for batch_idx in range(count // 2):
@@ -269,11 +271,13 @@ def main() -> None:
         ]
     )
 
-    collected = asyncio.run(collect_auctions(
-        output_dir=args.output,
-        network=args.network,
-        count=args.count,
-    ))
+    collected = asyncio.run(
+        collect_auctions(
+            output_dir=args.output,
+            network=args.network,
+            count=args.count,
+        )
+    )
 
     print(f"\nCollected {collected} auctions to {args.output}")
 

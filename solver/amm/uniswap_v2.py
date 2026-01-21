@@ -154,9 +154,7 @@ class UniswapV2(AMM):
         """
         reserve_in, reserve_out = pool.get_reserves(token_in)
         token_out = pool.get_token_out(token_in)
-        amount_out = self.get_amount_out(
-            amount_in, reserve_in, reserve_out, pool.fee_multiplier
-        )
+        amount_out = self.get_amount_out(amount_in, reserve_in, reserve_out, pool.fee_multiplier)
 
         return SwapResult(
             amount_in=amount_in,
@@ -193,7 +191,11 @@ class UniswapV2(AMM):
             ValueError: If any address is invalid
         """
         # Validate addresses (is_valid_address ensures they're valid hex)
-        for name, addr in [("token_in", token_in), ("token_out", token_out), ("recipient", recipient)]:
+        for name, addr in [
+            ("token_in", token_in),
+            ("token_out", token_out),
+            ("recipient", recipient),
+        ]:
             if not is_valid_address(addr):
                 raise ValueError(f"Invalid {name} address: {addr}")
 
