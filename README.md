@@ -16,6 +16,7 @@ This project implements a solver for [CoW Protocol](https://cow.fi/) batch aucti
 ## Status
 
 ✅ **Phase 1 Complete** — Single order routing via UniswapV2 (direct + multi-hop)
+✅ **Phase 2 Slice 2.1 Complete** — CoW matching (peer-to-peer settlement)
 
 See [PLAN.md](PLAN.md) for the detailed implementation roadmap.
 
@@ -65,18 +66,21 @@ solver/          # Main solver package
   api/           # FastAPI endpoints
   models/        # Pydantic schemas
   amm/           # AMM math (UniswapV2)
+  strategies/    # Solution strategies (CoW matching, AMM routing)
   routing/       # Order routing and solution building
   constants.py   # Centralized constants
 
 benchmarks/      # Performance comparison harness
 scripts/         # Utility scripts
 tests/           # Test suite with mock fixtures for DI
+docs/sessions/   # Development session logs
 ```
 
 ## Documentation
 
 - [PLAN.md](PLAN.md) — Implementation roadmap
-- [SESSIONS.md](SESSIONS.md) — Development session log
+- [BENCHMARKS.md](BENCHMARKS.md) — Benchmarking guide
+- [docs/sessions/](docs/sessions/) — Development session logs
 - [CLAUDE.md](CLAUDE.md) — AI assistant context
 
 ## License

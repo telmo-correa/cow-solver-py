@@ -14,14 +14,17 @@ Limitations:
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import structlog
+
+if TYPE_CHECKING:
+    from solver.strategies.base import SolutionStrategy
 
 from solver.amm.uniswap_v2 import (
     PoolRegistry,
     UniswapV2,
     UniswapV2Pool,
-    build_registry_from_liquidity,
     uniswap_v2,
 )
 from solver.constants import POOL_SWAP_GAS_COST, SETTLEMENT_OVERHEAD
@@ -529,40 +532,60 @@ class SingleOrderRouter:
 
 
 class Solver:
-    """Main solver that processes auction instances.
+    """Main solver that processes auction instances using a strategy pattern.
 
-    The solver builds a PoolRegistry from the auction's liquidity data and
-    uses it for routing. This ensures the solver uses the actual available
-    liquidity rather than hardcoded pool data.
+    The solver tries each strategy in order until one produces a solution.
+    Default strategies (in priority order):
+    1. CowMatchStrategy - Direct peer-to-peer matching (no AMM fees)
+    2. AmmRoutingStrategy - Route through liquidity pools
 
     Args:
-        router: Optional router for dependency injection in tests.
-                If provided, bypasses normal router creation.
-        amm: AMM implementation for swap math. Defaults to UniswapV2.
+        strategies: List of strategies to try in order. If None, uses defaults.
+        router: Deprecated. Use AmmRoutingStrategy with injected router instead.
+        amm: Deprecated. Use AmmRoutingStrategy with injected AMM instead.
     """
 
     def __init__(
         self,
+        strategies: "list[SolutionStrategy] | None" = None,
         router: SingleOrderRouter | None = None,
         amm: UniswapV2 | None = None,
     ) -> None:
-        """Initialize the solver with optional dependencies.
+        """Initialize the solver with strategies.
 
         Args:
-            router: Injected router for testing. If provided, used directly
-                    instead of creating one from auction liquidity.
-            amm: AMM implementation. Defaults to uniswap_v2 singleton.
+            strategies: List of SolutionStrategy instances to try in order.
+                       If None, uses [CowMatchStrategy(), AmmRoutingStrategy()].
+            router: Deprecated. For backwards compatibility, if provided,
+                    creates AmmRoutingStrategy with this router.
+            amm: Deprecated. For backwards compatibility, if provided,
+                 creates AmmRoutingStrategy with this AMM.
         """
-        self._injected_router = router
-        self.amm = amm if amm is not None else uniswap_v2
+        if strategies is not None:
+            self.strategies = strategies
+        elif router is not None or amm is not None:
+            # Backwards compatibility: create strategies from legacy params
+            from solver.strategies import AmmRoutingStrategy, CowMatchStrategy
+
+            self.strategies = [
+                CowMatchStrategy(),
+                AmmRoutingStrategy(amm=amm, router=router),
+            ]
+        else:
+            # Default strategies
+            from solver.strategies import AmmRoutingStrategy, CowMatchStrategy
+
+            self.strategies = [
+                CowMatchStrategy(),
+                AmmRoutingStrategy(),
+            ]
 
     def solve(self, auction: AuctionInstance) -> SolverResponse:
-        """Solve an auction batch.
+        """Solve an auction batch by trying each strategy in order.
 
-        Creates a PoolRegistry from the auction's liquidity and routes
-        orders through available pools.
-
-        Currently handles single-order auctions only.
+        Strategies are tried in priority order. The first strategy to
+        return a valid Solution wins. This allows CoW matching to be
+        preferred over AMM routing (better for users).
 
         Args:
             auction: The auction to solve
@@ -573,54 +596,23 @@ class Solver:
         if auction.order_count == 0:
             return SolverResponse.empty()
 
-        # Build pool registry from auction liquidity
-        pool_registry = build_registry_from_liquidity(auction.liquidity)
+        for strategy in self.strategies:
+            solution = strategy.try_solve(auction)
+            if solution is not None:
+                logger.info(
+                    "strategy_succeeded",
+                    strategy=type(strategy).__name__,
+                    order_count=auction.order_count,
+                    has_trades=len(solution.trades) > 0,
+                )
+                return SolverResponse(solutions=[solution])
 
         logger.debug(
-            "built_pool_registry",
-            pool_count=pool_registry.pool_count,
-            liquidity_count=len(auction.liquidity),
+            "no_strategy_found_solution",
+            order_count=auction.order_count,
+            strategies_tried=[type(s).__name__ for s in self.strategies],
         )
-
-        # For now, only handle single-order auctions
-        if auction.order_count == 1:
-            return self._solve_single_order(auction, pool_registry)
-
-        # Multi-order auctions not yet supported
         return SolverResponse.empty()
-
-    def _solve_single_order(
-        self, auction: AuctionInstance, pool_registry: PoolRegistry
-    ) -> SolverResponse:
-        """Solve a single-order auction."""
-        order = auction.orders[0]
-
-        # Log if order is partially fillable (we still process it, but execute fully)
-        if order.partially_fillable:
-            logger.info(
-                "partially_fillable_order",
-                order_uid=order.uid,
-                message="Partially fillable orders are executed fully or not at all",
-            )
-
-        # Create router with auction's liquidity
-        # Use injected router if provided (for testing), otherwise create new one
-        if self._injected_router is not None:
-            router = self._injected_router
-        else:
-            router = SingleOrderRouter(amm=self.amm, pool_registry=pool_registry)
-
-        # Route the order
-        routing_result = router.route_order(order)
-        if not routing_result.success:
-            return SolverResponse.empty()
-
-        # Build solution
-        solution = router.build_solution(routing_result, solution_id=0)
-        if solution is None:
-            return SolverResponse.empty()
-
-        return SolverResponse(solutions=[solution])
 
 
 # Singleton solver instance

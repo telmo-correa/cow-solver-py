@@ -90,14 +90,20 @@ Each slice delivers end-to-end functionality for a specific auction type, with t
 
 ## Phase 2: Coincidence of Wants (CoW)
 
-### Slice 2.1: Perfect CoW Match
+> **Note:** The Rust baseline solver does NOT support CoW matching. It only routes
+> individual orders through AMM liquidity. CoW matching is Python-only functionality.
+> See `BENCHMARKS.md` for details on benchmark categories.
+
+### Slice 2.1: Perfect CoW Match ✅ COMPLETE
 **Goal:** Two orders that exactly offset (A sells X for Y, B sells Y for X)
 
-- [ ] Order pair detection (opposite directions, same tokens)
-- [ ] Direct settlement without AMM
-- [ ] Uniform clearing price calculation
-- [ ] Test: synthetic perfect-match auctions
-- [ ] Benchmark: should beat Rust on these (no AMM overhead)
+- [x] Strategy pattern for solution finding (SolutionStrategy protocol)
+- [x] CowMatchStrategy for 2-order auctions
+- [x] Order pair detection (opposite directions, same tokens)
+- [x] Direct settlement without AMM (0 interactions, gas=0)
+- [x] Uniform clearing price calculation
+- [x] Test: 14 unit tests for CoW matching
+- [x] Benchmark: Python-only (Rust baseline doesn't support CoW matching)
 
 ### Slice 2.2: Partial CoW + AMM Remainder
 **Goal:** Match what we can peer-to-peer, route remainder through AMM
@@ -242,8 +248,8 @@ cow-solver-py/
 ├── pyproject.toml
 ├── README.md
 ├── PLAN.md                    # This file
-├── SESSIONS.md                # Session handoff log
 ├── BENCHMARKS.md              # Benchmarking guide
+├── docs/sessions/             # Session handoff logs
 │
 ├── solver/
 │   ├── __init__.py
@@ -285,8 +291,8 @@ cow-solver-py/
 │   │   └── auctions/          # Historical auction JSON files
 │   │       ├── single_order/
 │   │       ├── cow_pairs/
-│   │       ├── multi_hop/
-│   │       └── benchmark/
+│   │       ├── benchmark/              # Shared: Python vs Rust comparison
+│   │       └── benchmark_python_only/  # Python-only features (CoW matching)
 │   │
 │   ├── unit/
 │   │   ├── test_models.py

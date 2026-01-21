@@ -12,7 +12,7 @@ This file provides context for AI assistants working on this project. Read this 
 3. Create portfolio material with quantified performance comparisons
 4. Explore where Python can compete with Rust and where it can't
 
-**Status:** Phase 1 (Single Order via DEX) complete. Ready for Phase 2 (Coincidence of Wants).
+**Status:** Phase 1 complete. Phase 2 Slice 2.1 (Perfect CoW Match) complete.
 
 ## What is CoW Protocol?
 
@@ -35,8 +35,8 @@ Solvers expose a `POST /{environment}/{network}` endpoint that:
 cow-solver-py/
 ├── CLAUDE.md              # THIS FILE - read first
 ├── PLAN.md                # Detailed implementation plan with slices
-├── SESSIONS.md            # Session handoff log
 ├── BENCHMARKS.md          # Benchmarking guide
+├── docs/sessions/         # Session handoff logs (one file per session)
 ├── pyproject.toml         # Dependencies and config
 │
 ├── solver/                # Main package
@@ -49,6 +49,10 @@ cow-solver-py/
 │   ├── amm/               # AMM math
 │   │   ├── base.py        # SwapResult dataclass
 │   │   └── uniswap_v2.py  # UniswapV2 implementation
+│   ├── strategies/        # Solution strategies
+│   │   ├── base.py        # SolutionStrategy protocol
+│   │   ├── cow_match.py   # CoW matching strategy
+│   │   └── amm_routing.py # AMM routing strategy
 │   ├── routing/           # Order routing
 │   │   └── router.py      # SingleOrderRouter, Solver (with DI)
 │   └── constants.py       # Centralized constants (addresses, etc.)
@@ -70,12 +74,13 @@ cow-solver-py/
     └── fixtures/auctions/ # JSON test data
         ├── single_order/  # Single order fixtures
         ├── cow_pairs/     # CoW pair fixtures
-        └── benchmark/     # Benchmark fixtures
+        ├── benchmark/     # Shared benchmark fixtures (Python vs Rust)
+        └── benchmark_python_only/  # Python-only benchmarks
 ```
 
 ## Current State
 
-### What's Done (Phase 0 + Phase 1 Complete)
+### What's Done (Phase 0 + Phase 1 + Phase 2 Slice 2.1)
 - ✅ Project skeleton with pyproject.toml
 - ✅ Pydantic models matching CoW OpenAPI spec
 - ✅ FastAPI endpoint that accepts auctions
@@ -91,17 +96,25 @@ cow-solver-py/
 - ✅ **Dependency injection** for testability (router, solver, AMM)
 - ✅ **Mock fixtures** for isolated testing (MockAMM, MockPoolFinder, MockRouter)
 - ✅ Centralized constants (`solver/constants.py`)
-- ✅ Server management script (`scripts/servers.sh`)
+- ✅ **Strategy pattern** for solution finding (SolutionStrategy protocol)
+- ✅ **CoW matching** (2-order peer-to-peer settlement without AMM)
 
-**Total: 85 passing tests** (unit + integration)
+**Total: 99 passing tests** (unit + integration)
 
-### What's Next (Phase 2: Coincidence of Wants)
+### Rust Baseline Solver Limitations
+
+The Rust "baseline" solver from [cowprotocol/services](https://github.com/cowprotocol/services) is a **single-order AMM router only**:
+- ✅ Routes individual orders through AMM liquidity
+- ✅ Supports multi-hop paths
+- ❌ Does NOT support CoW matching
+- ❌ Does NOT optimize across multiple orders
+
+See `BENCHMARKS.md` for details. Benchmarks are split into:
+- `benchmark/` - Shared functionality (Python vs Rust comparison)
+- `benchmark_python_only/` - Python-only features (CoW matching)
+
+### What's Next (Phase 2 continued)
 See `PLAN.md` for full details. Next slices:
-
-**Slice 2.1: Perfect CoW Match**
-- [ ] Detect two orders that exactly offset (A sells X for Y, B sells Y for X)
-- [ ] Direct settlement without AMM
-- [ ] Uniform clearing price calculation
 
 **Slice 2.2: Partial CoW + AMM Remainder**
 - [ ] Match what we can peer-to-peer
@@ -115,6 +128,9 @@ See `PLAN.md` for full details. Next slices:
 | `solver/models/auction.py` | Input data structures |
 | `solver/models/solution.py` | Output data structures |
 | `solver/amm/uniswap_v2.py` | UniswapV2 AMM math and encoding |
+| `solver/strategies/base.py` | SolutionStrategy protocol |
+| `solver/strategies/cow_match.py` | CoW matching implementation |
+| `solver/strategies/amm_routing.py` | AMM routing strategy |
 | `solver/routing/router.py` | Order routing and solution building (with DI) |
 | `solver/constants.py` | Centralized addresses and constants |
 | `tests/conftest.py` | Mock fixtures for DI testing |
@@ -136,6 +152,10 @@ router = SingleOrderRouter(amm=mock_amm, pool_finder=mock_finder)
 
 # Inject mock router into solver
 solver = Solver(router=mock_router)
+
+# Inject custom strategies into solver
+from solver.strategies import CowMatchStrategy, AmmRoutingStrategy
+solver = Solver(strategies=[CowMatchStrategy(), AmmRoutingStrategy()])
 
 # Override FastAPI dependency for API tests
 from solver.api.endpoints import get_solver
@@ -178,21 +198,21 @@ python -m benchmarks.harness    # Compare Python vs Rust
 
 When the user says "do the next step" or similar:
 
-1. **Read `SESSIONS.md`** to see what was done last
+1. **Read `docs/sessions/`** to see what was done last (check README.md for index)
 2. **Check `PLAN.md`** to find the current slice
 3. **Follow the slice workflow:**
    - Write failing tests first
    - Implement minimum code to pass
    - Run benchmarks if applicable
-   - Update `SESSIONS.md` with results
+   - Create new session file in `docs/sessions/`
 
 ### Slice Workflow
 ```
 1. SELECT target auction type from PLAN.md
 2. WRITE failing tests using fixtures
 3. IMPLEMENT minimum code to pass
-4. BENCHMARK against Rust (if configured)
-5. DOCUMENT results in SESSIONS.md
+4. BENCHMARK against Rust (if applicable - some features are Python-only)
+5. DOCUMENT results in docs/sessions/session-NN.md
 ```
 
 ## Important Context
@@ -203,12 +223,19 @@ A valid solution needs:
 - `trades`: Which orders are being filled and by how much
 - `interactions`: On-chain calls (AMM swaps) to execute
 
-### UniswapV2 Math (for Slice 1.2)
+### UniswapV2 Math
 ```
 output = (input * 997 * reserve_out) / (reserve_in * 1000 + input * 997)
 ```
 - 0.3% fee (997/1000)
 - Constant product: `reserve_in * reserve_out = k`
+
+### CoW Matching
+For a valid CoW match:
+- Order A sells token X, wants token Y
+- Order B sells token Y, wants token X
+- Both orders' limit prices must be satisfied
+- Solution has 2 trades, 0 interactions, gas=0
 
 ### Scoring
 Solutions are scored by surplus generated for users. Higher is better.
@@ -216,12 +243,16 @@ The driver validates solutions and rejects invalid ones.
 
 ## Session Handoff
 
-After each session, update `SESSIONS.md` with:
+After each session, create a new file in `docs/sessions/` (e.g., `session-10.md`) with:
 - What was completed
 - Test results
 - Benchmark results (if any)
 - What's next
 - Open questions
+
+Then update `docs/sessions/README.md` with the new session entry.
+
+See `docs/sessions/session-template.md` for the format.
 
 This ensures the next session (human or AI) can pick up seamlessly.
 
@@ -239,16 +270,21 @@ mypy solver/                    # Type check
 python -m solver.api.main       # Start API server
 python -m scripts.collect_auctions --count 50  # Fetch auctions
 
-# Benchmarking
-python -m benchmarks.harness    # Run comparison
+# Benchmarking (shared functionality)
+python scripts/run_benchmarks.py --python-url http://localhost:8000 --rust-url http://localhost:8080
+
+# Benchmarking (Python-only features)
+python scripts/run_benchmarks.py --python-url http://localhost:8000 \
+    --auctions tests/fixtures/auctions/benchmark_python_only
 ```
 
 ## Notes for AI Assistants
 
-1. **Always update SESSIONS.md** after making progress
+1. **Always create a new session file in `docs/sessions/`** after making progress
 2. **Write tests first** — this is test-driven development
 3. **Keep changes minimal** — each slice should be small and focused
 4. **Run tests after changes** — verify nothing broke
 5. **Check PLAN.md** for what's next if unsure
 6. **Use DI for testing** — inject mocks via `tests/conftest.py` fixtures
 7. **Run benchmarks** — see `BENCHMARKS.md` for setup (Rust solver at `/Users/telmo/project/cow-services`)
+8. **Know Rust limitations** — Some features (CoW matching) are Python-only; can't compare with Rust baseline

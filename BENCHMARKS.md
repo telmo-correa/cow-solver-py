@@ -2,6 +2,99 @@
 
 This document describes how to run benchmark comparisons between the Python solver and the reference Rust solver from CoW Protocol.
 
+## Rust Baseline Solver Capabilities
+
+The Rust "baseline" solver is part of the [CoW Protocol Services repository](https://github.com/cowprotocol/services) (`crates/solvers/`). It is a **single-order AMM routing engine**. Understanding its capabilities is important for interpreting benchmark results.
+
+### Feature Summary
+
+| Category | Feature | Rust | Python | Notes |
+|----------|---------|------|--------|-------|
+| **Order Types** | Sell orders | ✅ | ✅ | Fixed sell amount |
+| | Buy orders | ✅ | ✅ | Fixed buy amount, rounding protection |
+| | Limit orders | ✅ | ✅ | With order class support |
+| | Market orders | ✅ | ✅ | Protocol fees only |
+| | Partially fillable | ✅ | ❌ | Binary search (configurable attempts) |
+| **Liquidity** | UniswapV2 (constant product) | ✅ | ✅ | 0.3% fee |
+| | UniswapV3 (concentrated) | ⚠️ | ❌ | Requires RPC config |
+| | Balancer V2 weighted | ✅ | ❌ | V0 and V3+ versions |
+| | Balancer/Curve stable | ✅ | ❌ | With amplification |
+| | 0x limit orders | ✅ | ❌ | As liquidity source |
+| **Routing** | Direct swaps (A→B) | ✅ | ✅ | Single pool |
+| | Multi-hop (A→B→C) | ✅ | ✅ | Configurable max hops |
+| | Order splitting | ❌ | ❌ | Single path per order |
+| **Multi-Order** | CoW matching | ❌ | ✅ | Peer-to-peer settlement |
+| | Batch optimization | ❌ | ❌ | Independent per order |
+| | JIT liquidity | ❌ | ❌ | No dynamic provision |
+
+### Order Types Supported (Rust)
+
+**Fully Supported:**
+- **Sell Orders** - Fixed sell amount, minimum buy amount
+- **Buy Orders** - Fixed buy amount, maximum sell amount (with rounding protection)
+- **Order Classes** - Both `market` and `limit` classes
+- **Partially Fillable** - Binary search algorithm (1/1, 1/2, 1/4, 1/8...) with configurable `max-partial-attempts` (default: 5)
+
+### Liquidity Sources (Rust)
+
+The Rust solver supports 5 liquidity types:
+
+| Type | Description | Gas Estimate |
+|------|-------------|--------------|
+| **Constant Product** | UniswapV2-style pools | ~110,000 |
+| **Weighted Product** | Balancer V2 weighted pools (V0 and V3+) | ~88,892 |
+| **Stable Pools** | Curve-style with amplification | ~183,520 |
+| **Concentrated** | UniswapV3 (requires `uni-v3-node-url` config) | ~106,000 |
+| **Limit Orders** | 0x Protocol-style | Variable |
+
+### Routing Configuration (Rust)
+
+Multi-hop routing is configurable via TOML config:
+
+```toml
+# Example: crates/solvers/config/example.baseline.toml
+max-hops = 1                    # 0=direct only, 1=one intermediate, 2=two
+base-tokens = ["0xC02..."]      # Intermediate routing tokens (WETH auto-included)
+solution-gas-offset = 106391    # Settlement overhead
+```
+
+### What the Rust Baseline Does NOT Support
+
+| Feature | Notes |
+|---------|-------|
+| **CoW matching** | Does not match orders against each other |
+| **Multi-order optimization** | Processes each order independently in a loop |
+| **Order splitting** | Finds single best path, doesn't split across routes |
+| **JIT liquidity** | No dynamic liquidity provision |
+| **Cross-order batching** | Solutions don't combine multiple orders |
+
+When the Rust baseline solver receives a multi-order auction, it processes each order independently and returns separate solutions. It does **not** attempt to find matching opportunities between orders.
+
+## Benchmark Categories
+
+Due to the Rust solver's limitations, benchmarks are split into two categories:
+
+### Shared Functionality Benchmarks (`benchmark/`)
+
+Location: `tests/fixtures/auctions/benchmark/`
+
+These test features supported by both Python and Rust solvers:
+- Single sell orders via AMM
+- Single buy orders via AMM
+- Multi-hop routing (A -> WETH -> B)
+
+**Use for**: Python vs Rust comparison, verifying parity
+
+### Python-Only Benchmarks (`benchmark_python_only/`)
+
+Location: `tests/fixtures/auctions/benchmark_python_only/`
+
+These test Python-only features not available in the Rust baseline:
+- CoW matching (2-order peer-to-peer settlement)
+- Future: multi-order batching, partial CoW + AMM remainder
+
+**Use for**: Python-only validation (no Rust comparison possible)
+
 ## Quick Start
 
 Both solvers run as HTTP servers and accept the same auction JSON format.
@@ -21,11 +114,20 @@ python -m solver.api.main
 
 ### Step 2: Run Benchmarks
 
+**Shared functionality (Python vs Rust):**
 ```bash
 python scripts/run_benchmarks.py --python-url http://localhost:8000 --rust-url http://localhost:8080
 ```
 
+**Python-only features:**
+```bash
+python scripts/run_benchmarks.py --python-url http://localhost:8000 \
+    --auctions tests/fixtures/auctions/benchmark_python_only
+```
+
 ## Latest Benchmark Results
+
+### Shared Functionality (Python vs Rust)
 
 ```
 ============================================================
@@ -45,26 +147,46 @@ Solutions match: 7/7 (100%)
 Individual Results:
 ------------------------------------------------------------
   buy_usdc_with_weth (BUY ORDER):
-    Python: ✓, Rust: ✓, Match: ✓
+    Python: OK, Rust: OK, Match: YES
   usdc_to_weth:
-    Python: ✓, Rust: ✓, Match: ✓
+    Python: OK, Rust: OK, Match: YES
   weth_to_dai:
-    Python: ✓, Rust: ✓, Match: ✓
+    Python: OK, Rust: OK, Match: YES
   weth_to_usdc:
-    Python: ✓, Rust: ✓, Match: ✓
+    Python: OK, Rust: OK, Match: YES
   large_weth_to_usdc:
-    Python: ✓, Rust: ✓, Match: ✓
+    Python: OK, Rust: OK, Match: YES
   usdc_to_dai_multihop (2-hop):
-    Python: ✓, Rust: ✓, Match: ✓
+    Python: OK, Rust: OK, Match: YES
   dai_to_usdc_multihop (2-hop):
-    Python: ✓, Rust: ✓, Match: ✓
+    Python: OK, Rust: OK, Match: YES
 ```
 
 **Summary**: Both solvers produce identical solutions for all 7 test cases, including buy orders and multi-hop routes. Python is approximately 2x slower than Rust.
 
+### Python-Only Features
+
+```
+============================================================
+Python-Only Benchmarks
+============================================================
+Auctions directory: tests/fixtures/auctions/benchmark_python_only
+
+Total auctions: 1
+Python found solutions: 1/1
+
+Individual Results:
+------------------------------------------------------------
+  cow_pair_basic (CoW Match):
+    Python: OK (2 trades, 0 interactions, gas=0)
+    Rust: N/A (not supported by baseline solver)
+```
+
+**Summary**: Python CoW matching produces mathematically correct solutions. Order A (sell 1 WETH, want 2500 USDC) matches with Order B (sell 2600 USDC, want 1 WETH). Both parties receive at least their limit prices, with Order A receiving 100 USDC surplus.
+
 ## Setting Up the Rust Solver
 
-The reference Rust solver is part of the CoW Protocol services repository.
+The reference Rust solver is part of the [CoW Protocol Services repository](https://github.com/cowprotocol/services).
 
 ### Clone and Build
 
@@ -127,7 +249,7 @@ Options:
 Both solvers accept the same JSON auction format. Fixtures must include:
 - Token information with `referencePrice`, `availableBalance`, and `trusted` fields
 - Orders with full CoW Protocol fields including `fullSellAmount`, `fullBuyAmount`, `feePolicies`, etc.
-- Liquidity data describing available AMM pools
+- Liquidity data describing available AMM pools (for AMM routing benchmarks)
 
 Example fixture (see `tests/fixtures/auctions/benchmark/` for full examples):
 

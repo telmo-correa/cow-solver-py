@@ -306,17 +306,20 @@ class TestSolverBehavior:
         data = response.json()
         assert data["solutions"] == []
 
-    def test_multi_order_auction_returns_empty_for_now(self, client):
-        """Multi-order auctions not yet supported."""
+    def test_cow_match_two_orders(self, client):
+        """Two orders that form a perfect CoW match are settled directly."""
+        # Order A: sells 1 WETH, wants min 2000 USDC
+        # Order B: sells 3000 USDC, wants 1 WETH
+        # Perfect match: A gets 3000 USDC (> 2000), B gets 1 WETH
         auction = {
-            "id": "multi_order",
+            "id": "cow_pair",
             "orders": [
                 {
                     "uid": "0x" + "05" * 56,
                     "sellToken": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
                     "buyToken": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
-                    "sellAmount": "1000000000000000000",
-                    "buyAmount": "2000000000",
+                    "sellAmount": "1000000000000000000",  # 1 WETH
+                    "buyAmount": "2000000000",  # min 2000 USDC
                     "kind": "sell",
                     "class": "limit",
                 },
@@ -324,8 +327,8 @@ class TestSolverBehavior:
                     "uid": "0x" + "06" * 56,
                     "sellToken": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
                     "buyToken": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
-                    "sellAmount": "3000000000",
-                    "buyAmount": "1000000000000000000",
+                    "sellAmount": "3000000000",  # 3000 USDC
+                    "buyAmount": "1000000000000000000",  # wants 1 WETH
                     "kind": "sell",
                     "class": "limit",
                 },
@@ -336,8 +339,16 @@ class TestSolverBehavior:
         assert response.status_code == 200
 
         data = response.json()
-        # Multi-order not yet implemented
-        assert len(data["solutions"]) == 0
+        # CoW match should produce a solution
+        assert len(data["solutions"]) == 1
+
+        solution = data["solutions"][0]
+        # Should have two trades (one per order)
+        assert len(solution["trades"]) == 2
+        # No AMM interactions needed for CoW match
+        assert len(solution["interactions"]) == 0
+        # Should have clearing prices for both tokens
+        assert len(solution["prices"]) == 2
 
 
 class TestRoutingWithMocks:
