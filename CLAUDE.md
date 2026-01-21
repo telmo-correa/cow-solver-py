@@ -12,7 +12,7 @@ This file provides context for AI assistants working on this project. Read this 
 3. Create portfolio material with quantified performance comparisons
 4. Explore where Python can compete with Rust and where it can't
 
-**Status:** Phase 0 (Infrastructure) complete. Ready for Phase 1 (Single Order via DEX).
+**Status:** Phase 1 (Single Order via DEX) complete. Ready for Phase 2 (Coincidence of Wants).
 
 ## What is CoW Protocol?
 
@@ -75,7 +75,7 @@ cow-solver-py/
 
 ## Current State
 
-### What's Done (Phase 0 + Phase 1 Slices 1.1-1.2)
+### What's Done (Phase 0 + Phase 1 Complete)
 - ✅ Project skeleton with pyproject.toml
 - ✅ Pydantic models matching CoW OpenAPI spec
 - ✅ FastAPI endpoint that accepts auctions
@@ -83,26 +83,29 @@ cow-solver-py/
 - ✅ Auction collector script
 - ✅ Sample fixture auctions
 - ✅ **UniswapV2 AMM math** (constant product formula)
-- ✅ **Single order router** (routes sell orders through UniV2)
+- ✅ **Single order router** (routes sell/buy orders through UniV2)
 - ✅ **Solution builder** (trades, interactions, clearing prices)
+- ✅ **Buy order support** (exact output swaps)
+- ✅ **Multi-hop routing** (A→B→C via BFS pathfinding)
+- ✅ **PoolRegistry** for dynamic pool management from auction liquidity
 - ✅ **Dependency injection** for testability (router, solver, AMM)
 - ✅ **Mock fixtures** for isolated testing (MockAMM, MockPoolFinder, MockRouter)
 - ✅ Centralized constants (`solver/constants.py`)
+- ✅ Server management script (`scripts/servers.sh`)
 
-**Total: 69 passing tests** (unit + integration)
+**Total: 88 passing tests** (unit + integration)
 
-### What's Next (Phase 1 continued)
+### What's Next (Phase 2: Coincidence of Wants)
 See `PLAN.md` for full details. Next slices:
 
-**Slice 1.3: Single Buy Order → UniswapV2**
-- [ ] Inverse AMM math (calculate input for desired output)
-- [ ] Handle buy order semantics in router
-- [ ] Test: buy orders produce valid solutions
+**Slice 2.1: Perfect CoW Match**
+- [ ] Detect two orders that exactly offset (A sells X for Y, B sells Y for X)
+- [ ] Direct settlement without AMM
+- [ ] Uniform clearing price calculation
 
-**Slice 1.4: Multi-hop Routing (A→B→C)**
-- [ ] Token graph construction
-- [ ] Pathfinding for indirect routes
-- [ ] Chain multiple interactions
+**Slice 2.2: Partial CoW + AMM Remainder**
+- [ ] Match what we can peer-to-peer
+- [ ] Route remainder through AMM
 
 ## Key Files to Know
 

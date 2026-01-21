@@ -5,13 +5,15 @@ With a 0.3% fee on input amounts.
 """
 
 from dataclasses import dataclass
-from typing import ClassVar
+from typing import TYPE_CHECKING, ClassVar
 
 from eth_abi import encode  # type: ignore[attr-defined]
 
 from solver.amm.base import AMM, SwapResult
-from solver.constants import DAI, USDC, USDT, WETH
 from solver.models.types import is_valid_address, normalize_address
+
+if TYPE_CHECKING:
+    from solver.models.auction import Liquidity
 
 
 @dataclass
@@ -26,6 +28,8 @@ class UniswapV2Pool:
     # Fee in basis points (30 = 0.3%)
     # Standard UniswapV2 is 30 bps, but some forks use different fees
     fee_bps: int = 30
+    # Liquidity ID from the auction (for LiquidityInteraction)
+    liquidity_id: str | None = None
 
     @property
     def fee_multiplier(self) -> int:
@@ -202,6 +206,7 @@ class UniswapV2(AMM):
         amount_in: int,
         amount_out_min: int,
         recipient: str,
+        path: list[str] | None = None,
     ) -> tuple[str, str]:
         """Encode a swap as calldata for UniswapV2 Router.
 
@@ -213,6 +218,8 @@ class UniswapV2(AMM):
             amount_in: Amount of input token
             amount_out_min: Minimum output (slippage protection)
             recipient: Address to receive output tokens
+            path: Optional full path for multi-hop swaps. If not provided,
+                  defaults to [token_in, token_out] for direct swaps.
 
         Returns:
             Tuple of (router_address, calldata)
@@ -220,21 +227,20 @@ class UniswapV2(AMM):
         Raises:
             ValueError: If any address is invalid
         """
-        # Validate addresses (is_valid_address ensures they're valid hex)
-        for name, addr in [
-            ("token_in", token_in),
-            ("token_out", token_out),
-            ("recipient", recipient),
-        ]:
-            if not is_valid_address(addr):
-                raise ValueError(f"Invalid {name} address: {addr}")
+        # Build path if not provided
+        if path is None:
+            path = [token_in, token_out]
 
-        # Path is [token_in, token_out]
-        # Note: bytes.fromhex() is safe here since is_valid_address already verified hex format
-        path = [
-            bytes.fromhex(token_in[2:]),
-            bytes.fromhex(token_out[2:]),
-        ]
+        # Validate all addresses in path
+        for i, addr in enumerate(path):
+            if not is_valid_address(addr):
+                raise ValueError(f"Invalid address in path[{i}]: {addr}")
+
+        if not is_valid_address(recipient):
+            raise ValueError(f"Invalid recipient address: {recipient}")
+
+        # Convert path to bytes
+        path_bytes = [bytes.fromhex(addr[2:]) for addr in path]
         recipient_bytes = bytes.fromhex(recipient[2:])
 
         # Deadline far in the future (will be replaced by driver)
@@ -243,7 +249,7 @@ class UniswapV2(AMM):
         # Encode the function call
         encoded_args = encode(
             ["uint256", "uint256", "address[]", "address", "uint256"],
-            [amount_in, amount_out_min, path, recipient_bytes, deadline],
+            [amount_in, amount_out_min, path_bytes, recipient_bytes, deadline],
         )
 
         calldata = self.SWAP_EXACT_TOKENS_SELECTOR + encoded_args.hex()
@@ -257,6 +263,7 @@ class UniswapV2(AMM):
         amount_out: int,
         amount_in_max: int,
         recipient: str,
+        path: list[str] | None = None,
     ) -> tuple[str, str]:
         """Encode a swap for exact output as calldata for UniswapV2 Router.
 
@@ -268,6 +275,8 @@ class UniswapV2(AMM):
             amount_out: Exact amount of output token desired
             amount_in_max: Maximum input amount (slippage protection)
             recipient: Address to receive output tokens
+            path: Optional full path for multi-hop swaps. If not provided,
+                  defaults to [token_in, token_out] for direct swaps.
 
         Returns:
             Tuple of (router_address, calldata)
@@ -275,20 +284,20 @@ class UniswapV2(AMM):
         Raises:
             ValueError: If any address is invalid
         """
-        # Validate addresses
-        for name, addr in [
-            ("token_in", token_in),
-            ("token_out", token_out),
-            ("recipient", recipient),
-        ]:
-            if not is_valid_address(addr):
-                raise ValueError(f"Invalid {name} address: {addr}")
+        # Build path if not provided
+        if path is None:
+            path = [token_in, token_out]
 
-        # Path is [token_in, token_out]
-        path = [
-            bytes.fromhex(token_in[2:]),
-            bytes.fromhex(token_out[2:]),
-        ]
+        # Validate all addresses in path
+        for i, addr in enumerate(path):
+            if not is_valid_address(addr):
+                raise ValueError(f"Invalid address in path[{i}]: {addr}")
+
+        if not is_valid_address(recipient):
+            raise ValueError(f"Invalid recipient address: {recipient}")
+
+        # Convert path to bytes
+        path_bytes = [bytes.fromhex(addr[2:]) for addr in path]
         recipient_bytes = bytes.fromhex(recipient[2:])
 
         # Deadline far in the future (will be replaced by driver)
@@ -298,7 +307,7 @@ class UniswapV2(AMM):
         # swapTokensForExactTokens(amountOut, amountInMax, path, to, deadline)
         encoded_args = encode(
             ["uint256", "uint256", "address[]", "address", "uint256"],
-            [amount_out, amount_in_max, path, recipient_bytes, deadline],
+            [amount_out, amount_in_max, path_bytes, recipient_bytes, deadline],
         )
 
         calldata = self.SWAP_TOKENS_FOR_EXACT_SELECTOR + encoded_args.hex()
@@ -378,53 +387,222 @@ class UniswapV2(AMM):
 uniswap_v2 = UniswapV2()
 
 
-# Well-known pools on mainnet (reserve values are examples - would be fetched on-chain)
-# All addresses are stored in lowercase for consistent comparison
-# Using frozenset keys for O(1) lookup regardless of token order
-MAINNET_POOLS: dict[frozenset[str], UniswapV2Pool] = {
-    # WETH/USDC
-    frozenset([WETH, USDC]): UniswapV2Pool(
-        address="0xb4e16d0168e52d35cacd2c6185b44281ec28c9dc",
-        token0=USDC,  # USDC is token0 (lower address bytes)
-        token1=WETH,  # WETH is token1
-        reserve0=50_000_000 * 10**6,  # 50M USDC
-        reserve1=20_000 * 10**18,  # 20K WETH
-    ),
-    # WETH/USDT
-    frozenset([WETH, USDT]): UniswapV2Pool(
-        address="0x0d4a11d5eeaac28ec3f61d100daf4d40471f1852",
-        token0=WETH,  # WETH is token0 (lower address bytes)
-        token1=USDT,  # USDT is token1
-        reserve0=15_000 * 10**18,  # 15K WETH
-        reserve1=37_500_000 * 10**6,  # 37.5M USDT
-    ),
-    # WETH/DAI
-    frozenset([WETH, DAI]): UniswapV2Pool(
-        address="0xa478c2975ab1ea89e8196811f51a7b7ade33eb11",
-        token0=DAI,  # DAI is token0 (lower address bytes)
-        token1=WETH,  # WETH is token1
-        reserve0=30_000_000 * 10**18,  # 30M DAI
-        reserve1=12_000 * 10**18,  # 12K WETH
-    ),
-}
+class PoolRegistry:
+    """Registry of liquidity pools for routing.
+
+    This class manages a collection of pools and provides methods for:
+    - Looking up pools by token pair
+    - Building token graphs for pathfinding
+    - Finding multi-hop paths through available liquidity
+    """
+
+    def __init__(self, pools: list[UniswapV2Pool] | None = None) -> None:
+        """Initialize the registry with optional pools.
+
+        Args:
+            pools: Initial list of pools. If None, starts empty.
+        """
+        self._pools: dict[frozenset[str], UniswapV2Pool] = {}
+        self._graph: dict[str, set[str]] | None = None  # Cached graph
+
+        if pools:
+            for pool in pools:
+                self.add_pool(pool)
+
+    def add_pool(self, pool: UniswapV2Pool) -> None:
+        """Add a pool to the registry.
+
+        Args:
+            pool: The pool to add. If a pool for this token pair already exists,
+                  it will be replaced.
+        """
+        token0_norm = normalize_address(pool.token0)
+        token1_norm = normalize_address(pool.token1)
+        pair_key = frozenset([token0_norm, token1_norm])
+        self._pools[pair_key] = pool
+        self._graph = None  # Invalidate cached graph
+
+    def get_pool(self, token_a: str, token_b: str) -> UniswapV2Pool | None:
+        """Get a pool for a token pair (order independent).
+
+        Args:
+            token_a: First token address (any case)
+            token_b: Second token address (any case)
+
+        Returns:
+            UniswapV2Pool if found, None otherwise
+        """
+        token_a_norm = normalize_address(token_a)
+        token_b_norm = normalize_address(token_b)
+        pair_key = frozenset([token_a_norm, token_b_norm])
+        return self._pools.get(pair_key)
+
+    def _build_graph(self) -> dict[str, set[str]]:
+        """Build adjacency list of tokens connected by pools."""
+        graph: dict[str, set[str]] = {}
+
+        for token_pair in self._pools:
+            tokens = list(token_pair)
+            token_a, token_b = tokens[0], tokens[1]
+
+            if token_a not in graph:
+                graph[token_a] = set()
+            if token_b not in graph:
+                graph[token_b] = set()
+
+            graph[token_a].add(token_b)
+            graph[token_b].add(token_a)
+
+        return graph
+
+    def find_path(
+        self,
+        token_in: str,
+        token_out: str,
+        max_hops: int = 2,
+    ) -> list[str] | None:
+        """Find a path from token_in to token_out through available pools.
+
+        Uses BFS to find the shortest path (by number of hops).
+
+        Args:
+            token_in: Starting token address
+            token_out: Target token address
+            max_hops: Maximum number of swaps allowed (default 2)
+
+        Returns:
+            List of token addresses representing the path, or None if no path found.
+        """
+        from collections import deque
+
+        token_in_norm = normalize_address(token_in)
+        token_out_norm = normalize_address(token_out)
+
+        if token_in_norm == token_out_norm:
+            return [token_in_norm]
+
+        # Use cached graph or rebuild
+        if self._graph is None:
+            self._graph = self._build_graph()
+        graph = self._graph
+
+        if token_in_norm not in graph or token_out_norm not in graph:
+            return None
+
+        queue: deque[list[str]] = deque([[token_in_norm]])
+        visited = {token_in_norm}
+
+        while queue:
+            path = queue.popleft()
+            if len(path) > max_hops + 1:
+                continue
+
+            current = path[-1]
+            for neighbor in graph.get(current, set()):
+                if neighbor == token_out_norm:
+                    return path + [neighbor]
+                if neighbor not in visited:
+                    visited.add(neighbor)
+                    queue.append(path + [neighbor])
+
+        return None
+
+    def get_all_pools_on_path(self, path: list[str]) -> list[UniswapV2Pool]:
+        """Get all pools needed to execute a multi-hop swap path.
+
+        Args:
+            path: List of token addresses forming the swap path
+
+        Returns:
+            List of pools for each hop in the path
+
+        Raises:
+            ValueError: If any pool in the path is not found
+        """
+        pools = []
+        for i in range(len(path) - 1):
+            pool = self.get_pool(path[i], path[i + 1])
+            if pool is None:
+                raise ValueError(f"No pool found for {path[i]} -> {path[i + 1]}")
+            pools.append(pool)
+        return pools
+
+    @property
+    def pool_count(self) -> int:
+        """Return the number of pools in the registry."""
+        return len(self._pools)
 
 
-def get_pool(token_a: str, token_b: str) -> UniswapV2Pool | None:
-    """Get a pool for a token pair (order independent).
+def parse_liquidity_to_pool(liquidity: "Liquidity") -> UniswapV2Pool | None:
+    """Convert auction Liquidity to UniswapV2Pool.
 
     Args:
-        token_a: First token address (any case)
-        token_b: Second token address (any case)
+        liquidity: Liquidity source from the auction
 
     Returns:
-        UniswapV2Pool if found, None otherwise
-
-    Note:
-        Uses frozenset keys for O(1) lookup regardless of token order.
+        UniswapV2Pool if liquidity is a constant product pool, None otherwise
     """
-    # Normalize to lowercase for comparison
-    token_a_norm = normalize_address(token_a)
-    token_b_norm = normalize_address(token_b)
-    pair_key = frozenset([token_a_norm, token_b_norm])
+    # Only handle constant product (UniswapV2-style) pools
+    if liquidity.kind != "constantProduct":
+        return None
 
-    return MAINNET_POOLS.get(pair_key)
+    if liquidity.address is None:
+        return None
+
+    # tokens must be a dict with balance info
+    if not isinstance(liquidity.tokens, dict):
+        return None
+
+    token_addresses = list(liquidity.tokens.keys())
+    if len(token_addresses) != 2:
+        return None
+
+    token0 = normalize_address(token_addresses[0])
+    token1 = normalize_address(token_addresses[1])
+    balance0 = int(liquidity.tokens[token_addresses[0]]["balance"])
+    balance1 = int(liquidity.tokens[token_addresses[1]]["balance"])
+
+    # Determine token order (UniswapV2 sorts by address bytes)
+    token0_bytes = bytes.fromhex(token0[2:])
+    token1_bytes = bytes.fromhex(token1[2:])
+
+    if token0_bytes > token1_bytes:
+        # Swap to maintain canonical order
+        token0, token1 = token1, token0
+        balance0, balance1 = balance1, balance0
+
+    # Parse fee (default 0.3% = 30 bps)
+    fee_bps = 30
+    if liquidity.fee:
+        try:
+            fee_decimal = float(liquidity.fee)
+            fee_bps = int(fee_decimal * 10000)
+        except ValueError:
+            pass
+
+    return UniswapV2Pool(
+        address=normalize_address(liquidity.address),
+        token0=token0,
+        token1=token1,
+        reserve0=balance0,
+        reserve1=balance1,
+        fee_bps=fee_bps,
+        liquidity_id=liquidity.id,
+    )
+
+
+def build_registry_from_liquidity(liquidity_list: list["Liquidity"]) -> PoolRegistry:
+    """Build a PoolRegistry from auction liquidity sources.
+
+    Args:
+        liquidity_list: List of Liquidity objects from the auction
+
+    Returns:
+        PoolRegistry populated with parsed pools
+    """
+    registry = PoolRegistry()
+    for liq in liquidity_list:
+        pool = parse_liquidity_to_pool(liq)
+        if pool is not None:
+            registry.add_pool(pool)
+    return registry

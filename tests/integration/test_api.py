@@ -14,6 +14,26 @@ from solver.routing.router import Solver
 
 FIXTURES_DIR = Path(__file__).parent.parent / "fixtures" / "auctions"
 
+# Token addresses
+WETH = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
+USDC = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
+
+
+def make_weth_usdc_pool_liquidity():
+    """Create liquidity data for WETH/USDC pool."""
+    return {
+        "kind": "constantProduct",
+        "id": "uniswap-v2-weth-usdc",
+        "address": "0xb4e16d0168e52d35cacd2c6185b44281ec28c9dc",
+        "router": "0x7a250d5630b4cf539739df2c5dacb4c659f2488d",
+        "gasEstimate": "110000",
+        "tokens": {
+            USDC: {"balance": "50000000000000"},  # 50M USDC
+            WETH: {"balance": "20000000000000000000000"},  # 20K WETH
+        },
+        "fee": "0.003",
+    }
+
 
 @pytest.fixture
 def client() -> Iterator[TestClient]:
@@ -145,14 +165,15 @@ class TestSolveEndpoint:
             "orders": [
                 {
                     "uid": "0x" + "01" * 56,
-                    "sellToken": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
-                    "buyToken": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+                    "sellToken": WETH,
+                    "buyToken": USDC,
                     "sellAmount": "1000000000000000000",
                     "buyAmount": "2000000000",  # Reasonable limit price
                     "kind": "sell",
                     "class": "limit",
                 }
             ],
+            "liquidity": [make_weth_usdc_pool_liquidity()],
         }
 
         response = client.post("/production/mainnet", json=auction)

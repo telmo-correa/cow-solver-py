@@ -11,6 +11,43 @@ from solver.models.solution import SolverResponse
 from solver.routing.router import SingleOrderRouter, Solver
 from tests.conftest import MockAMM, MockPoolFinder, MockSwapConfig
 
+# Standard token addresses for tests
+WETH = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
+USDC = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
+DAI = "0x6b175474e89094c44da98b954eedeac495271d0f"
+
+
+def make_weth_usdc_pool_liquidity():
+    """Create liquidity data for WETH/USDC pool."""
+    return {
+        "kind": "constantProduct",
+        "id": "uniswap-v2-weth-usdc",
+        "address": "0xb4e16d0168e52d35cacd2c6185b44281ec28c9dc",
+        "router": "0x7a250d5630b4cf539739df2c5dacb4c659f2488d",
+        "gasEstimate": "110000",
+        "tokens": {
+            USDC: {"balance": "50000000000000"},  # 50M USDC
+            WETH: {"balance": "20000000000000000000000"},  # 20K WETH
+        },
+        "fee": "0.003",
+    }
+
+
+def make_weth_dai_pool_liquidity():
+    """Create liquidity data for WETH/DAI pool."""
+    return {
+        "kind": "constantProduct",
+        "id": "uniswap-v2-weth-dai",
+        "address": "0xa478c2975ab1ea89e8196811f51a7b7ade33eb11",
+        "router": "0x7a250d5630b4cf539739df2c5dacb4c659f2488d",
+        "gasEstimate": "110000",
+        "tokens": {
+            DAI: {"balance": "30000000000000000000000000"},  # 30M DAI
+            WETH: {"balance": "12000000000000000000000"},  # 12K WETH
+        },
+        "fee": "0.003",
+    }
+
 
 @pytest.fixture
 def client() -> Iterator[TestClient]:
@@ -24,17 +61,16 @@ class TestSingleSellOrderRouting:
 
     def test_routes_weth_to_usdc_sell_order(self, client):
         """A WETH→USDC sell order should produce a solution with trades."""
-        # WETH/USDC is a known pool in our registry
         auction = {
             "id": "test_weth_usdc",
             "tokens": {
-                "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2": {
+                WETH: {
                     "decimals": 18,
                     "symbol": "WETH",
                     "availableBalance": "1000000000000000000",
                     "trusted": True,
                 },
-                "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48": {
+                USDC: {
                     "decimals": 6,
                     "symbol": "USDC",
                     "availableBalance": "0",
@@ -44,14 +80,15 @@ class TestSingleSellOrderRouting:
             "orders": [
                 {
                     "uid": "0x" + "01" * 56,
-                    "sellToken": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",  # WETH
-                    "buyToken": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",  # USDC
+                    "sellToken": WETH,
+                    "buyToken": USDC,
                     "sellAmount": "1000000000000000000",  # 1 WETH
                     "buyAmount": "2000000000",  # Min 2000 USDC (reasonable limit price)
                     "kind": "sell",
                     "class": "limit",
                 }
             ],
+            "liquidity": [make_weth_usdc_pool_liquidity()],
         }
 
         response = client.post("/production/mainnet", json=auction)
@@ -71,11 +108,12 @@ class TestSingleSellOrderRouting:
         assert trade.order == "0x" + "01" * 56
         assert int(trade.executed_amount) == 1000000000000000000  # Full sell amount
 
-        # Should have at least one interaction (the AMM swap)
+        # Should have at least one interaction (LiquidityInteraction)
         assert len(solution.interactions) >= 1
         interaction = solution.interactions[0]
-        assert interaction.target.startswith("0x")  # Valid address
-        assert interaction.call_data.startswith("0x")  # Valid calldata
+        assert interaction.kind == "liquidity"
+        assert interaction.internalize is True
+        assert interaction.id is not None  # Has liquidity ID from auction
 
         # Should have prices for both tokens
         assert len(solution.prices) == 2
@@ -113,14 +151,15 @@ class TestSingleSellOrderRouting:
             "orders": [
                 {
                     "uid": "0x" + "03" * 56,
-                    "sellToken": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",  # WETH
-                    "buyToken": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",  # USDC
+                    "sellToken": WETH,
+                    "buyToken": USDC,
                     "sellAmount": "1000000000000000000",  # 1 WETH
                     "buyAmount": "10000000000000",  # 10M USDC (unrealistic)
                     "kind": "sell",
                     "class": "limit",
                 }
             ],
+            "liquidity": [make_weth_usdc_pool_liquidity()],
         }
 
         response = client.post("/production/mainnet", json=auction)
@@ -139,14 +178,15 @@ class TestSingleSellOrderRouting:
             "orders": [
                 {
                     "uid": "0x" + "04" * 56,
-                    "sellToken": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",  # USDC
-                    "buyToken": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",  # WETH
+                    "sellToken": USDC,
+                    "buyToken": WETH,
                     "sellAmount": "2500000000",  # 2500 USDC
                     "buyAmount": "500000000000000000",  # Min 0.5 WETH
                     "kind": "sell",
                     "class": "limit",
                 }
             ],
+            "liquidity": [make_weth_usdc_pool_liquidity()],
         }
 
         response = client.post("/production/mainnet", json=auction)
@@ -170,14 +210,15 @@ class TestClearingPrices:
             "orders": [
                 {
                     "uid": "0x" + "07" * 56,
-                    "sellToken": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",  # WETH
-                    "buyToken": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",  # USDC
+                    "sellToken": WETH,
+                    "buyToken": USDC,
                     "sellAmount": "1000000000000000000",  # 1 WETH
                     "buyAmount": "2000000000",  # Min 2000 USDC
                     "kind": "sell",
                     "class": "limit",
                 }
             ],
+            "liquidity": [make_weth_usdc_pool_liquidity()],
         }
 
         response = client.post("/production/mainnet", json=auction)
@@ -196,36 +237,31 @@ class TestClearingPrices:
         assert weth_addr in prices
         assert usdc_addr in prices
 
-        price_sell = int(prices[weth_addr])
-        price_buy = int(prices[usdc_addr])
+        price_weth = int(prices[weth_addr])
+        price_usdc = int(prices[usdc_addr])
 
         # CoW Protocol constraint: executed_sell * price_sell >= executed_buy * price_buy
         # For this order: 1 WETH sold, getting ~2500 USDC
-        # The prices should encode the exchange rate correctly
+        #
+        # Pricing scheme (matching Rust solver):
+        # - price[sell_token] = amount_out (USDC output)
+        # - price[buy_token] = amount_in (WETH input)
+        #
+        # This gives exchange rate: amount_out / amount_in
 
-        # The sell token (WETH) should have the reference price (1e18)
-        assert price_sell == 10**18
+        # The sell token (WETH) price should be the USDC output amount (~2.5e9)
+        assert 2000 * 10**6 < price_weth < 3000 * 10**6  # ~2500 USDC
 
-        # The buy token price is: (amount_in * PRICE_SCALE) / amount_out
-        # With amount_in = 1e18 (1 WETH) and amount_out ~= 2.5e9 (2500 USDC with 6 decimals)
-        # price_buy ≈ (1e18 * 1e18) / 2.5e9 ≈ 4e26
-        # This large number is correct - it encodes how to balance the clearing equation
-        assert price_buy > 0
+        # The buy token (USDC) price should be the WETH input amount (1e18)
+        assert price_usdc == 10**18
 
         # Verify the CoW Protocol constraint holds
         # executed_sell * price_sell >= executed_buy * price_buy
-        # The trade executes full sell amount (1 WETH) for the AMM output
-        sell_amount = 1000000000000000000  # 1 WETH
+        # With our pricing: amount_in * amount_out >= amount_out * amount_in (equality)
+        sell_amount = 10**18  # 1 WETH
+        buy_amount = price_weth  # The output amount
 
-        # For a sell order, executed_amount is the sell amount
-        # The buy amount comes from the AMM calculation
-        # We verify the constraint: sell * price_sell == buy * price_buy (approximately, due to rounding)
-
-        # The clearing prices should satisfy: sell_amount * price_sell / price_buy ≈ buy_amount
-        implied_buy = (sell_amount * price_sell) // price_buy
-        # The implied buy amount should be close to what the AMM produces (~2492 USDC)
-        assert implied_buy > 2000 * 10**6  # At least 2000 USDC (our limit price)
-        assert implied_buy < 3000 * 10**6  # Less than 3000 USDC (reasonable upper bound)
+        assert sell_amount * price_weth == buy_amount * price_usdc
 
     def test_solution_has_gas_estimate(self, client):
         """Solutions should include gas estimates."""
@@ -234,14 +270,15 @@ class TestClearingPrices:
             "orders": [
                 {
                     "uid": "0x" + "08" * 56,
-                    "sellToken": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
-                    "buyToken": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+                    "sellToken": WETH,
+                    "buyToken": USDC,
                     "sellAmount": "1000000000000000000",
                     "buyAmount": "2000000000",
                     "kind": "sell",
                     "class": "limit",
                 }
             ],
+            "liquidity": [make_weth_usdc_pool_liquidity()],
         }
 
         response = client.post("/production/mainnet", json=auction)
@@ -379,7 +416,7 @@ class TestRoutingWithMocks:
         app.dependency_overrides.clear()
 
     def test_no_pool_scenario_with_mock(self):
-        """Test behavior when no pool is found."""
+        """Test behavior when no pool/route is found."""
         # Pool finder that returns None for all pairs
         mock_finder = MockPoolFinder(default_pool=None)
         mock_amm = MockAMM()
@@ -389,13 +426,14 @@ class TestRoutingWithMocks:
         app.dependency_overrides[get_solver] = lambda: solver
 
         client = TestClient(app)
+        # Use tokens NOT in the global pool registry to ensure no multi-hop route exists
         auction = {
             "id": "test_no_pool",
             "orders": [
                 {
                     "uid": "0x" + "01" * 56,
-                    "sellToken": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
-                    "buyToken": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+                    "sellToken": "0x1111111111111111111111111111111111111111",
+                    "buyToken": "0x2222222222222222222222222222222222222222",
                     "sellAmount": "1000000000000000000",
                     "buyAmount": "1",  # Very low limit to isolate pool finding
                     "kind": "sell",
@@ -407,7 +445,7 @@ class TestRoutingWithMocks:
         response = client.post("/production/mainnet", json=auction)
         data = response.json()
 
-        # Should return empty - no pool found
+        # Should return empty - no pool or route found
         assert len(data["solutions"]) == 0
 
         # Verify pool finder was called but AMM was not

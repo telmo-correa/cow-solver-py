@@ -28,9 +28,139 @@ sys.path.insert(0, str(project_root))
 from benchmarks.harness import BenchmarkResult, BenchmarkSummary, SolverResult  # noqa: E402
 from benchmarks.metrics import compute_metrics  # noqa: E402
 from benchmarks.report import save_report  # noqa: E402
-from solver.models.solution import SolverResponse  # noqa: E402
+from solver.models.solution import (  # noqa: E402
+    CustomInteraction,
+    LiquidityInteraction,
+    Solution,
+    SolverResponse,
+)
 
 logger = structlog.get_logger()
+
+
+def extract_output_amounts(solution: Solution) -> dict[str, int]:
+    """Extract output amounts from a solution's interactions by token.
+
+    Returns a dict mapping token address (lowercased) to total output amount.
+    Works with both CustomInteraction (Python) and LiquidityInteraction (Rust).
+    """
+    outputs: dict[str, int] = {}
+
+    for interaction in solution.interactions:
+        if isinstance(interaction, LiquidityInteraction):
+            # Rust solver uses LiquidityInteraction with output_amount
+            token = interaction.output_token.lower()
+            amount = int(interaction.output_amount)
+            outputs[token] = outputs.get(token, 0) + amount
+        elif isinstance(interaction, CustomInteraction):
+            # Python solver uses CustomInteraction with outputs list
+            for output in interaction.outputs:
+                token = output.token.lower()
+                amount = int(output.amount)
+                outputs[token] = outputs.get(token, 0) + amount
+
+    return outputs
+
+
+def compare_solutions(
+    python_response: SolverResponse | None,
+    rust_response: SolverResponse | None,
+) -> dict[str, str | bool | dict]:
+    """Compare solutions from Python and Rust solvers.
+
+    Returns a dict with comparison results:
+    - match: bool indicating if solutions are equivalent (common outputs match)
+    - python_outputs: dict of token -> amount for Python solution
+    - rust_outputs: dict of token -> amount for Rust solution
+    - diff: description of any differences
+
+    Note: For multi-hop routes, Rust reports intermediate token amounts while Python
+    uses path encoding that only reports final outputs. We compare only the tokens
+    that both solvers report (the final output tokens).
+    """
+    result: dict[str, str | bool | dict] = {
+        "match": False,
+        "python_outputs": {},
+        "rust_outputs": {},
+        "diff": "",
+    }
+
+    # Handle missing responses
+    if not python_response or not python_response.solutions:
+        if not rust_response or not rust_response.solutions:
+            result["match"] = True  # Both empty
+            result["diff"] = "Both solvers returned no solutions"
+            return result
+        result["diff"] = "Python returned no solutions, Rust did"
+        rust_outputs = extract_output_amounts(rust_response.solutions[0])
+        result["rust_outputs"] = rust_outputs
+        return result
+
+    if not rust_response or not rust_response.solutions:
+        result["diff"] = "Rust returned no solutions, Python did"
+        python_outputs = extract_output_amounts(python_response.solutions[0])
+        result["python_outputs"] = python_outputs
+        return result
+
+    # Extract outputs from first solution of each
+    python_outputs = extract_output_amounts(python_response.solutions[0])
+    rust_outputs = extract_output_amounts(rust_response.solutions[0])
+
+    result["python_outputs"] = python_outputs
+    result["rust_outputs"] = rust_outputs
+
+    # Compare outputs
+    if not python_outputs and not rust_outputs:
+        result["match"] = True
+        result["diff"] = "Both have no interaction outputs"
+        return result
+
+    # Find common tokens (present in both outputs)
+    common_tokens = set(python_outputs.keys()) & set(rust_outputs.keys())
+    python_only_tokens = set(python_outputs.keys()) - set(rust_outputs.keys())
+    rust_only_tokens = set(rust_outputs.keys()) - set(python_outputs.keys())
+
+    differences = []
+    notes = []
+
+    # Compare common tokens (must match exactly)
+    for token in common_tokens:
+        py_amt = python_outputs[token]
+        rs_amt = rust_outputs[token]
+        if py_amt != rs_amt:
+            # Calculate relative difference
+            if rs_amt > 0:
+                rel_diff = abs(py_amt - rs_amt) / rs_amt * 100
+                differences.append(
+                    f"{token[:10]}...: Python={py_amt}, Rust={rs_amt} ({rel_diff:.2f}% diff)"
+                )
+            else:
+                differences.append(f"{token[:10]}...: Python={py_amt}, Rust={rs_amt}")
+
+    # Note tokens only in one solver (likely intermediate tokens in multi-hop)
+    if rust_only_tokens:
+        # Rust often reports intermediate tokens in multi-hop that Python doesn't
+        intermediate_note = f"Rust has {len(rust_only_tokens)} extra token(s) (likely intermediate)"
+        notes.append(intermediate_note)
+
+    if python_only_tokens:
+        # Less common, but note if Python has tokens Rust doesn't
+        extra_note = f"Python has {len(python_only_tokens)} extra token(s)"
+        notes.append(extra_note)
+
+    # Build result
+    if differences:
+        result["diff"] = "; ".join(differences)
+        if notes:
+            result["diff"] += f" [{', '.join(notes)}]"
+    else:
+        result["match"] = True
+        if notes:
+            result["diff"] = f"Common outputs match [{', '.join(notes)}]"
+        else:
+            result["diff"] = "Solutions match"
+
+    return result
 
 
 async def run_http_solver(
@@ -313,15 +443,30 @@ Before running:
         print(f"  Range:  {ss.min:.2%} - {ss.max:.2%}")
         print()
 
-    # Show individual results
+    # Show individual results with solution comparison
     if summary.results:
         print("Individual Results:")
         print("-" * 60)
+
+        matches = 0
+        mismatches = 0
+
         for r in summary.results:
             py_ok = r.python_result.error is None and r.python_result.solution_count > 0
             rs_ok = r.rust_result.error is None and r.rust_result.solution_count > 0
             py_status = "✓" if py_ok else ("○" if r.python_result.error is None else "✗")
             rs_status = "✓" if rs_ok else ("○" if r.rust_result.error is None else "✗")
+
+            # Compare solutions
+            comparison = compare_solutions(
+                r.python_result.response,
+                r.rust_result.response,
+            )
+            match_status = "✓" if comparison["match"] else "✗"
+            if comparison["match"]:
+                matches += 1
+            else:
+                mismatches += 1
 
             print(f"  {r.auction_name}:")
             print(
@@ -332,11 +477,29 @@ Before running:
                 f"    Rust   [{rs_status}]: {r.rust_result.elapsed_ms:.1f}ms, "
                 f"solutions={r.rust_result.solution_count}"
             )
+            print(f"    Match  [{match_status}]: {comparison['diff']}")
+
+            # Show output amounts if available and different
+            if not comparison["match"]:
+                if comparison["python_outputs"]:
+                    for token, amt in comparison["python_outputs"].items():
+                        print(f"      Python output: {token[:16]}... = {amt}")
+                if comparison["rust_outputs"]:
+                    for token, amt in comparison["rust_outputs"].items():
+                        print(f"      Rust output:   {token[:16]}... = {amt}")
 
             if r.python_result.error:
                 print(f"      Python error: {r.python_result.error[:80]}")
             if r.rust_result.error:
                 print(f"      Rust error: {r.rust_result.error[:80]}")
+        print()
+
+        # Summary of solution comparisons
+        print("Solution Comparison Summary:")
+        print(f"  Matching: {matches}/{len(summary.results)}")
+        print(f"  Mismatching: {mismatches}/{len(summary.results)}")
+        if mismatches > 0:
+            print("  WARNING: Some solutions differ between Python and Rust solvers!")
         print()
 
     # Save reports

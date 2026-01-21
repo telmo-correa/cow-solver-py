@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from solver.amm.base import SwapResult
-from solver.amm.uniswap_v2 import UniswapV2Pool
+from solver.amm.uniswap_v2 import PoolRegistry, UniswapV2Pool
 from solver.models import AuctionInstance
 from solver.routing.router import RoutingResult, SingleOrderRouter, Solver
 
@@ -117,25 +117,29 @@ class MockAMM:
         self.config = config or MockSwapConfig()
         self.swap_calls: list[dict] = []  # Track calls for assertions
 
+    def _calculate_output(self, amount_in: int) -> int:
+        """Calculate output amount based on config."""
+        if self.config.fixed_output is not None:
+            return self.config.fixed_output
+        elif self.config.output_multiplier is not None:
+            return int(amount_in * self.config.output_multiplier)
+        else:
+            # Default: assume WETH (18 decimals) to USDC (6 decimals)
+            # 1 WETH = ~2500 USDC
+            return int(amount_in * self.config.default_rate / 10**12)
+
     def simulate_swap(self, pool: UniswapV2Pool, token_in: str, amount_in: int) -> SwapResult:
         """Simulate a swap with configurable output."""
         self.swap_calls.append(
             {
+                "method": "simulate_swap",
                 "pool": pool.address,
                 "token_in": token_in,
                 "amount_in": amount_in,
             }
         )
 
-        if self.config.fixed_output is not None:
-            amount_out = self.config.fixed_output
-        elif self.config.output_multiplier is not None:
-            amount_out = int(amount_in * self.config.output_multiplier)
-        else:
-            # Default: assume WETH (18 decimals) to USDC (6 decimals)
-            # 1 WETH = ~2500 USDC
-            amount_out = int(amount_in * self.config.default_rate / 10**12)
-
+        amount_out = self._calculate_output(amount_in)
         token_out = pool.token1 if token_in.lower() == pool.token0.lower() else pool.token0
 
         return SwapResult(
@@ -147,6 +151,95 @@ class MockAMM:
             gas_estimate=self.SWAP_GAS,
         )
 
+    def simulate_swap_exact_output(
+        self, pool: UniswapV2Pool, token_in: str, amount_out: int
+    ) -> SwapResult:
+        """Simulate a swap for exact output (buy orders)."""
+        self.swap_calls.append(
+            {
+                "method": "simulate_swap_exact_output",
+                "pool": pool.address,
+                "token_in": token_in,
+                "amount_out": amount_out,
+            }
+        )
+
+        # Inverse of _calculate_output (approximate)
+        if self.config.fixed_output is not None:
+            amount_in = 1000000000000000000  # 1 token
+        elif self.config.output_multiplier is not None:
+            amount_in = int(amount_out / self.config.output_multiplier)
+        else:
+            amount_in = int(amount_out / self.config.default_rate * 10**12)
+
+        token_out_addr = pool.token1 if token_in.lower() == pool.token0.lower() else pool.token0
+
+        return SwapResult(
+            amount_in=amount_in,
+            amount_out=amount_out,
+            pool_address=pool.address,
+            token_in=token_in,
+            token_out=token_out_addr,
+            gas_estimate=self.SWAP_GAS,
+        )
+
+    def simulate_multihop_swap(
+        self, pools: list[UniswapV2Pool], path: list[str], amount_in: int
+    ) -> SwapResult:
+        """Simulate a multi-hop swap."""
+        self.swap_calls.append(
+            {
+                "method": "simulate_multihop_swap",
+                "pools": [p.address for p in pools],
+                "path": path,
+                "amount_in": amount_in,
+            }
+        )
+
+        # Apply rate for each hop
+        current_amount = amount_in
+        for _ in pools:
+            current_amount = self._calculate_output(current_amount)
+
+        return SwapResult(
+            amount_in=amount_in,
+            amount_out=current_amount,
+            pool_address=pools[-1].address if pools else "",
+            token_in=path[0],
+            token_out=path[-1],
+            gas_estimate=self.SWAP_GAS * len(pools),
+        )
+
+    def simulate_multihop_swap_exact_output(
+        self, pools: list[UniswapV2Pool], path: list[str], amount_out: int
+    ) -> SwapResult:
+        """Simulate a multi-hop swap for exact output."""
+        self.swap_calls.append(
+            {
+                "method": "simulate_multihop_swap_exact_output",
+                "pools": [p.address for p in pools],
+                "path": path,
+                "amount_out": amount_out,
+            }
+        )
+
+        # Work backwards through hops (approximate)
+        current_amount = amount_out
+        for _ in pools:
+            if self.config.output_multiplier is not None:
+                current_amount = int(current_amount / self.config.output_multiplier)
+            else:
+                current_amount = int(current_amount / self.config.default_rate * 10**12)
+
+        return SwapResult(
+            amount_in=current_amount,
+            amount_out=amount_out,
+            pool_address=pools[0].address if pools else "",
+            token_in=path[0],
+            token_out=path[-1],
+            gas_estimate=self.SWAP_GAS * len(pools),
+        )
+
     def encode_swap(
         self,
         token_in: str,
@@ -154,14 +247,32 @@ class MockAMM:
         amount_in: int,
         amount_out_min: int,
         recipient: str,
+        path: list[str] | None = None,
     ) -> tuple[str, str]:
         """Return mock calldata (valid hex format)."""
         # Mark interface-required params as intentionally unused
-        _ = (token_in, token_out, recipient)
+        _ = (token_in, token_out, recipient, path)
         # Encode amount_in and amount_out_min as hex for valid calldata
         calldata = f"0x{amount_in:064x}{amount_out_min:064x}"
         return (
             "0x7a250d5630b4cf539739df2c5dacb4c659f2488d",  # UniswapV2Router02
+            calldata,
+        )
+
+    def encode_swap_exact_output(
+        self,
+        token_in: str,
+        token_out: str,
+        amount_out: int,
+        amount_in_max: int,
+        recipient: str,
+        path: list[str] | None = None,
+    ) -> tuple[str, str]:
+        """Return mock calldata for exact output swap."""
+        _ = (token_in, token_out, recipient, path)
+        calldata = f"0x8803dbee{amount_out:064x}{amount_in_max:064x}"
+        return (
+            "0x7a250d5630b4cf539739df2c5dacb4c659f2488d",
             calldata,
         )
 
@@ -256,16 +367,52 @@ class MockRouter:
 # =============================================================================
 
 
+# Well-known token addresses for testing (lowercase)
+TEST_WETH = "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2"
+TEST_USDC = "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
+TEST_DAI = "0x6b175474e89094c44da98b954eedeac495271d0f"
+TEST_USDT = "0xdac17f958d2ee523a2206206994597c13d831ec7"
+
+
 @pytest.fixture
 def mock_weth_usdc_pool() -> UniswapV2Pool:
     """A mock WETH/USDC pool with reasonable reserves."""
     return UniswapV2Pool(
         address="0xb4e16d0168e52d35cacd2c6185b44281ec28c9dc",
-        token0="0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",  # WETH
-        token1="0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",  # USDC
-        reserve0=10_000 * 10**18,  # 10,000 WETH
-        reserve1=25_000_000 * 10**6,  # 25M USDC
+        token0=TEST_USDC,  # USDC is token0 (lower bytes)
+        token1=TEST_WETH,  # WETH is token1
+        reserve0=50_000_000 * 10**6,  # 50M USDC
+        reserve1=20_000 * 10**18,  # 20K WETH
         fee_bps=30,
+        liquidity_id="0",  # Liquidity ID from auction
+    )
+
+
+@pytest.fixture
+def mock_weth_dai_pool() -> UniswapV2Pool:
+    """A mock WETH/DAI pool with reasonable reserves."""
+    return UniswapV2Pool(
+        address="0xa478c2975ab1ea89e8196811f51a7b7ade33eb11",
+        token0=TEST_DAI,  # DAI is token0 (lower bytes)
+        token1=TEST_WETH,  # WETH is token1
+        reserve0=30_000_000 * 10**18,  # 30M DAI
+        reserve1=12_000 * 10**18,  # 12K WETH
+        fee_bps=30,
+        liquidity_id="1",  # Liquidity ID from auction
+    )
+
+
+@pytest.fixture
+def mock_weth_usdt_pool() -> UniswapV2Pool:
+    """A mock WETH/USDT pool with reasonable reserves."""
+    return UniswapV2Pool(
+        address="0x0d4a11d5eeaac28ec3f61d100daf4d40471f1852",
+        token0=TEST_WETH,  # WETH is token0 (lower bytes in this case)
+        token1=TEST_USDT,  # USDT is token1
+        reserve0=15_000 * 10**18,  # 15K WETH
+        reserve1=37_500_000 * 10**6,  # 37.5M USDT
+        fee_bps=30,
+        liquidity_id="2",  # Liquidity ID from auction
     )
 
 
@@ -282,6 +429,20 @@ def mock_pool_finder(mock_weth_usdc_pool: UniswapV2Pool) -> MockPoolFinder:
 
 
 @pytest.fixture
+def test_pool_registry(
+    mock_weth_usdc_pool: UniswapV2Pool,
+    mock_weth_dai_pool: UniswapV2Pool,
+    mock_weth_usdt_pool: UniswapV2Pool,
+) -> PoolRegistry:
+    """A pool registry with standard test pools for WETH, USDC, DAI, USDT."""
+    registry = PoolRegistry()
+    registry.add_pool(mock_weth_usdc_pool)
+    registry.add_pool(mock_weth_dai_pool)
+    registry.add_pool(mock_weth_usdt_pool)
+    return registry
+
+
+@pytest.fixture
 def mock_router_success() -> MockRouter:
     """A mock router that always succeeds."""
     return MockRouter(success=True)
@@ -295,8 +456,14 @@ def mock_router_failure() -> MockRouter:
 
 @pytest.fixture
 def injected_router(mock_amm: MockAMM, mock_pool_finder: MockPoolFinder) -> SingleOrderRouter:
-    """A router with injected mock dependencies."""
+    """A router with injected mock dependencies (legacy - uses pool_finder)."""
     return SingleOrderRouter(amm=mock_amm, pool_finder=mock_pool_finder)
+
+
+@pytest.fixture
+def router(test_pool_registry: PoolRegistry) -> SingleOrderRouter:
+    """A router with test pool registry and real AMM math."""
+    return SingleOrderRouter(pool_registry=test_pool_registry)
 
 
 @pytest.fixture

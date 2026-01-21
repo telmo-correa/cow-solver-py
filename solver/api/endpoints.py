@@ -30,7 +30,7 @@ def get_solver() -> Solver:
     return solver
 
 
-@router.post("/{environment}/{network}")
+@router.post("/{environment}/{network}", response_model_exclude_none=True)
 async def solve(
     environment: str,
     network: str,

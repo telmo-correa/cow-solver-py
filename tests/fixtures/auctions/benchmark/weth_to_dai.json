@@ -8,7 +8,7 @@
       "availableBalance": "5000000000000000000",
       "trusted": true
     },
-    "0x6b175474e89094c44da98b954eecdecb5f6f8fa0": {
+    "0x6b175474e89094c44da98b954eedeac495271d0f": {
       "decimals": 18,
       "symbol": "DAI",
       "referencePrice": "1000000000000000000",
@@ -20,7 +20,7 @@
     {
       "uid": "0x2102030405060708091011121314151617181920212223242526272829303132333435363738394041424344454647484950515253545556",
       "sellToken": "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",
-      "buyToken": "0x6b175474e89094c44da98b954eecdecb5f6f8fa0",
+      "buyToken": "0x6b175474e89094c44da98b954eedeac495271d0f",
       "sellAmount": "1000000000000000000",
       "fullSellAmount": "1000000000000000000",
       "buyAmount": "2400000000000000000000",
@@ -48,7 +48,7 @@
       "router": "0x7a250d5630b4cf539739df2c5dacb4c659f2488d",
       "gasEstimate": "110000",
       "tokens": {
-        "0x6b175474e89094c44da98b954eecdecb5f6f8fa0": {
+        "0x6b175474e89094c44da98b954eedeac495271d0f": {
           "balance": "30000000000000000000000000"
         },
         "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2": {

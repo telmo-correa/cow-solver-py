@@ -2,10 +2,11 @@
 
 from solver.amm.base import AMM, SwapResult
 from solver.amm.uniswap_v2 import (
-    MAINNET_POOLS,
+    PoolRegistry,
     UniswapV2,
     UniswapV2Pool,
-    get_pool,
+    build_registry_from_liquidity,
+    parse_liquidity_to_pool,
     uniswap_v2,
 )
 
@@ -16,7 +17,8 @@ __all__ = [
     # UniswapV2
     "UniswapV2",
     "UniswapV2Pool",
+    "PoolRegistry",
     "uniswap_v2",
-    "get_pool",
-    "MAINNET_POOLS",
+    "build_registry_from_liquidity",
+    "parse_liquidity_to_pool",
 ]

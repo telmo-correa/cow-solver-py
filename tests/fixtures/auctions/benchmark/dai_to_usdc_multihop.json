@@ -1,0 +1,87 @@
+{
+  "id": "2",
+  "tokens": {
+    "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48": {
+      "decimals": 6,
+      "symbol": "USDC",
+      "referencePrice": "400000000000000",
+      "availableBalance": "10000000000",
+      "trusted": true
+    },
+    "0x6b175474e89094c44da98b954eedeac495271d0f": {
+      "decimals": 18,
+      "symbol": "DAI",
+      "referencePrice": "400000000000000",
+      "availableBalance": "10000000000000000000000",
+      "trusted": true
+    },
+    "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2": {
+      "decimals": 18,
+      "symbol": "WETH",
+      "referencePrice": "1000000000000000000",
+      "availableBalance": "1000000000000000000",
+      "trusted": true
+    }
+  },
+  "orders": [
+    {
+      "uid": "0x0102030405060708091011121314151617181920212223242526272829303132333435363738394041424344454647484950515253545559",
+      "sellToken": "0x6b175474e89094c44da98b954eedeac495271d0f",
+      "buyToken": "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+      "sellAmount": "1000000000000000000000",
+      "fullSellAmount": "1000000000000000000000",
+      "buyAmount": "900000000",
+      "fullBuyAmount": "900000000",
+      "feePolicies": [],
+      "validTo": 0,
+      "kind": "sell",
+      "owner": "0x5b1e2c2762667331bc91648052f646d1b0d35984",
+      "partiallyFillable": false,
+      "preInteractions": [],
+      "postInteractions": [],
+      "sellTokenSource": "erc20",
+      "buyTokenDestination": "erc20",
+      "class": "market",
+      "appData": "0x0000000000000000000000000000000000000000000000000000000000000000",
+      "signingScheme": "presign",
+      "signature": "0x"
+    }
+  ],
+  "liquidity": [
+    {
+      "kind": "constantProduct",
+      "tokens": {
+        "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48": {
+          "balance": "50000000000000"
+        },
+        "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2": {
+          "balance": "20000000000000000000000"
+        }
+      },
+      "fee": "0.003",
+      "id": "0",
+      "address": "0xB4e16d0168e52d35CaCD2c6185b44281Ec28C9Dc",
+      "router": "0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D",
+      "gasEstimate": "110000"
+    },
+    {
+      "kind": "constantProduct",
+      "tokens": {
+        "0x6b175474e89094c44da98b954eedeac495271d0f": {
+          "balance": "30000000000000000000000000"
+        },
+        "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2": {
+          "balance": "12000000000000000000000"
+        }
+      },
+      "fee": "0.003",
+      "id": "1",
+      "address": "0xA478c2975Ab1Ea89e8196811F51A7B7Ade33eB11",
+      "router": "0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D",
+      "gasEstimate": "110000"
+    }
+  ],
+  "effectiveGasPrice": "15000000000",
+  "deadline": "2106-01-01T00:00:00.000Z",
+  "surplusCapturingJitOrderOwners": []
+}

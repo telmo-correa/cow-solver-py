@@ -55,6 +55,13 @@ benchmarks/results/
 benchmarks/reports/
 *.log
 
+# Server management
+scripts/servers.sh
+.python-server.pid
+.rust-server.pid
+.python-server.log
+.rust-server.log
+
 # Environment
 .env
 .env.local

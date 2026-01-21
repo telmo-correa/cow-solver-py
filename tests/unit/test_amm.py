@@ -2,7 +2,7 @@
 
 import pytest
 
-from solver.amm.uniswap_v2 import UniswapV2, UniswapV2Pool, get_pool, uniswap_v2
+from solver.amm.uniswap_v2 import UniswapV2, UniswapV2Pool, uniswap_v2
 
 
 class TestUniswapV2Math:
@@ -210,32 +210,50 @@ class TestSwapSimulation:
 
 
 class TestPoolRegistry:
-    """Tests for pool lookup."""
+    """Tests for PoolRegistry."""
 
-    def test_get_weth_usdc_pool(self):
-        """Can find WETH/USDC pool."""
+    def test_get_weth_usdc_pool(self, test_pool_registry):
+        """Can find WETH/USDC pool in registry."""
         # Addresses can be any case - get_pool normalizes them
         weth = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
         usdc = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
 
-        pool = get_pool(weth, usdc)
+        pool = test_pool_registry.get_pool(weth, usdc)
         assert pool is not None
         # Pool addresses are stored lowercase for consistency
         assert pool.address == "0xb4e16d0168e52d35cacd2c6185b44281ec28c9dc"
 
-    def test_get_pool_order_independent(self):
+    def test_get_pool_order_independent(self, test_pool_registry):
         """Pool lookup works regardless of token order."""
         weth = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
         usdc = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
 
-        pool1 = get_pool(weth, usdc)
-        pool2 = get_pool(usdc, weth)
+        pool1 = test_pool_registry.get_pool(weth, usdc)
+        pool2 = test_pool_registry.get_pool(usdc, weth)
         assert pool1 == pool2
 
-    def test_get_nonexistent_pool(self):
+    def test_get_nonexistent_pool(self, test_pool_registry):
         """Returns None for unknown token pairs."""
-        pool = get_pool("0xUnknown1", "0xUnknown2")
+        pool = test_pool_registry.get_pool("0xUnknown1", "0xUnknown2")
         assert pool is None
+
+    def test_find_path_direct(self, test_pool_registry):
+        """Find direct path when pool exists."""
+        weth = "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2"
+        usdc = "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
+
+        path = test_pool_registry.find_path(weth, usdc)
+        assert path is not None
+        assert len(path) == 2  # Direct path: [WETH, USDC]
+
+    def test_find_path_multihop(self, test_pool_registry):
+        """Find multi-hop path through intermediate token."""
+        usdc = "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
+        dai = "0x6b175474e89094c44da98b954eedeac495271d0f"
+
+        path = test_pool_registry.find_path(usdc, dai)
+        assert path is not None
+        assert len(path) == 3  # Multi-hop: [USDC, WETH, DAI]
 
 
 class TestSwapEncoding:
@@ -299,8 +317,8 @@ class TestSwapEncoding:
         """encode_swap should reject invalid addresses."""
         amm = UniswapV2()
 
-        # Invalid token_in
-        with pytest.raises(ValueError, match="Invalid token_in"):
+        # Invalid token_in (validated as part of path)
+        with pytest.raises(ValueError, match="Invalid address"):
             amm.encode_swap(
                 token_in="not-an-address",
                 token_out="0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
@@ -309,8 +327,8 @@ class TestSwapEncoding:
                 recipient="0x9008D19f58AAbD9eD0D60971565AA8510560ab41",
             )
 
-        # Invalid token_out
-        with pytest.raises(ValueError, match="Invalid token_out"):
+        # Invalid token_out (validated as part of path)
+        with pytest.raises(ValueError, match="Invalid address"):
             amm.encode_swap(
                 token_in="0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
                 token_out="0x123",  # Too short
@@ -391,7 +409,8 @@ class TestSwapExactOutputEncoding:
         """encode_swap_exact_output should reject invalid addresses."""
         amm = UniswapV2()
 
-        with pytest.raises(ValueError, match="Invalid token_in"):
+        # Invalid token_in (validated as part of path)
+        with pytest.raises(ValueError, match="Invalid address"):
             amm.encode_swap_exact_output(
                 token_in="invalid",
                 token_out="0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
