@@ -105,14 +105,16 @@ Each slice delivers end-to-end functionality for a specific auction type, with t
 - [x] Test: 20 unit tests for CoW matching (all order type combinations)
 - [x] Benchmark: Python-only (Rust baseline doesn't support CoW matching)
 
-### Slice 2.2: Partial CoW + AMM Remainder
+### Slice 2.2: Partial CoW + AMM Remainder ✅ COMPLETE
 **Goal:** Match what we can peer-to-peer, route remainder through AMM
 
-- [ ] Calculate matchable volume
-- [ ] Split order execution (CoW portion + AMM portion)
-- [ ] Combined solution with mixed trades
-- [ ] Test: auctions with partial overlap
-- [ ] Benchmark
+- [x] Composable strategy architecture (StrategyResult, OrderFill)
+- [x] Calculate matchable volume for sell-sell partial matches
+- [x] Split order execution (CoW portion + AMM portion)
+- [x] Merged fills from multiple strategies into single trades
+- [x] Test: 24 CoW match tests (including partial scenarios)
+- [x] Test: 2 integration tests for partial CoW + AMM composition
+- [x] Benchmark fixture: `partial_cow_amm.json`
 
 ### Slice 2.3: Multi-Order CoW Detection
 **Goal:** Find CoW opportunities across N orders

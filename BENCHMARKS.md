@@ -94,7 +94,9 @@ These test Python-only features not available in the Rust baseline:
   - sell-sell matches (`cow_pair_basic.json`)
   - sell-buy matches (`cow_pair_sell_buy.json`)
   - buy-buy matches (`cow_pair_buy_buy.json`)
-- Future: multi-order batching, partial CoW + AMM remainder
+- Partial CoW + AMM remainder
+  - partial match with AMM routing for remainder (`partial_cow_amm.json`)
+- Future: multi-order batching
 
 **Use for**: Python-only validation (no Rust comparison possible)
 

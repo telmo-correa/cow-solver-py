@@ -122,6 +122,11 @@ class Order(BaseModel):
     kind: OrderKind
     partially_fillable: bool = Field(default=False, alias="partiallyFillable")
     class_: OrderClass = Field(alias="class")
+    # For remainder orders: tracks the original order's UID for fill merging
+    original_uid: OrderUid | None = Field(
+        default=None,
+        description="For remainder orders, the UID of the original order. Used for fill merging.",
+    )
 
     # Optional fields
     app_data: Bytes | None = Field(default=None, alias="appData")
