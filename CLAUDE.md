@@ -12,7 +12,7 @@ This file provides context for AI assistants working on this project. Read this 
 3. Create portfolio material with quantified performance comparisons
 4. Explore where Python can compete with Rust and where it can't
 
-**Status:** Phase 1 complete. Phase 2 complete (2-order CoW matching). Phase 3 in progress (UniswapV3 - Slice 3.1.1 done).
+**Status:** Phase 1 complete. Phase 2 complete (2-order CoW matching). Phase 3 Slice 3.1 complete (UniswapV3).
 
 ## What is CoW Protocol?
 
@@ -47,12 +47,13 @@ cow-solver-py/
 │   │   ├── auction.py     # AuctionInstance, Order, Token
 │   │   └── solution.py    # Solution, Trade, Interaction
 │   ├── amm/               # AMM math
-│   │   ├── base.py        # SwapResult dataclass
+│   │   ├── base.py        # SwapResult dataclass, SwapCalculator protocol
 │   │   ├── uniswap_v2.py  # UniswapV2 implementation
-│   │   └── uniswap_v3.py  # UniswapV3 pool parsing & constants
+│   │   └── uniswap_v3.py  # UniswapV3 implementation (quoter-based)
 │   ├── strategies/        # Solution strategies
-│   │   ├── base.py        # SolutionStrategy protocol
+│   │   ├── base.py        # SolutionStrategy protocol, fee calculation
 │   │   ├── cow_match.py   # CoW matching strategy
+│   │   ├── matching_rules.py # Data-driven matching rules
 │   │   └── amm_routing.py # AMM routing strategy
 │   ├── routing/           # Order routing
 │   │   └── router.py      # SingleOrderRouter, Solver (with DI)
@@ -81,7 +82,7 @@ cow-solver-py/
 
 ## Current State
 
-### What's Done (Phase 0 + Phase 1 + Phase 2 Slices 2.1-2.2)
+### What's Done (Phase 0 + Phase 1 + Phase 2 + Phase 3 Slice 3.1)
 - ✅ Project skeleton with pyproject.toml
 - ✅ Pydantic models matching CoW OpenAPI spec
 - ✅ FastAPI endpoint that accepts auctions
@@ -103,8 +104,13 @@ cow-solver-py/
 - ✅ **Partial CoW + AMM** (partial CoW match with AMM remainder routing)
 - ✅ **AMM partial fills** (exact calculation outperforms Rust's binary search)
 - ✅ **Data-driven matching rules** (matching_rules.py for auditability)
+- ✅ **UniswapV3 integration** (quoter-based swap calculation)
+- ✅ **V3 Quoter interface** (MockV3Quoter for tests, Web3V3Quoter for RPC)
+- ✅ **V3 settlement encoding** (SwapRouterV2 calldata)
+- ✅ **Best-quote selection** (V2 vs V3 comparison)
+- ✅ **Limit order fee calculation** (matching Rust baseline behavior)
 
-**Total: 224 passing tests** (unit + integration)
+**Total: 288 passing tests** (unit + integration)
 
 ### Rust Baseline Solver Limitations
 
@@ -126,12 +132,12 @@ See `PLAN.md` for full details.
 > We're adding liquidity sources first to understand the full problem space before
 > designing the unified optimizer.
 
-**Slice 3.1: UniswapV3 Integration**
-- [ ] Concentrated liquidity math (tick ranges)
-- [ ] Tick-based price calculation
-- [ ] Parse UniswapV3 liquidity from auction data
+**Slice 3.1: UniswapV3 Integration** ✅ COMPLETE
+- [x] V3 pool parsing and quoter interface
+- [x] Best-quote selection between V2 and V3
+- [x] Limit order fee calculation
 
-**Slice 3.2: Balancer/Curve Integration**
+**Slice 3.2: Balancer/Curve Integration** ⬅️ NEXT
 - [ ] Weighted pool math (Balancer)
 - [ ] Stable pool math (Curve/Balancer)
 
@@ -140,17 +146,17 @@ See `PLAN.md` for full details.
 | File | Purpose |
 |------|---------|
 | `solver/api/endpoints.py` | The `/solve` endpoint with DI support |
-| `solver/models/auction.py` | Input data structures |
-| `solver/models/solution.py` | Output data structures |
+| `solver/models/auction.py` | Input data structures (Order, Token, AuctionInstance) |
+| `solver/models/solution.py` | Output data structures (Solution, Trade, Interaction) |
 | `solver/amm/uniswap_v2.py` | UniswapV2 AMM math and encoding |
-| `solver/amm/uniswap_v3.py` | UniswapV3 pool parsing, constants, quoter protocol |
-| `solver/strategies/base.py` | SolutionStrategy protocol, StrategyResult, OrderFill |
+| `solver/amm/uniswap_v3.py` | UniswapV3 AMM with quoter-based swap calculation |
+| `solver/strategies/base.py` | SolutionStrategy protocol, StrategyResult, fee calculation |
 | `solver/strategies/matching_rules.py` | Data-driven matching rules (constraint tables) |
 | `solver/strategies/cow_match.py` | CoW matching (perfect + partial) |
 | `solver/strategies/amm_routing.py` | AMM routing strategy |
 | `solver/routing/router.py` | Order routing, Solver (composes strategies) |
 | `solver/constants.py` | Centralized addresses and constants |
-| `tests/conftest.py` | Mock fixtures for DI testing |
+| `tests/conftest.py` | Mock fixtures for DI testing (MockAMM, MockV3Quoter) |
 | `benchmarks/harness.py` | Run both solvers and compare |
 | `PLAN.md` | Detailed slice breakdown |
 | `BENCHMARKS.md` | How to run benchmarks |
@@ -257,6 +263,22 @@ For a valid CoW match:
 ### Scoring
 Solutions are scored by surplus generated for users. Higher is better.
 The driver validates solutions and rejects invalid ones.
+
+### Limit Order Fees
+For limit orders (`class: limit`), the solver MUST calculate a fee:
+```
+fee = gas_cost_wei * 1e18 / reference_price
+```
+- Market orders (`class: market`): No solver fee needed
+- Limit orders: Fee is mandatory, deducted from executed amount
+- If fee > executed_amount, trade is rejected (overflow protection)
+
+### UniswapV3
+V3 uses concentrated liquidity (different from V2's constant product):
+- Swap calculation via on-chain QuoterV2 contract (requires RPC)
+- Settlement via SwapRouterV2 (`exactInputSingle`/`exactOutputSingle`)
+- Tests use MockV3Quoter for offline testing
+- Real V3 tests require `RPC_URL` env var and `pytest -m rpc`
 
 ## Session Handoff
 

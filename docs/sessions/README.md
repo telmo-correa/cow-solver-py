@@ -34,9 +34,9 @@ This directory tracks progress across AI-assisted development sessions.
 
 - **Phase 1:** Complete (single-order AMM routing)
 - **Phase 2:** Complete (CoW matching, partial fills)
-- **Phase 3:** In progress (Liquidity Expansion - UniswapV3)
-- **Tests:** 288 passing
-- **Benchmark:** All fixtures pass (V2 + V3 with corrected reference prices)
+- **Phase 3:** Slice 3.1 Complete (UniswapV3 integration)
+- **Tests:** 288 passing, 14 skipped
+- **Benchmark:** All fixtures pass (V2 + V3 with limit order fee support)
 
 ## Session Template
 

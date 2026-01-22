@@ -149,15 +149,55 @@ Each slice delivers end-to-end functionality for a specific auction type, with t
 > 3. Measure where our sequential approach leaves surplus on the table
 > 4. Design the unified optimizer with full context
 
-### Slice 3.1: UniswapV3 Integration
+### Slice 3.1: UniswapV3 Integration ✅ COMPLETE
 **Goal:** Add concentrated liquidity support (very different from V2)
 
-- [ ] Concentrated liquidity math (liquidity within tick ranges)
-- [ ] Tick-based price calculation
-- [ ] Parse UniswapV3 liquidity from auction data
-- [ ] Handle tick crossing during swaps
-- [ ] Test: auctions where V3 beats V2
-- [ ] Benchmark: compare with Rust baseline on V3 pools
+**Data Structures & Parsing (Session 16):**
+- [x] `UniswapV3Pool` dataclass with tick, liquidity, sqrtPrice, liquidityNet
+- [x] Parse `concentratedLiquidity` pools from auction data
+- [x] V3 pool fixtures for WETH/USDC (500 fee tier)
+
+**Quoter Interface (Session 17):**
+- [x] `UniswapV3Quoter` protocol for swap quoting
+- [x] `MockV3Quoter` for deterministic testing
+- [x] `Web3V3Quoter` for real on-chain quotes via QuoterV2 contract
+- [x] QuoterV2 ABI and contract address
+
+**Settlement Encoding (Session 18):**
+- [x] SwapRouterV2 calldata encoding (`exactInputSingle`, `exactOutputSingle`)
+- [x] Proper deadline, recipient, and fee tier handling
+- [x] V3-specific interaction building
+
+**AMM Integration (Session 19):**
+- [x] `UniswapV3AMM` class implementing `SwapCalculator` protocol
+- [x] Quoter-based swap calculation (no local tick math needed)
+- [x] Token ordering (token0/token1) handling
+- [x] `zeroForOne` direction detection
+
+**Router Integration (Session 20):**
+- [x] V3 pools in `PoolRegistry` alongside V2
+- [x] Best-quote selection between V2 and V3
+- [x] Mixed V2/V3 routing support
+
+**Testing (Sessions 21-22):**
+- [x] 12 V3 integration tests (sell/buy, both directions)
+- [x] V3 benchmark fixtures (`v3_weth_to_usdc.json`, `v3_usdc_to_weth.json`, `v3_buy_weth.json`)
+- [x] V2 vs V3 comparison fixture (`v2_v3_comparison.json`)
+- [x] Real RPC quoter tests with `pytest.mark.rpc` marker
+- [x] Mock quoter for offline testing
+
+**Fee Handling (Session 23):**
+- [x] Limit order fee calculation matching Rust baseline
+- [x] Fee formula: `fee = gas_cost_wei * 1e18 / reference_price`
+- [x] Overflow protection: reject trades where fee > executed_amount
+- [x] V3 fixtures use `class: limit` with correct reference prices
+
+**Known Limitations:**
+- V3 swap math uses on-chain quoter (requires RPC for real quotes)
+- No local tick-crossing simulation (quoter handles this)
+- Tests skip V3 by default unless RPC_URL is set
+
+**Exit Criteria:** V3 pools integrated, tested, and benchmarked against Rust. ✅
 
 ### Slice 3.2: Balancer/Curve Integration
 **Goal:** Add weighted and stable pool support
@@ -355,12 +395,20 @@ cow-solver-py/
 │   │
 │   ├── amm/
 │   │   ├── __init__.py
-│   │   ├── base.py            # SwapResult dataclass
-│   │   └── uniswap_v2.py      # UniswapV2 implementation
+│   │   ├── base.py            # SwapResult dataclass, SwapCalculator protocol
+│   │   ├── uniswap_v2.py      # UniswapV2 implementation
+│   │   └── uniswap_v3.py      # UniswapV3 implementation (quoter-based)
+│   │
+│   ├── strategies/
+│   │   ├── __init__.py
+│   │   ├── base.py            # SolutionStrategy protocol, StrategyResult, fee calculation
+│   │   ├── cow_match.py       # CoW matching strategy
+│   │   ├── matching_rules.py  # Data-driven matching rules
+│   │   └── amm_routing.py     # AMM routing strategy
 │   │
 │   └── routing/
 │       ├── __init__.py
-│       └── router.py          # Order routing logic (with DI)
+│       └── router.py          # Order routing logic, Solver class (with DI)
 │
 ├── benchmarks/
 │   ├── __init__.py
@@ -379,17 +427,21 @@ cow-solver-py/
 │   │   └── auctions/          # Historical auction JSON files
 │   │       ├── single_order/
 │   │       ├── cow_pairs/
-│   │       ├── benchmark/              # Shared: Python vs Rust comparison
+│   │       ├── benchmark/              # Shared: Python vs Rust comparison (V2 + V3)
 │   │       └── benchmark_python_only/  # Python-only features (CoW matching)
 │   │
 │   ├── unit/
 │   │   ├── test_models.py
 │   │   ├── test_amm.py
-│   │   └── test_router.py
+│   │   ├── test_router.py
+│   │   ├── test_cow_match.py
+│   │   ├── test_strategy_base.py      # Fee calculation tests
+│   │   └── test_uniswap_v3.py         # V3 AMM tests
 │   │
 │   └── integration/
 │       ├── test_api.py
-│       └── test_single_order.py
+│       ├── test_single_order.py
+│       └── test_v3_integration.py     # V3 router integration tests
 │
 └── cython_modules/            # Added in Phase 5
     ├── setup.py
