@@ -17,6 +17,7 @@ from solver.constants import POOL_SWAP_GAS_COST
 from solver.models.types import is_valid_address, normalize_address
 
 if TYPE_CHECKING:
+    from solver.amm.balancer import BalancerStablePool, BalancerWeightedPool
     from solver.amm.uniswap_v3 import UniswapV3Pool
     from solver.models.auction import Liquidity
 
@@ -476,6 +477,12 @@ class PoolRegistry:
         self._pools: dict[frozenset[str], UniswapV2Pool] = {}
         # V3 pools keyed by (token0, token1, fee) for multiple fee tiers per pair
         self._v3_pools: dict[tuple[str, str, int], UniswapV3Pool] = {}
+        # Balancer pools indexed by canonical token pair (for N-token pools, create N*(N-1)/2 entries)
+        self._weighted_pools: dict[tuple[str, str], list[BalancerWeightedPool]] = {}
+        self._stable_pools: dict[tuple[str, str], list[BalancerStablePool]] = {}
+        # Track unique pool IDs for O(1) count and duplicate detection
+        self._weighted_pool_ids: set[str] = set()
+        self._stable_pool_ids: set[str] = set()
         self._graph: dict[str, set[str]] | None = None  # Cached graph
 
         if pools:
@@ -548,17 +555,103 @@ class PoolRegistry:
                 result.append(pool)
         return result
 
-    def get_pools_for_pair(self, token_a: str, token_b: str) -> list[UniswapV2Pool | UniswapV3Pool]:
-        """Get all pools (V2 + V3) for a token pair.
+    def add_weighted_pool(self, pool: BalancerWeightedPool) -> None:
+        """Add a Balancer weighted pool to the registry.
+
+        The pool is indexed by all token pairs it supports. For an N-token pool,
+        this creates N*(N-1)/2 index entries.
+
+        Duplicate pools (same ID) are ignored.
+
+        Args:
+            pool: The weighted pool to add
+        """
+        # Skip duplicate pools
+        if pool.id in self._weighted_pool_ids:
+            return
+
+        self._weighted_pool_ids.add(pool.id)
+
+        tokens = [r.token.lower() for r in pool.reserves]
+        for i, t1 in enumerate(tokens):
+            for t2 in tokens[i + 1 :]:
+                # Canonical pair ordering
+                pair = (min(t1, t2), max(t1, t2))
+                if pair not in self._weighted_pools:
+                    self._weighted_pools[pair] = []
+                self._weighted_pools[pair].append(pool)
+        self._graph = None  # Invalidate cached graph
+
+    def add_stable_pool(self, pool: BalancerStablePool) -> None:
+        """Add a Balancer stable pool to the registry.
+
+        The pool is indexed by all token pairs it supports. For an N-token pool,
+        this creates N*(N-1)/2 index entries.
+
+        Duplicate pools (same ID) are ignored.
+
+        Args:
+            pool: The stable pool to add
+        """
+        # Skip duplicate pools
+        if pool.id in self._stable_pool_ids:
+            return
+
+        self._stable_pool_ids.add(pool.id)
+
+        tokens = [r.token.lower() for r in pool.reserves]
+        for i, t1 in enumerate(tokens):
+            for t2 in tokens[i + 1 :]:
+                # Canonical pair ordering
+                pair = (min(t1, t2), max(t1, t2))
+                if pair not in self._stable_pools:
+                    self._stable_pools[pair] = []
+                self._stable_pools[pair].append(pool)
+        self._graph = None  # Invalidate cached graph
+
+    def get_weighted_pools(self, token_a: str, token_b: str) -> list[BalancerWeightedPool]:
+        """Get all weighted pools for a token pair.
 
         Args:
             token_a: First token address (any case)
             token_b: Second token address (any case)
 
         Returns:
-            List of all pools for this pair (V2 and V3 combined)
+            List of BalancerWeightedPool objects for this pair (may be empty)
         """
-        pools: list[UniswapV2Pool | UniswapV3Pool] = []
+        token_a_norm = normalize_address(token_a)
+        token_b_norm = normalize_address(token_b)
+        pair = (min(token_a_norm, token_b_norm), max(token_a_norm, token_b_norm))
+        return self._weighted_pools.get(pair, [])
+
+    def get_stable_pools(self, token_a: str, token_b: str) -> list[BalancerStablePool]:
+        """Get all stable pools for a token pair.
+
+        Args:
+            token_a: First token address (any case)
+            token_b: Second token address (any case)
+
+        Returns:
+            List of BalancerStablePool objects for this pair (may be empty)
+        """
+        token_a_norm = normalize_address(token_a)
+        token_b_norm = normalize_address(token_b)
+        pair = (min(token_a_norm, token_b_norm), max(token_a_norm, token_b_norm))
+        return self._stable_pools.get(pair, [])
+
+    def get_pools_for_pair(
+        self, token_a: str, token_b: str
+    ) -> list[UniswapV2Pool | UniswapV3Pool | BalancerWeightedPool | BalancerStablePool]:
+        """Get all pools (V2 + V3 + Balancer weighted + Balancer stable) for a token pair.
+
+        Args:
+            token_a: First token address (any case)
+            token_b: Second token address (any case)
+
+        Returns:
+            List of all pools for this pair
+        """
+        pools: list[UniswapV2Pool | UniswapV3Pool | BalancerWeightedPool | BalancerStablePool] = []
 
         # Add V2 pool if exists
         v2_pool = self.get_pool(token_a, token_b)
@@ -568,6 +661,12 @@ class PoolRegistry:
         # Add all V3 pools
         pools.extend(self.get_v3_pools(token_a, token_b))
 
+        # Add all Balancer weighted pools
+        pools.extend(self.get_weighted_pools(token_a, token_b))
+
+        # Add all Balancer stable pools
+        pools.extend(self.get_stable_pools(token_a, token_b))
+
         return pools
 
     @property
@@ -575,8 +674,18 @@ class PoolRegistry:
         """Return the number of V3 pools in the registry."""
         return len(self._v3_pools)
 
+    @property
+    def weighted_pool_count(self) -> int:
+        """Return the number of unique weighted pools in the registry."""
+        return len(self._weighted_pool_ids)
+
+    @property
+    def stable_pool_count(self) -> int:
+        """Return the number of unique stable pools in the registry."""
+        return len(self._stable_pool_ids)
+
     def _build_graph(self) -> dict[str, set[str]]:
-        """Build adjacency list of tokens connected by pools (V2 + V3)."""
+        """Build adjacency list of tokens connected by pools (all types)."""
         graph: dict[str, set[str]] = {}
 
         # Add V2 pools to graph
@@ -594,6 +703,26 @@ class PoolRegistry:
 
         # Add V3 pools to graph
         for token_a, token_b, _fee in self._v3_pools:
+            if token_a not in graph:
+                graph[token_a] = set()
+            if token_b not in graph:
+                graph[token_b] = set()
+
+            graph[token_a].add(token_b)
+            graph[token_b].add(token_a)
+
+        # Add weighted pools to graph
+        for (token_a, token_b), _ in self._weighted_pools.items():
+            if token_a not in graph:
+                graph[token_a] = set()
+            if token_b not in graph:
+                graph[token_b] = set()
+
+            graph[token_a].add(token_b)
+            graph[token_b].add(token_a)
+
+        # Add stable pools to graph
+        for (token_a, token_b), _ in self._stable_pools.items():
             if token_a not in graph:
                 graph[token_a] = set()
             if token_b not in graph:
@@ -748,7 +877,7 @@ def parse_liquidity_to_pool(liquidity: Liquidity) -> UniswapV2Pool | None:
 def build_registry_from_liquidity(liquidity_list: list[Liquidity]) -> PoolRegistry:
     """Build a PoolRegistry from auction liquidity sources.
 
-    Parses both V2 (constantProduct) and V3 (concentratedLiquidity) pools.
+    Parses V2, V3, and Balancer (weighted/stable) pools.
 
     Args:
         liquidity_list: List of Liquidity objects from the auction
@@ -756,6 +885,7 @@ def build_registry_from_liquidity(liquidity_list: list[Liquidity]) -> PoolRegist
     Returns:
         PoolRegistry populated with parsed pools
     """
+    from solver.amm.balancer import parse_stable_pool, parse_weighted_pool
     from solver.amm.uniswap_v3 import parse_v3_liquidity
 
     registry = PoolRegistry()
@@ -770,5 +900,17 @@ def build_registry_from_liquidity(liquidity_list: list[Liquidity]) -> PoolRegist
         v3_pool = parse_v3_liquidity(liq)
         if v3_pool is not None:
             registry.add_v3_pool(v3_pool)
+            continue
+
+        # Try Balancer weighted
+        weighted_pool = parse_weighted_pool(liq)
+        if weighted_pool is not None:
+            registry.add_weighted_pool(weighted_pool)
+            continue
+
+        # Try Balancer stable
+        stable_pool = parse_stable_pool(liq)
+        if stable_pool is not None:
+            registry.add_stable_pool(stable_pool)
 
     return registry

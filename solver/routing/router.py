@@ -225,8 +225,15 @@ class SingleOrderRouter:
                 all_pools = [legacy_pool]
 
         if all_pools:
+            # Filter to V2/V3 pools only (Balancer support coming in Slice 3.2.5)
+            from solver.amm.uniswap_v3 import UniswapV3Pool
+
+            v2_v3_pools: list[UniswapV2Pool | UniswapV3Pool] = [
+                p for p in all_pools if isinstance(p, (UniswapV2Pool, UniswapV3Pool))
+            ]
+
             # Find the best pool based on quote
-            best_result = self._find_best_direct_route(order, all_pools, sell_amount, buy_amount)
+            best_result = self._find_best_direct_route(order, v2_v3_pools, sell_amount, buy_amount)
             if best_result is not None:
                 return best_result
 

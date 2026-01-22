@@ -16,8 +16,8 @@ This directory tracks progress across AI-assisted development sessions.
 - **Phase 2:** Complete (CoW matching, partial fills)
 - **Phase 3:** Slice 3.1 Complete (UniswapV3 integration), Slice 3.2 in progress
 - **Code Quality:** Fee Calculator Service, SafeInt wrapper, Fixed-Point Math
-- **Tests:** 488 passing, 14 skipped
-- **Next:** Slice 3.2.3 (Stable Pool Math)
+- **Tests:** 582 passing, 14 skipped
+- **Next:** Slice 3.2.5 (AMM Integration)
 
 ## Session Archive
 
@@ -53,6 +53,8 @@ Individual session logs are preserved in the `archive/` directory for reference.
 | [26](session-26.md) | 2026-01-22 | V3 Benchmarking |
 | [27](session-27.md) | 2026-01-22 | Balancer Fixed-Point and Weighted Pool Math (Slices 3.2.1-3.2.2) |
 | [28](session-28.md) | 2026-01-22 | Stable Pool Math Bug Fix and Code Review |
+| [29](session-29.md) | 2026-01-22 | Pool Parsing and Registry (Slice 3.2.4) |
+| [30](session-30.md) | 2026-01-22 | Code Review and Quality Improvements (Slice 3.2.4) |
 
 ## Session Template
 
