@@ -12,7 +12,7 @@ This file provides context for AI assistants working on this project. Read this 
 3. Create portfolio material with quantified performance comparisons
 4. Explore where Python can compete with Rust and where it can't
 
-**Status:** Phase 1 complete. Phase 2 Slice 2.2 (Partial CoW + AMM Remainder) complete.
+**Status:** Phase 1 complete. Phase 2 complete (2-order CoW matching). Phase 3 (Liquidity Expansion) is next.
 
 ## What is CoW Protocol?
 
@@ -101,8 +101,9 @@ cow-solver-py/
 - ✅ **Composable strategies** (StrategyResult, OrderFill for partial matching)
 - ✅ **Partial CoW + AMM** (partial CoW match with AMM remainder routing)
 - ✅ **AMM partial fills** (exact calculation outperforms Rust's binary search)
+- ✅ **Data-driven matching rules** (matching_rules.py for auditability)
 
-**Total: 157 passing tests** (unit + integration)
+**Total: 202 passing tests** (unit + integration)
 
 ### Rust Baseline Solver Limitations
 
@@ -116,13 +117,22 @@ See `BENCHMARKS.md` for details. Benchmarks are split into:
 - `benchmark/` - Shared functionality (Python vs Rust comparison)
 - `benchmark_python_only/` - Python-only features (CoW matching)
 
-### What's Next (Phase 2 continued)
-See `PLAN.md` for full details. Next slices:
+### What's Next (Phase 3: Liquidity Expansion)
+See `PLAN.md` for full details.
 
-**Slice 2.3: Multi-Order CoW Detection**
-- [ ] Build order flow graph (net demand per token pair)
-- [ ] Identify netting opportunities
-- [ ] Greedy matching algorithm
+> **Why Liquidity First:** Multi-order CoW detection has been deferred to Phase 4.
+> The optimal solution requires joint optimization across CoW + all AMM sources.
+> We're adding liquidity sources first to understand the full problem space before
+> designing the unified optimizer.
+
+**Slice 3.1: UniswapV3 Integration**
+- [ ] Concentrated liquidity math (tick ranges)
+- [ ] Tick-based price calculation
+- [ ] Parse UniswapV3 liquidity from auction data
+
+**Slice 3.2: Balancer/Curve Integration**
+- [ ] Weighted pool math (Balancer)
+- [ ] Stable pool math (Curve/Balancer)
 
 ## Key Files to Know
 
@@ -133,6 +143,7 @@ See `PLAN.md` for full details. Next slices:
 | `solver/models/solution.py` | Output data structures |
 | `solver/amm/uniswap_v2.py` | UniswapV2 AMM math and encoding |
 | `solver/strategies/base.py` | SolutionStrategy protocol, StrategyResult, OrderFill |
+| `solver/strategies/matching_rules.py` | Data-driven matching rules (constraint tables) |
 | `solver/strategies/cow_match.py` | CoW matching (perfect + partial) |
 | `solver/strategies/amm_routing.py` | AMM routing strategy |
 | `solver/routing/router.py` | Order routing, Solver (composes strategies) |

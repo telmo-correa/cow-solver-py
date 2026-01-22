@@ -120,57 +120,138 @@ Each slice delivers end-to-end functionality for a specific auction type, with t
 - [x] Test: 47 CoW match tests (including partial scenarios, all order types)
 - [x] Test: Integration tests for partial CoW + AMM composition
 - [x] Benchmark fixtures: `partial_cow_amm.json`, `fok_perfect_match.json`, `mixed_partial_fok.json`
+- [x] Data-driven matching rules (matching_rules.py) for auditability
 
-### Slice 2.3: Multi-Order CoW Detection
-**Goal:** Find CoW opportunities across N orders
+**Exit Criteria:** Solver handles 2-order CoW matching with all order type combinations. ✅
 
-- [ ] Build order flow graph (net demand per token pair)
-- [ ] Identify netting opportunities
-- [ ] Greedy matching algorithm
-- [ ] Test: 5+ order auctions with CoW potential
-- [ ] Benchmark
-
-**Exit Criteria:** Solver finds and exploits CoW opportunities.
+> **Note on Multi-Order CoW (formerly Slice 2.3):**
+> Multi-order CoW detection has been deferred to Phase 4 (Unified Optimization).
+>
+> The optimal solution for N-order matching isn't just "better CoW detection" — it's a
+> joint optimization across ALL mechanisms (CoW + multiple AMM sources). Solving CoW
+> in isolation would create technical debt that needs refactoring when we add more
+> liquidity sources.
+>
+> We'll first expand liquidity sources (Phase 3) to understand the full problem space,
+> then design a unified optimizer that handles CoW matching, AMM routing, and their
+> interactions together.
 
 ---
 
-## Phase 3: Liquidity Expansion
+## Phase 3: Liquidity Expansion ⬅️ CURRENT FOCUS
+
+> **Why this is next:** Before designing a unified optimizer for multi-order CoW + AMM,
+> we need to understand the full liquidity landscape. Each AMM type has different
+> price curves (constant product, concentrated liquidity, weighted pools) that affect
+> the optimization problem. Adding these sources first lets us:
+> 1. Achieve feature parity with the Rust baseline
+> 2. Understand the real complexity of multi-source routing
+> 3. Measure where our sequential approach leaves surplus on the table
+> 4. Design the unified optimizer with full context
 
 ### Slice 3.1: UniswapV3 Integration
-- [ ] Concentrated liquidity math
-- [ ] Tick-based price calculation
-- [ ] Pool state fetching
-- [ ] Test: auctions where V3 beats V2
+**Goal:** Add concentrated liquidity support (very different from V2)
 
-### Slice 3.2: Balancer Integration
-- [ ] Weighted pool math
-- [ ] Stable pool math
-- [ ] Test: auctions with Balancer liquidity
+- [ ] Concentrated liquidity math (liquidity within tick ranges)
+- [ ] Tick-based price calculation
+- [ ] Parse UniswapV3 liquidity from auction data
+- [ ] Handle tick crossing during swaps
+- [ ] Test: auctions where V3 beats V2
+- [ ] Benchmark: compare with Rust baseline on V3 pools
+
+### Slice 3.2: Balancer/Curve Integration
+**Goal:** Add weighted and stable pool support
+
+- [ ] Weighted pool math (Balancer)
+- [ ] Stable pool math (Curve/Balancer)
+- [ ] Parse pool parameters from auction data
+- [ ] Test: auctions with Balancer/Curve liquidity
+- [ ] Benchmark: compare with Rust baseline
 
 ### Slice 3.3: Multi-Source Routing
-- [ ] Compare quotes across DEXs
-- [ ] Select best execution venue
-- [ ] Split orders across venues
-- [ ] Test: complex auctions
-- [ ] Benchmark: this is where Rust likely pulls ahead
+**Goal:** Route through best available liquidity
 
-**Exit Criteria:** Solver uses multiple liquidity sources intelligently.
+- [ ] Quote comparison across DEXs (V2, V3, Balancer)
+- [ ] Select best execution venue per order
+- [ ] Test: auctions with multiple liquidity options
+- [ ] Benchmark: measure improvement over single-source
+
+### Slice 3.4: Split Routing (Optional)
+**Goal:** Split orders across multiple venues for better execution
+
+- [ ] Identify when splitting improves execution
+- [ ] Calculate optimal split ratios
+- [ ] Test: large orders that benefit from splitting
+- [ ] Benchmark: this approaches unified optimization territory
+
+**Exit Criteria:** Solver uses multiple liquidity sources, matching Rust baseline capabilities.
 
 ---
 
-## Phase 4: Optimization & Cython
+## Phase 4: Unified Optimization
 
-### Slice 4.1: Profiling
+> **The Big Picture:** The optimal solution isn't "CoW matching" OR "AMM routing" —
+> it's the joint optimization across all mechanisms. This phase designs a unified
+> optimizer that considers:
+> - Multi-order CoW matching (N orders, not just pairs)
+> - Multiple AMM sources with different price curves
+> - Ring trades (A→B→C→A cycles)
+> - Partial fills across mechanisms
+> - Gas costs in the objective function
+
+### Slice 4.1: Problem Formulation
+**Goal:** Define the optimization problem precisely
+
+- [ ] Formalize as constraint optimization (variables, constraints, objective)
+- [ ] Identify which constraints are linear vs non-linear
+- [ ] Analyze problem structure (decomposition opportunities)
+- [ ] Document complexity and tractability
+- [ ] Decide on solver approach (custom algorithm vs LP/MIP vs heuristic)
+
+### Slice 4.2: Multi-Order CoW Detection
+**Goal:** Find CoW opportunities across N orders (moved from Phase 2)
+
+- [ ] Token pair decomposition (independent subproblems)
+- [ ] Double auction clearing for optimal pairwise matching
+- [ ] Handle fill-or-kill constraints
+- [ ] Test: 5+ order auctions with CoW potential
+- [ ] Benchmark: measure surplus vs 2-order matching
+
+### Slice 4.3: Unified Solver
+**Goal:** Joint optimization across CoW + all AMM sources
+
+- [ ] Implement chosen optimization approach
+- [ ] Handle non-linear AMM price curves
+- [ ] Compare against sequential composition baseline
+- [ ] Test: auctions where joint optimization beats sequential
+- [ ] Benchmark: measure surplus improvement and latency
+
+### Slice 4.4: Ring Trade Detection (Optional)
+**Goal:** Find cyclic trading opportunities (A→B→C→A)
+
+- [ ] Build token graph from orders
+- [ ] Find short cycles (3-4 tokens max)
+- [ ] Calculate ring trade feasibility and surplus
+- [ ] Test: auctions with ring trade potential
+- [ ] Benchmark: measure frequency and value of ring trades
+
+**Exit Criteria:** Solver finds globally optimal (or near-optimal) solutions across all mechanisms.
+
+---
+
+## Phase 5: Performance Optimization
+
+### Slice 5.1: Profiling
 - [ ] Profile on 100 historical auctions
 - [ ] Identify top 5 hotspots
 - [ ] Document findings
 
-### Slice 4.2: Cython Hot Paths
+### Slice 5.2: Cython Hot Paths
 - [ ] Convert identified hotspots to Cython
 - [ ] Benchmark before/after
 - [ ] Document speedup
 
-### Slice 4.3: Algorithmic Improvements
+### Slice 5.3: Algorithmic Improvements
 - [ ] Parallel solution evaluation
 - [ ] Caching for repeated calculations
 - [ ] Early termination heuristics
@@ -179,19 +260,19 @@ Each slice delivers end-to-end functionality for a specific auction type, with t
 
 ---
 
-## Phase 5: Production Readiness (Optional)
+## Phase 6: Production Readiness (Optional)
 
-### Slice 5.1: Error Handling & Resilience
+### Slice 6.1: Error Handling & Resilience
 - [ ] Timeout handling
 - [ ] Malformed input handling
 - [ ] Graceful degradation
 
-### Slice 5.2: Observability
+### Slice 6.2: Observability
 - [ ] Structured logging
 - [ ] Metrics (solution time, score distribution)
 - [ ] Health endpoint
 
-### Slice 5.3: Shadow Mode Testing
+### Slice 6.3: Shadow Mode Testing
 - [ ] Run against live auctions (shadow competition)
 - [ ] Compare with winning solutions
 - [ ] Identify gaps
@@ -310,7 +391,7 @@ cow-solver-py/
 │       ├── test_api.py
 │       └── test_single_order.py
 │
-└── cython_modules/            # Added in Phase 4
+└── cython_modules/            # Added in Phase 5
     ├── setup.py
     └── fast_amm.pyx
 ```
@@ -329,7 +410,7 @@ cow-solver-py/
 - `web3` - Ethereum interaction
 - `eth-abi` - ABI encoding
 
-### Optimization (Phase 4)
+### Optimization (Phase 5)
 - `cython` - Performance optimization
 - `numpy` - Numerical operations
 
