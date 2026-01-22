@@ -14,10 +14,10 @@ This directory tracks progress across AI-assisted development sessions.
 
 - **Phase 1:** Complete (single-order AMM routing)
 - **Phase 2:** Complete (CoW matching, partial fills)
-- **Phase 3:** Slice 3.1 Complete (UniswapV3 integration), Slice 3.2 in progress
+- **Phase 3:** Slice 3.1 Complete (UniswapV3 integration), Slice 3.2.5 complete
 - **Code Quality:** Fee Calculator Service, SafeInt wrapper, Fixed-Point Math
-- **Tests:** 582 passing, 14 skipped
-- **Next:** Slice 3.2.5 (AMM Integration)
+- **Tests:** 609 passing, 14 skipped
+- **Next:** Slice 3.2.6 (Router Integration)
 
 ## Session Archive
 
@@ -55,6 +55,7 @@ Individual session logs are preserved in the `archive/` directory for reference.
 | [28](session-28.md) | 2026-01-22 | Stable Pool Math Bug Fix and Code Review |
 | [29](session-29.md) | 2026-01-22 | Pool Parsing and Registry (Slice 3.2.4) |
 | [30](session-30.md) | 2026-01-22 | Code Review and Quality Improvements (Slice 3.2.4) |
+| [31](session-31.md) | 2026-01-22 | Balancer AMM Integration (Slice 3.2.5) |
 
 ## Session Template
 
