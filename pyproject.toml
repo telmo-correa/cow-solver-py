@@ -89,4 +89,5 @@ markers = [
     "benchmark: marks tests as benchmarks (deselect with '-m \"not benchmark\"')",
     "integration: marks tests as integration tests",
     "slow: marks tests as slow",
+    "requires_rpc: marks tests that require RPC connection (skipped by default, run with RPC_URL env var)",
 ]

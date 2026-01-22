@@ -5,17 +5,21 @@ for the CoW Protocol settlement.
 
 Supports:
 - Single-order auctions and multi-order auctions
-- Direct and multi-hop routing through UniswapV2-style pools
+- Direct and multi-hop routing through UniswapV2 and UniswapV3 pools
 - Both sell orders (exact input) and buy orders (exact output)
 - Partial fills for partially fillable orders (single-hop only)
+- Best-quote selection across V2 and V3 pools
 
 For partially fillable orders, when full fill isn't possible due to
 insufficient liquidity, the router calculates the maximum partial fill
 that still satisfies the order's limit price.
 """
 
+from __future__ import annotations
+
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import TYPE_CHECKING, cast
 
 import structlog
 
@@ -36,6 +40,9 @@ from solver.models.solution import (
 )
 from solver.models.types import normalize_address
 
+if TYPE_CHECKING:
+    from solver.amm.uniswap_v3 import UniswapV3AMM, UniswapV3Pool
+
 logger = structlog.get_logger()
 
 
@@ -43,7 +50,7 @@ logger = structlog.get_logger()
 class HopResult:
     """Result of a single hop in a multi-hop route."""
 
-    pool: UniswapV2Pool
+    pool: UniswapV2Pool | UniswapV3Pool
     input_token: str
     output_token: str
     amount_in: int
@@ -57,12 +64,12 @@ class RoutingResult:
     order: Order
     amount_in: int
     amount_out: int
-    pool: UniswapV2Pool | None  # None when no pool found (kept for backward compatibility)
+    pool: UniswapV2Pool | UniswapV3Pool | None  # None when no pool found
     success: bool
     error: str | None = None
     # Multi-hop routing fields
     path: list[str] | None = None  # Token path for multi-hop swaps
-    pools: list[UniswapV2Pool] | None = None  # Pools along the path
+    pools: list[UniswapV2Pool | UniswapV3Pool] | None = None  # Pools along the path
     hops: list[HopResult] | None = None  # Detailed results for each hop
     gas_estimate: int = POOL_SWAP_GAS_COST  # Default single-hop gas (60k per swap)
 
@@ -75,12 +82,14 @@ class RoutingResult:
 class SingleOrderRouter:
     """Routes single orders through AMM pools.
 
-    This router handles one order at a time, finding the best direct pool
-    for the token pair. It uses a PoolRegistry to look up available liquidity.
+    This router handles one order at a time, finding the best pool
+    for the token pair across both V2 and V3 liquidity.
 
     Args:
-        amm: AMM implementation for swap simulation and encoding.
+        amm: AMM implementation for V2 swap simulation and encoding.
              Defaults to the UniswapV2 singleton.
+        v3_amm: AMM implementation for V3 swap simulation and encoding.
+                If None, V3 pools are not used for routing.
         pool_registry: Registry of available pools for routing.
                        If None, an empty registry is used.
         pool_finder: DEPRECATED - Use pool_registry instead.
@@ -90,18 +99,21 @@ class SingleOrderRouter:
     def __init__(
         self,
         amm: UniswapV2 | None = None,
+        v3_amm: UniswapV3AMM | None = None,
         pool_registry: PoolRegistry | None = None,
         pool_finder: Callable[[str, str], UniswapV2Pool | None] | None = None,
     ) -> None:
         """Initialize the router with optional dependencies.
 
         Args:
-            amm: AMM implementation. Defaults to uniswap_v2 singleton.
+            amm: AMM implementation for V2. Defaults to uniswap_v2 singleton.
+            v3_amm: AMM implementation for V3. If None, V3 is disabled.
             pool_registry: Pool registry for lookups. If None, uses empty registry.
             pool_finder: DEPRECATED - Legacy pool lookup function. If provided
                          without pool_registry, wraps it in a simple registry.
         """
         self.amm = amm if amm is not None else uniswap_v2
+        self.v3_amm = v3_amm
         self._pool_finder: Callable[[str, str], UniswapV2Pool | None]
 
         # Handle pool_registry vs legacy pool_finder
@@ -180,7 +192,8 @@ class SingleOrderRouter:
         """Find a route for a single order.
 
         Handles both sell orders (exact input) and buy orders (exact output).
-        Tries direct routing first, then multi-hop if no direct pool exists.
+        Gets quotes from all available pools (V2 + V3) and selects the best.
+        Falls back to multi-hop routing if no direct pool exists.
 
         Args:
             order: The order to route
@@ -201,22 +214,30 @@ class SingleOrderRouter:
         if buy_amount <= 0:
             return self._error_result(order, "Buy amount must be positive")
 
-        # Try direct pool first
-        pool = self._pool_finder(order.sell_token, order.buy_token)
-        if pool is not None:
-            if order.is_sell_order:
-                return self._route_sell_order(order, pool, sell_amount, buy_amount)
-            else:
-                return self._route_buy_order(order, pool, sell_amount, buy_amount)
+        # Get all pools (V2 + V3) for this token pair from registry
+        all_pools = self._registry.get_pools_for_pair(order.sell_token, order.buy_token)
 
-        # No direct pool - try multi-hop routing using registry
+        # Also check legacy pool_finder for backward compatibility
+        # This handles cases where pool_finder returns a pool not in the registry
+        if not all_pools:
+            legacy_pool = self._pool_finder(order.sell_token, order.buy_token)
+            if legacy_pool is not None:
+                all_pools = [legacy_pool]
+
+        if all_pools:
+            # Find the best pool based on quote
+            best_result = self._find_best_direct_route(order, all_pools, sell_amount, buy_amount)
+            if best_result is not None:
+                return best_result
+
+        # No direct pool or all failed - try multi-hop routing using registry
         path = self._registry.find_path(order.sell_token, order.buy_token)
         if path is None or len(path) < 2:
             return self._error_result(
                 order, f"No route found for {order.sell_token}/{order.buy_token}"
             )
 
-        # Get pools for the path
+        # Get pools for the path (multi-hop is V2-only for now)
         try:
             pools = self._registry.get_all_pools_on_path(path)
         except ValueError as e:
@@ -233,6 +254,180 @@ class SingleOrderRouter:
             return self._route_sell_order_multihop(order, pools, path, sell_amount, buy_amount)
         else:
             return self._route_buy_order_multihop(order, pools, path, sell_amount, buy_amount)
+
+    def _find_best_direct_route(
+        self,
+        order: Order,
+        pools: list[UniswapV2Pool | UniswapV3Pool],
+        sell_amount: int,
+        buy_amount: int,
+    ) -> RoutingResult | None:
+        """Find the best route among candidate pools.
+
+        Gets quotes from all pools and selects the best based on:
+        - For sell orders: highest output amount
+        - For buy orders: lowest input amount
+
+        Args:
+            order: The order to route
+            pools: List of candidate pools (V2 and V3)
+            sell_amount: Order's sell amount
+            buy_amount: Order's buy amount
+
+        Returns:
+            Best RoutingResult, or None if all pools failed
+        """
+        from solver.amm.uniswap_v3 import UniswapV3Pool
+
+        candidates: list[tuple[UniswapV2Pool | UniswapV3Pool, int, int]] = []
+
+        for pool in pools:
+            if isinstance(pool, UniswapV3Pool):
+                # V3 pool - use V3 AMM
+                if self.v3_amm is None:
+                    continue
+
+                if order.is_sell_order:
+                    result = self.v3_amm.simulate_swap(pool, order.sell_token, sell_amount)
+                    if result is not None:
+                        candidates.append((pool, result.amount_in, result.amount_out))
+                else:
+                    result = self.v3_amm.simulate_swap_exact_output(
+                        pool, order.sell_token, buy_amount
+                    )
+                    if result is not None:
+                        candidates.append((pool, result.amount_in, result.amount_out))
+            else:
+                # V2 pool - use V2 AMM
+                if order.is_sell_order:
+                    result = self.amm.simulate_swap(pool, order.sell_token, sell_amount)
+                    candidates.append((pool, result.amount_in, result.amount_out))
+                else:
+                    result = self.amm.simulate_swap_exact_output(pool, order.sell_token, buy_amount)
+                    candidates.append((pool, result.amount_in, result.amount_out))
+
+        if not candidates:
+            return None
+
+        # Select best candidate
+        if order.is_sell_order:
+            # For sell orders, maximize output
+            best_pool, best_in, best_out = max(candidates, key=lambda x: x[2])
+        else:
+            # For buy orders, minimize input
+            best_pool, best_in, best_out = min(candidates, key=lambda x: x[1])
+
+        # Log pool selection if multiple candidates
+        if len(candidates) > 1:
+            logger.info(
+                "best_pool_selected",
+                order_uid=order.uid[:18] + "...",
+                pool_type="v3" if isinstance(best_pool, UniswapV3Pool) else "v2",
+                pool_address=best_pool.address[:10] + "...",
+                candidates=len(candidates),
+                amount_in=best_in,
+                amount_out=best_out,
+            )
+
+        # Route through the best pool
+        if isinstance(best_pool, UniswapV3Pool):
+            return self._route_through_v3_pool(order, best_pool, sell_amount, buy_amount)
+        else:
+            if order.is_sell_order:
+                return self._route_sell_order(order, best_pool, sell_amount, buy_amount)
+            else:
+                return self._route_buy_order(order, best_pool, sell_amount, buy_amount)
+
+    def _route_through_v3_pool(
+        self,
+        order: Order,
+        pool: UniswapV3Pool,
+        sell_amount: int,
+        buy_amount: int,
+    ) -> RoutingResult:
+        """Route an order through a V3 pool.
+
+        Args:
+            order: The order to route
+            pool: The V3 pool to use
+            sell_amount: Order's sell amount
+            buy_amount: Order's buy amount (minimum for sell orders, exact for buy)
+
+        Returns:
+            RoutingResult with the routing outcome
+        """
+        if self.v3_amm is None:
+            return self._error_result(order, "V3 AMM not configured")
+
+        if order.is_sell_order:
+            result = self.v3_amm.simulate_swap(pool, order.sell_token, sell_amount)
+            if result is None:
+                return self._error_result(order, "V3 quote failed")
+
+            # Check if output meets minimum
+            if result.amount_out < buy_amount:
+                return RoutingResult(
+                    order=order,
+                    amount_in=sell_amount,
+                    amount_out=result.amount_out,
+                    pool=pool,
+                    success=False,
+                    error=f"Output {result.amount_out} below minimum {buy_amount}",
+                )
+
+            hop = HopResult(
+                pool=pool,
+                input_token=normalize_address(order.sell_token),
+                output_token=normalize_address(order.buy_token),
+                amount_in=sell_amount,
+                amount_out=result.amount_out,
+            )
+
+            return RoutingResult(
+                order=order,
+                amount_in=sell_amount,
+                amount_out=result.amount_out,
+                pool=pool,
+                pools=[pool],
+                hops=[hop],
+                success=True,
+                gas_estimate=pool.gas_estimate,
+            )
+        else:
+            # Buy order - exact output
+            result = self.v3_amm.simulate_swap_exact_output(pool, order.sell_token, buy_amount)
+            if result is None:
+                return self._error_result(order, "V3 quote failed")
+
+            # Check if required input exceeds maximum
+            if result.amount_in > sell_amount:
+                return RoutingResult(
+                    order=order,
+                    amount_in=result.amount_in,
+                    amount_out=buy_amount,
+                    pool=pool,
+                    success=False,
+                    error=f"Required input {result.amount_in} exceeds maximum {sell_amount}",
+                )
+
+            hop = HopResult(
+                pool=pool,
+                input_token=normalize_address(order.sell_token),
+                output_token=normalize_address(order.buy_token),
+                amount_in=result.amount_in,
+                amount_out=buy_amount,
+            )
+
+            return RoutingResult(
+                order=order,
+                amount_in=result.amount_in,
+                amount_out=buy_amount,
+                pool=pool,
+                pools=[pool],
+                hops=[hop],
+                success=True,
+                gas_estimate=pool.gas_estimate,
+            )
 
     def _route_sell_order(
         self,
@@ -553,13 +748,17 @@ class SingleOrderRouter:
         gas_estimate = POOL_SWAP_GAS_COST * len(pools)
 
         # Check if output meets minimum
+        # Cast pools for type compatibility (multihop is V2-only)
+        from solver.amm.uniswap_v3 import UniswapV3Pool
+
+        pools_union = cast(list[UniswapV2Pool | UniswapV3Pool], pools)
         if final_amount_out < min_buy_amount:
             return RoutingResult(
                 order=order,
                 amount_in=sell_amount,
                 amount_out=final_amount_out,
                 pool=pools[0],  # First pool for compatibility
-                pools=pools,
+                pools=pools_union,
                 path=path,
                 hops=hops,
                 success=False,
@@ -572,7 +771,7 @@ class SingleOrderRouter:
             amount_in=sell_amount,
             amount_out=final_amount_out,
             pool=pools[0],
-            pools=pools,
+            pools=pools_union,
             path=path,
             hops=hops,
             success=True,
@@ -609,6 +808,11 @@ class SingleOrderRouter:
         required_input = amounts[0]
         gas_estimate = POOL_SWAP_GAS_COST * len(pools)
 
+        # Cast pools for type compatibility (multihop is V2-only)
+        from solver.amm.uniswap_v3 import UniswapV3Pool
+
+        pools_union = cast(list[UniswapV2Pool | UniswapV3Pool], pools)
+
         # Check if required input exceeds maximum
         if required_input > max_sell_amount:
             return RoutingResult(
@@ -616,7 +820,7 @@ class SingleOrderRouter:
                 amount_in=required_input,
                 amount_out=buy_amount,
                 pool=pools[0],
-                pools=pools,
+                pools=pools_union,
                 path=path,
                 success=False,
                 error=f"Required input {required_input} exceeds maximum {max_sell_amount}",
@@ -643,7 +847,7 @@ class SingleOrderRouter:
             amount_in=required_input,
             amount_out=buy_amount,
             pool=pools[0],
-            pools=pools,
+            pools=pools_union,
             path=path,
             hops=hops,
             success=True,

@@ -277,8 +277,10 @@ class TestDependencyInjection:
         assert response.status_code == 200
 
         # Verify mock AMM was called
-        assert len(mock_amm.swap_calls) == 1
-        assert mock_amm.swap_calls[0]["amount_in"] == 1000000000000000000
+        # Router calls simulate_swap twice: once for best-quote selection, once for routing
+        assert len(mock_amm.swap_calls) == 2
+        for call in mock_amm.swap_calls:
+            assert call["amount_in"] == 1000000000000000000
 
         # Verify mock pool finder was called
         assert len(mock_pool_finder.calls) == 1

@@ -5,11 +5,14 @@ It composes multiple strategies (CoW matching, AMM routing) to find
 optimal solutions.
 """
 
+from __future__ import annotations
+
 from typing import TYPE_CHECKING
 
 import structlog
 
 if TYPE_CHECKING:
+    from solver.amm.uniswap_v3 import UniswapV3AMM
     from solver.strategies.base import SolutionStrategy
 
 from solver.amm.uniswap_v2 import UniswapV2
@@ -39,9 +42,10 @@ class Solver:
 
     def __init__(
         self,
-        strategies: "list[SolutionStrategy] | None" = None,
+        strategies: list[SolutionStrategy] | None = None,
         router: SingleOrderRouter | None = None,
         amm: UniswapV2 | None = None,
+        v3_amm: UniswapV3AMM | None = None,
     ) -> None:
         """Initialize the solver with strategies.
 
@@ -52,16 +56,17 @@ class Solver:
                     creates AmmRoutingStrategy with this router.
             amm: Deprecated. For backwards compatibility, if provided,
                  creates AmmRoutingStrategy with this AMM.
+            v3_amm: UniswapV3 AMM for V3 pool routing. If None, V3 pools are skipped.
         """
         if strategies is not None:
             self.strategies = strategies
-        elif router is not None or amm is not None:
+        elif router is not None or amm is not None or v3_amm is not None:
             # Backwards compatibility: create strategies from legacy params
             from solver.strategies import AmmRoutingStrategy, CowMatchStrategy
 
             self.strategies = [
                 CowMatchStrategy(),
-                AmmRoutingStrategy(amm=amm, router=router),
+                AmmRoutingStrategy(amm=amm, router=router, v3_amm=v3_amm),
             ]
         else:
             # Default strategies

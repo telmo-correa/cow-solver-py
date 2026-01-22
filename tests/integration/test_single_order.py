@@ -496,10 +496,11 @@ class TestRoutingWithMocks:
         assert response.status_code == 200
 
         # Verify the exact parameters passed to the mock
-        assert len(mock_amm.swap_calls) == 1
-        call = mock_amm.swap_calls[0]
-        assert call["amount_in"] == sell_amount
-        assert call["pool"] == mock_weth_usdc_pool.address
+        # Router calls simulate_swap twice: once for best-quote selection, once for routing
+        assert len(mock_amm.swap_calls) == 2
+        for call in mock_amm.swap_calls:
+            assert call["amount_in"] == sell_amount
+            assert call["pool"] == mock_weth_usdc_pool.address
 
         # Verify pool finder received the correct tokens
         assert len(mock_finder.calls) == 1

@@ -25,13 +25,16 @@ This directory tracks progress across AI-assisted development sessions.
 | [17](session-17.md) | 2026-01-22 | UniswapV3 Quoter Interface | Mock quoter, Web3 quoter, ABI |
 | [18](session-18.md) | 2026-01-22 | UniswapV3 Settlement Encoding | SwapRouterV2 encoding functions |
 | [19](session-19.md) | 2026-01-22 | UniswapV3 AMM Integration | V3 AMM class with quoter integration |
+| [20](session-20.md) | 2026-01-22 | UniswapV3 Router Integration | V3 in router, best-quote selection |
+| [21](session-21.md) | 2026-01-22 | UniswapV3 Integration Tests | V3 fixtures, 12 integration tests |
+| [22](session-22.md) | 2026-01-22 | Real Quoter Integration | RPC tests, pytest marker |
 
 ## Current Status
 
 - **Phase 1:** Complete (single-order AMM routing)
 - **Phase 2:** Complete (CoW matching, partial fills)
 - **Phase 3:** In progress (Liquidity Expansion - UniswapV3)
-- **Tests:** 255 passing
+- **Tests:** 276 passing
 - **Benchmark:** All 15 fixtures pass (9 AMM + 6 CoW matching)
 
 ## Session Template

@@ -4,6 +4,8 @@ UniswapV2 uses the constant product formula: x * y = k
 With a 0.3% fee on input amounts.
 """
 
+from __future__ import annotations
+
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, ClassVar
 
@@ -15,6 +17,7 @@ from solver.constants import POOL_SWAP_GAS_COST
 from solver.models.types import is_valid_address, normalize_address
 
 if TYPE_CHECKING:
+    from solver.amm.uniswap_v3 import UniswapV3Pool
     from solver.models.auction import Liquidity
 
 logger = structlog.get_logger()
@@ -460,6 +463,8 @@ class PoolRegistry:
     - Looking up pools by token pair
     - Building token graphs for pathfinding
     - Finding multi-hop paths through available liquidity
+
+    Supports both UniswapV2 and UniswapV3 pools.
     """
 
     def __init__(self, pools: list[UniswapV2Pool] | None = None) -> None:
@@ -469,6 +474,8 @@ class PoolRegistry:
             pools: Initial list of pools. If None, starts empty.
         """
         self._pools: dict[frozenset[str], UniswapV2Pool] = {}
+        # V3 pools keyed by (token0, token1, fee) for multiple fee tiers per pair
+        self._v3_pools: dict[tuple[str, str, int], UniswapV3Pool] = {}
         self._graph: dict[str, set[str]] | None = None  # Cached graph
 
         if pools:
@@ -503,14 +510,90 @@ class PoolRegistry:
         pair_key = frozenset([token_a_norm, token_b_norm])
         return self._pools.get(pair_key)
 
+    def add_v3_pool(self, pool: UniswapV3Pool) -> None:
+        """Add a V3 pool to the registry.
+
+        Args:
+            pool: The V3 pool to add. Unlike V2, multiple V3 pools can exist
+                  for the same token pair with different fee tiers.
+        """
+        token0_norm = normalize_address(pool.token0)
+        token1_norm = normalize_address(pool.token1)
+        # Ensure canonical ordering (token0 < token1 by address)
+        if token0_norm > token1_norm:
+            token0_norm, token1_norm = token1_norm, token0_norm
+        key = (token0_norm, token1_norm, pool.fee)
+        self._v3_pools[key] = pool
+        self._graph = None  # Invalidate cached graph
+
+    def get_v3_pools(self, token_a: str, token_b: str) -> list[UniswapV3Pool]:
+        """Get all V3 pools for a token pair (all fee tiers).
+
+        Args:
+            token_a: First token address (any case)
+            token_b: Second token address (any case)
+
+        Returns:
+            List of UniswapV3Pool objects for this pair (may be empty)
+        """
+        token_a_norm = normalize_address(token_a)
+        token_b_norm = normalize_address(token_b)
+        # Ensure canonical ordering
+        if token_a_norm > token_b_norm:
+            token_a_norm, token_b_norm = token_b_norm, token_a_norm
+
+        result = []
+        for (t0, t1, _fee), pool in self._v3_pools.items():
+            if t0 == token_a_norm and t1 == token_b_norm:
+                result.append(pool)
+        return result
+
+    def get_pools_for_pair(self, token_a: str, token_b: str) -> list[UniswapV2Pool | UniswapV3Pool]:
+        """Get all pools (V2 + V3) for a token pair.
+
+        Args:
+            token_a: First token address (any case)
+            token_b: Second token address (any case)
+
+        Returns:
+            List of all pools for this pair (V2 and V3 combined)
+        """
+        pools: list[UniswapV2Pool | UniswapV3Pool] = []
+
+        # Add V2 pool if exists
+        v2_pool = self.get_pool(token_a, token_b)
+        if v2_pool is not None:
+            pools.append(v2_pool)
+
+        # Add all V3 pools
+        pools.extend(self.get_v3_pools(token_a, token_b))
+
+        return pools
+
+    @property
+    def v3_pool_count(self) -> int:
+        """Return the number of V3 pools in the registry."""
+        return len(self._v3_pools)
+
     def _build_graph(self) -> dict[str, set[str]]:
-        """Build adjacency list of tokens connected by pools."""
+        """Build adjacency list of tokens connected by pools (V2 + V3)."""
         graph: dict[str, set[str]] = {}
 
+        # Add V2 pools to graph
         for token_pair in self._pools:
             tokens = list(token_pair)
             token_a, token_b = tokens[0], tokens[1]
 
+            if token_a not in graph:
+                graph[token_a] = set()
+            if token_b not in graph:
+                graph[token_b] = set()
+
+            graph[token_a].add(token_b)
+            graph[token_b].add(token_a)
+
+        # Add V3 pools to graph
+        for token_a, token_b, _fee in self._v3_pools:
             if token_a not in graph:
                 graph[token_a] = set()
             if token_b not in graph:
@@ -599,7 +682,7 @@ class PoolRegistry:
         return len(self._pools)
 
 
-def parse_liquidity_to_pool(liquidity: "Liquidity") -> UniswapV2Pool | None:
+def parse_liquidity_to_pool(liquidity: Liquidity) -> UniswapV2Pool | None:
     """Convert auction Liquidity to UniswapV2Pool.
 
     Args:
@@ -662,8 +745,10 @@ def parse_liquidity_to_pool(liquidity: "Liquidity") -> UniswapV2Pool | None:
     )
 
 
-def build_registry_from_liquidity(liquidity_list: list["Liquidity"]) -> PoolRegistry:
+def build_registry_from_liquidity(liquidity_list: list[Liquidity]) -> PoolRegistry:
     """Build a PoolRegistry from auction liquidity sources.
+
+    Parses both V2 (constantProduct) and V3 (concentratedLiquidity) pools.
 
     Args:
         liquidity_list: List of Liquidity objects from the auction
@@ -671,9 +756,19 @@ def build_registry_from_liquidity(liquidity_list: list["Liquidity"]) -> PoolRegi
     Returns:
         PoolRegistry populated with parsed pools
     """
+    from solver.amm.uniswap_v3 import parse_v3_liquidity
+
     registry = PoolRegistry()
     for liq in liquidity_list:
-        pool = parse_liquidity_to_pool(liq)
-        if pool is not None:
-            registry.add_pool(pool)
+        # Try V2 first
+        v2_pool = parse_liquidity_to_pool(liq)
+        if v2_pool is not None:
+            registry.add_pool(v2_pool)
+            continue
+
+        # Try V3
+        v3_pool = parse_v3_liquidity(liq)
+        if v3_pool is not None:
+            registry.add_v3_pool(v3_pool)
+
     return registry

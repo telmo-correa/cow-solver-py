@@ -1,6 +1,9 @@
 """AMM routing strategy - routes orders through liquidity pools."""
 
+from __future__ import annotations
+
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import structlog
 
@@ -15,6 +18,9 @@ from solver.models.auction import AuctionInstance, Order
 from solver.models.solution import Interaction, Solution
 from solver.routing.router import RoutingResult, SingleOrderRouter
 from solver.strategies.base import OrderFill, StrategyResult
+
+if TYPE_CHECKING:
+    from solver.amm.uniswap_v3 import UniswapV3AMM
 
 logger = structlog.get_logger()
 
@@ -53,6 +59,7 @@ class AmmRoutingStrategy:
         self,
         amm: UniswapV2 | None = None,
         router: SingleOrderRouter | None = None,
+        v3_amm: UniswapV3AMM | None = None,
     ) -> None:
         """Initialize the AMM routing strategy.
 
@@ -63,9 +70,11 @@ class AmmRoutingStrategy:
                     injected routers are stateless - reserve updates between
                     orders won't affect the injected router's pool finder.
                     This is acceptable for unit tests with mocked behavior.
+            v3_amm: UniswapV3 AMM for V3 pool routing. If None, V3 pools are skipped.
         """
         self.amm = amm if amm is not None else uniswap_v2
         self._injected_router = router
+        self.v3_amm = v3_amm
 
     def _get_router(self, pool_registry: PoolRegistry) -> SingleOrderRouter:
         """Get the router to use for routing orders.
@@ -80,7 +89,7 @@ class AmmRoutingStrategy:
         """
         if self._injected_router is not None:
             return self._injected_router
-        return SingleOrderRouter(amm=self.amm, pool_registry=pool_registry)
+        return SingleOrderRouter(amm=self.amm, pool_registry=pool_registry, v3_amm=self.v3_amm)
 
     def _route_and_build(
         self, order: Order, pool_registry: PoolRegistry
@@ -219,16 +228,19 @@ class AmmRoutingStrategy:
             amount_in = routing_result.amount_in
             amount_out = routing_result.amount_out
 
-            updated_pool = self._create_updated_pool(pool, token_in, amount_in, amount_out)
-            pool_registry.add_pool(updated_pool)
+            # Only update V2 pools (V3 pools use quoter, no local reserve tracking)
+            if isinstance(pool, UniswapV2Pool):
+                updated_pool = self._create_updated_pool(pool, token_in, amount_in, amount_out)
+                pool_registry.add_pool(updated_pool)
             return
 
-        # Multi-hop route - update each pool
+        # Multi-hop route - update each pool (multi-hop is V2-only)
         for hop in routing_result.hops:
-            updated_pool = self._create_updated_pool(
-                hop.pool, hop.input_token, hop.amount_in, hop.amount_out
-            )
-            pool_registry.add_pool(updated_pool)
+            if isinstance(hop.pool, UniswapV2Pool):
+                updated_pool = self._create_updated_pool(
+                    hop.pool, hop.input_token, hop.amount_in, hop.amount_out
+                )
+                pool_registry.add_pool(updated_pool)
 
     def _create_updated_pool(
         self,
