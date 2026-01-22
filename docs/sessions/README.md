@@ -14,10 +14,10 @@ This directory tracks progress across AI-assisted development sessions.
 
 - **Phase 1:** Complete (single-order AMM routing)
 - **Phase 2:** Complete (CoW matching, partial fills)
-- **Phase 3:** Slice 3.1 Complete (UniswapV3 integration)
-- **Code Quality:** Fee Calculator Service, SafeInt wrapper
-- **Tests:** 382 passing, 14 skipped
-- **Next:** Slice 3.2 (Balancer/Curve Integration)
+- **Phase 3:** Slice 3.1 Complete (UniswapV3 integration), Slice 3.2 in progress
+- **Code Quality:** Fee Calculator Service, SafeInt wrapper, Fixed-Point Math
+- **Tests:** 488 passing, 14 skipped
+- **Next:** Slice 3.2.3 (Stable Pool Math)
 
 ## Session Archive
 
@@ -51,6 +51,7 @@ Individual session logs are preserved in the `archive/` directory for reference.
 | [24](archive/session-24.md) | 2026-01-22 | Fee Calculator Service |
 | [25](session-25.md) | 2026-01-22 | SafeInt Safe Arithmetic |
 | [26](session-26.md) | 2026-01-22 | V3 Benchmarking |
+| [27](session-27.md) | 2026-01-22 | Balancer Fixed-Point and Weighted Pool Math (Slices 3.2.1-3.2.2) |
 
 ## Session Template
 
