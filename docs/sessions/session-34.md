@@ -58,9 +58,17 @@ def _create_default_solver() -> Solver:
 - Updated BENCHMARKS.md feature table: Balancer weighted and stable marked as ✅ for Python
 - Updated benchmark results section with all 18 test cases including Balancer
 
+### Multi-hop Stable Pool Tests Added
+
+Added 4 tests to complete success criteria #6 (multi-hop through Balancer pools):
+- `test_multihop_v2_then_stable` - V2 → stable path
+- `test_multihop_stable_then_v2` - stable → V2 path
+- `test_multihop_mixed_weighted_stable` - weighted → stable path
+- `test_multihop_buy_order_through_stable` - buy order through V2 + stable
+
 ## Test Results
 
-**Total: 647 tests passing, 14 skipped**
+**Total: 651 tests passing, 14 skipped**
 
 ## Files Modified
 
@@ -108,3 +116,4 @@ weighted_gno_to_cow:
 ## Commits
 
 - feat: enable Balancer AMMs in default solver and update benchmarks (Slice 3.2.8)
+- test: add multi-hop through stable pool tests (Success criteria #6)
