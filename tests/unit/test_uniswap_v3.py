@@ -559,3 +559,200 @@ class TestQuoterV2ABI:
         assert "amount" in component_names  # Note: "amount" not "amountOut"
         assert "fee" in component_names
         assert "sqrtPriceLimitX96" in component_names
+
+
+class TestSwapRouterEncoding:
+    """Tests for SwapRouterV2 calldata encoding."""
+
+    def test_exact_input_single_selector(self):
+        """Test exactInputSingle function selector is correct."""
+        from solver.amm.uniswap_v3 import EXACT_INPUT_SINGLE_SELECTOR
+
+        # Selector for exactInputSingle((address,address,uint24,address,uint256,uint256,uint160))
+        assert bytes.fromhex("04e45aaf") == EXACT_INPUT_SINGLE_SELECTOR
+
+    def test_exact_output_single_selector(self):
+        """Test exactOutputSingle function selector is correct."""
+        from solver.amm.uniswap_v3 import EXACT_OUTPUT_SINGLE_SELECTOR
+
+        # Selector for exactOutputSingle((address,address,uint24,address,uint256,uint256,uint160))
+        assert bytes.fromhex("5023b4df") == EXACT_OUTPUT_SINGLE_SELECTOR
+
+    def test_encode_exact_input_single_returns_router_address(self):
+        """Test encode_exact_input_single returns correct router address."""
+        from solver.amm.uniswap_v3 import (
+            SWAP_ROUTER_V2_ADDRESS,
+            encode_exact_input_single,
+        )
+
+        router, calldata = encode_exact_input_single(
+            token_in="0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+            token_out="0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+            fee=3000,
+            recipient="0x9008D19f58AAbD9eD0D60971565AA8510560ab41",
+            amount_in=10**18,
+            amount_out_minimum=2900 * 10**6,
+        )
+
+        assert router == SWAP_ROUTER_V2_ADDRESS
+
+    def test_encode_exact_input_single_calldata_starts_with_selector(self):
+        """Test encode_exact_input_single calldata starts with correct selector."""
+        from solver.amm.uniswap_v3 import encode_exact_input_single
+
+        _, calldata = encode_exact_input_single(
+            token_in="0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+            token_out="0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+            fee=3000,
+            recipient="0x9008D19f58AAbD9eD0D60971565AA8510560ab41",
+            amount_in=10**18,
+            amount_out_minimum=2900 * 10**6,
+        )
+
+        # Calldata should start with 0x + selector
+        assert calldata.startswith("0x04e45aaf")
+
+    def test_encode_exact_input_single_calldata_length(self):
+        """Test encode_exact_input_single produces correct calldata length."""
+        from solver.amm.uniswap_v3 import encode_exact_input_single
+
+        _, calldata = encode_exact_input_single(
+            token_in="0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+            token_out="0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+            fee=3000,
+            recipient="0x9008D19f58AAbD9eD0D60971565AA8510560ab41",
+            amount_in=10**18,
+            amount_out_minimum=2900 * 10**6,
+        )
+
+        # 4 bytes selector + 7 * 32 bytes for tuple params = 228 bytes = 456 hex chars + 2 for "0x"
+        assert len(calldata) == 2 + 4 * 2 + 7 * 32 * 2  # 458
+
+    def test_encode_exact_output_single_returns_router_address(self):
+        """Test encode_exact_output_single returns correct router address."""
+        from solver.amm.uniswap_v3 import (
+            SWAP_ROUTER_V2_ADDRESS,
+            encode_exact_output_single,
+        )
+
+        router, calldata = encode_exact_output_single(
+            token_in="0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+            token_out="0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+            fee=3000,
+            recipient="0x9008D19f58AAbD9eD0D60971565AA8510560ab41",
+            amount_out=3000 * 10**6,
+            amount_in_maximum=11 * 10**17,  # 1.1 WETH max
+        )
+
+        assert router == SWAP_ROUTER_V2_ADDRESS
+
+    def test_encode_exact_output_single_calldata_starts_with_selector(self):
+        """Test encode_exact_output_single calldata starts with correct selector."""
+        from solver.amm.uniswap_v3 import encode_exact_output_single
+
+        _, calldata = encode_exact_output_single(
+            token_in="0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+            token_out="0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+            fee=3000,
+            recipient="0x9008D19f58AAbD9eD0D60971565AA8510560ab41",
+            amount_out=3000 * 10**6,
+            amount_in_maximum=11 * 10**17,
+        )
+
+        # Calldata should start with 0x + selector
+        assert calldata.startswith("0x5023b4df")
+
+    def test_encode_exact_input_single_address_normalization(self):
+        """Test that addresses are normalized in encoding."""
+        from solver.amm.uniswap_v3 import encode_exact_input_single
+
+        # Use lowercase addresses
+        _, calldata1 = encode_exact_input_single(
+            token_in="0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",
+            token_out="0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+            fee=3000,
+            recipient="0x9008d19f58aabd9ed0d60971565aa8510560ab41",
+            amount_in=10**18,
+            amount_out_minimum=2900 * 10**6,
+        )
+
+        # Use uppercase addresses
+        _, calldata2 = encode_exact_input_single(
+            token_in="0xC02AAA39B223FE8D0A0E5C4F27EAD9083C756CC2",
+            token_out="0xA0B86991C6218B36C1D19D4A2E9EB0CE3606EB48",
+            fee=3000,
+            recipient="0x9008D19F58AABD9ED0D60971565AA8510560AB41",
+            amount_in=10**18,
+            amount_out_minimum=2900 * 10**6,
+        )
+
+        # Calldata should be identical (addresses normalized)
+        assert calldata1 == calldata2
+
+    def test_encode_exact_input_single_with_price_limit(self):
+        """Test encoding with non-zero sqrtPriceLimitX96."""
+        from solver.amm.uniswap_v3 import encode_exact_input_single
+
+        _, calldata = encode_exact_input_single(
+            token_in="0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+            token_out="0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+            fee=3000,
+            recipient="0x9008D19f58AAbD9eD0D60971565AA8510560ab41",
+            amount_in=10**18,
+            amount_out_minimum=2900 * 10**6,
+            sqrt_price_limit_x96=79228162514264337593543950336,  # Example price limit
+        )
+
+        # Should still be valid calldata
+        assert calldata.startswith("0x04e45aaf")
+        assert len(calldata) == 458
+
+
+class TestSwapRouterABI:
+    """Tests for SwapRouterV2 ABI."""
+
+    def test_abi_has_required_functions(self):
+        """Test that ABI includes required functions."""
+        from solver.amm.uniswap_v3 import SWAP_ROUTER_V2_ABI
+
+        function_names = {f["name"] for f in SWAP_ROUTER_V2_ABI}
+        assert "exactInputSingle" in function_names
+        assert "exactOutputSingle" in function_names
+
+    def test_exact_input_single_abi_params(self):
+        """Test exactInputSingle has correct parameters."""
+        from solver.amm.uniswap_v3 import SWAP_ROUTER_V2_ABI
+
+        func = next(f for f in SWAP_ROUTER_V2_ABI if f["name"] == "exactInputSingle")
+
+        # Should have tuple input with correct components
+        assert len(func["inputs"]) == 1
+        assert func["inputs"][0]["type"] == "tuple"
+
+        component_names = {c["name"] for c in func["inputs"][0]["components"]}
+        assert "tokenIn" in component_names
+        assert "tokenOut" in component_names
+        assert "fee" in component_names
+        assert "recipient" in component_names
+        assert "amountIn" in component_names
+        assert "amountOutMinimum" in component_names
+        assert "sqrtPriceLimitX96" in component_names
+
+    def test_exact_output_single_abi_params(self):
+        """Test exactOutputSingle has correct parameters."""
+        from solver.amm.uniswap_v3 import SWAP_ROUTER_V2_ABI
+
+        func = next(f for f in SWAP_ROUTER_V2_ABI if f["name"] == "exactOutputSingle")
+
+        # Should have tuple input with correct components
+        assert len(func["inputs"]) == 1
+        assert func["inputs"][0]["type"] == "tuple"
+
+        component_names = {c["name"] for c in func["inputs"][0]["components"]}
+        assert "tokenIn" in component_names
+        assert "tokenOut" in component_names
+        assert "fee" in component_names
+        assert "recipient" in component_names
+        assert "amountOut" in component_names
+        assert "amountInMaximum" in component_names
+        assert "sqrtPriceLimitX96" in component_names
