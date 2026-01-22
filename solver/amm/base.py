@@ -3,6 +3,8 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
+from solver.constants import POOL_SWAP_GAS_COST
+
 
 @dataclass
 class SwapResult:
@@ -13,8 +15,8 @@ class SwapResult:
     pool_address: str
     token_in: str
     token_out: str
-    # Gas estimate for this swap
-    gas_estimate: int = 100_000
+    # Gas estimate for this swap (uses constant for consistency)
+    gas_estimate: int = POOL_SWAP_GAS_COST
 
 
 class AMM(ABC):

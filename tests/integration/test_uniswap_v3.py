@@ -91,7 +91,15 @@ class TestV3SingleOrderRouting:
         # Should have exactly one trade
         assert len(solution.trades) == 1
         trade = solution.trades[0]
-        assert int(trade.executed_amount) == 1000000000000000000  # Full 1 WETH
+
+        # For limit orders, executed_amount + fee = sell_amount
+        # The fee is deducted from the executed amount
+        sell_amount = 1000000000000000000  # 1 WETH
+        executed = int(trade.executed_amount)
+        fee = int(trade.fee) if trade.fee else 0
+        assert executed + fee == sell_amount, (
+            f"executed ({executed}) + fee ({fee}) should equal sell_amount ({sell_amount})"
+        )
 
         # Should have interaction (LiquidityInteraction for V3)
         assert len(solution.interactions) >= 1

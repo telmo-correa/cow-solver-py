@@ -12,12 +12,15 @@ def make_order(
     buy_amount: str,
     kind: str = "sell",
     partially_fillable: bool = False,
+    order_class: str = "market",  # Market orders don't require fee calculation
 ) -> Order:
     """Create a minimal Order for testing.
 
     Args:
         partially_fillable: If True, order can be partially filled.
             If False (default), order is fill-or-kill.
+        order_class: Order class ("market" or "limit"). Defaults to "market"
+            to avoid fee calculation requirements in CoW matching tests.
     """
     return Order(
         uid=uid,
@@ -26,7 +29,7 @@ def make_order(
         sell_amount=sell_amount,
         buy_amount=buy_amount,
         kind=kind,
-        class_="limit",
+        class_=order_class,
         partially_fillable=partially_fillable,
     )
 

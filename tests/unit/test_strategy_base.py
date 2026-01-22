@@ -2,6 +2,7 @@
 
 import pytest
 
+from solver.fees.config import DEFAULT_FEE_CONFIG
 from solver.models.auction import (
     AuctionInstance,
     Order,
@@ -9,7 +10,7 @@ from solver.models.auction import (
     OrderKind,
     Token,
 )
-from solver.strategies.base import FEE_BASE, OrderFill, StrategyResult
+from solver.strategies.base import OrderFill, StrategyResult
 
 # --- Test Fixtures ---
 
@@ -153,7 +154,7 @@ class TestFeeCalculation:
 
         # Expected fee: gas_cost * 1e18 / reference_price
         gas_cost_wei = gas * gas_price
-        expected_fee = (gas_cost_wei * FEE_BASE) // usdc_ref_price
+        expected_fee = (gas_cost_wei * DEFAULT_FEE_CONFIG.fee_base) // usdc_ref_price
 
         assert len(solution.trades) == 1, "Should have one trade when fee < order amount"
         trade = solution.trades[0]
@@ -190,8 +191,8 @@ class TestFeeCalculation:
             f"executed ({executed}) + fee ({fee}) should equal sell_amount ({sell_amount})"
         )
 
-    def test_limit_order_without_auction_logs_warning(self):
-        """Limit orders without auction data should log a warning and have no fee."""
+    def test_limit_order_without_auction_rejects_trade(self):
+        """Limit orders without auction data should be rejected (can't calculate fee)."""
         order = make_order(order_class=OrderClass.LIMIT)
         fill = OrderFill(order=order, sell_filled=1000000000, buy_filled=400000000000000000)
 
@@ -200,9 +201,8 @@ class TestFeeCalculation:
         # Build without auction
         solution = result.build_solution(auction=None)
 
-        trade = solution.trades[0]
-        # Without auction data, we can't calculate fee - should have no fee
-        assert trade.fee is None, "Should have no fee without auction data"
+        # Without auction data, we can't calculate fee - trade is rejected
+        assert len(solution.trades) == 0, "Trade should be rejected without auction data"
 
     def test_zero_gas_means_zero_fee(self):
         """Zero gas should result in zero fee for limit orders."""
@@ -225,8 +225,8 @@ class TestFeeCalculation:
         # Zero gas means zero fee, but still a limit order
         assert trade.fee == "0" or trade.fee is None
 
-    def test_missing_reference_price_no_fee(self):
-        """Missing reference price should result in no fee."""
+    def test_missing_reference_price_rejects_trade(self):
+        """Missing reference price should reject trade (can't calculate fee)."""
         order = make_order(order_class=OrderClass.LIMIT)
         fill = OrderFill(order=order, sell_filled=1000000000, buy_filled=400000000000000000)
 
@@ -250,8 +250,8 @@ class TestFeeCalculation:
 
         solution = result.build_solution(auction=auction)
 
-        trade = solution.trades[0]
-        assert trade.fee is None, "No fee when reference price is missing"
+        # Trade should be rejected when fee can't be calculated
+        assert len(solution.trades) == 0, "Trade should be rejected without reference price"
 
     def test_fee_exceeds_order_rejects_trade(self):
         """When fee > order amount, trade should be rejected (matching Rust checked_sub behavior)."""
