@@ -1,15 +1,23 @@
 """Base protocol and data structures for solution strategies."""
 
+from __future__ import annotations
+
 import hashlib
 from dataclasses import dataclass, field
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 import structlog
 
-from solver.models.auction import AuctionInstance, Order
+from solver.models.auction import AuctionInstance, Order, OrderClass
 from solver.models.solution import Interaction, Solution, Trade, TradeKind
 
+if TYPE_CHECKING:
+    pass
+
 logger = structlog.get_logger()
+
+# Base unit for fee calculation (1e18)
+FEE_BASE = 10**18
 
 
 class PriceWorsened(ValueError):
@@ -81,7 +89,7 @@ class OrderFill:
             total = self.order.buy_amount_int
             return self.buy_filled / total if total > 0 else 0.0
 
-    def get_remainder_order(self) -> "Order | None":
+    def get_remainder_order(self) -> Order | None:
         """Create a synthetic order for the unfilled portion.
 
         Returns None if the order is completely filled.
@@ -186,24 +194,73 @@ class StrategyResult:
         """True if at least one order was (partially) filled."""
         return len(self.fills) > 0
 
-    def build_solution(self, solution_id: int = 0) -> Solution:
+    def build_solution(
+        self, solution_id: int = 0, auction: AuctionInstance | None = None
+    ) -> Solution:
         """Convert this result to a Solution for the solver response.
+
+        For limit orders, calculates the solver-determined fee based on gas cost.
+        The fee is taken from the sell token and must be included in the trade.
+
+        Fee calculation (matching Rust baseline solver):
+            fee = gas_cost_wei * 1e18 / reference_price
 
         Args:
             solution_id: ID to assign to the solution
+            auction: The auction instance (needed for fee calculation on limit orders)
 
         Returns:
             A Solution object ready for the SolverResponse
         """
-        trades = [
-            Trade(
-                kind=TradeKind.FULFILLMENT,
-                # Use original_uid if this is a remainder order fill
-                order=getattr(fill.order, "original_uid", None) or fill.order.uid,
-                executedAmount=str(fill.executed_amount),
-            )
-            for fill in self.fills
-        ]
+        trades = []
+        for fill in self.fills:
+            order = fill.order
+            order_uid = getattr(order, "original_uid", None) or order.uid
+
+            # Calculate fee for limit orders
+            fee = self._calculate_fee_for_order(order, auction)
+
+            # For limit orders with fee, adjust executed amount
+            # Rust behavior: sell.checked_sub(surplus_fee)? returns None if fee > sell
+            # We match this by skipping trades where fee exceeds the executed amount
+            if fee is not None and fee > 0:
+                if order.is_sell_order:
+                    # Fee is deducted from executed amount for sell orders
+                    # Rust: executed = sell.checked_sub(surplus_fee)?
+                    if fee > fill.executed_amount:
+                        # Fee exceeds executed amount - cannot produce valid trade
+                        # This matches Rust's checked_sub returning None
+                        logger.warning(
+                            "fee_exceeds_executed_skipping_trade",
+                            order_uid=order_uid[:18] + "...",
+                            fee=fee,
+                            executed=fill.executed_amount,
+                            reason="Fee exceeds order amount, trade rejected (matches Rust behavior)",
+                        )
+                        continue  # Skip this trade entirely
+                    executed = fill.executed_amount - fee
+                else:
+                    # For buy orders, fee is added to the sell side
+                    # Need to verify the user has enough sell token to cover fee
+                    executed = fill.executed_amount
+
+                trades.append(
+                    Trade(
+                        kind=TradeKind.FULFILLMENT,
+                        order=order_uid,
+                        executedAmount=str(executed),
+                        fee=str(fee),
+                    )
+                )
+            else:
+                # Market orders: no fee calculation needed
+                trades.append(
+                    Trade(
+                        kind=TradeKind.FULFILLMENT,
+                        order=order_uid,
+                        executedAmount=str(fill.executed_amount),
+                    )
+                )
 
         return Solution(
             id=solution_id,
@@ -213,8 +270,75 @@ class StrategyResult:
             gas=self.gas,
         )
 
+    def _calculate_fee_for_order(self, order: Order, auction: AuctionInstance | None) -> int | None:
+        """Calculate the solver-determined fee for a limit order.
+
+        For limit orders, the solver must calculate a fee based on gas cost.
+        For market orders, the protocol determines the fee (solver returns None).
+
+        Fee formula (matching Rust baseline):
+            fee = gas_cost_wei * 1e18 / reference_price
+
+        Where:
+            - gas_cost_wei = self.gas * auction.effective_gas_price
+            - reference_price = price in wei to buy 1e18 of the sell token
+
+        Args:
+            order: The order to calculate fee for
+            auction: The auction instance with gas price and token info
+
+        Returns:
+            The fee amount in sell token units, or None for market orders
+        """
+        # Only limit orders require solver-determined fee
+        if order.class_ != OrderClass.LIMIT:
+            return None
+
+        if auction is None:
+            logger.warning(
+                "limit_order_missing_auction",
+                order_uid=order.uid[:18] + "...",
+                reason="Cannot calculate fee without auction data",
+            )
+            return None
+
+        # Get gas price from auction
+        gas_price = int(auction.effective_gas_price) if auction.effective_gas_price else 0
+        if gas_price == 0:
+            return 0
+
+        # Get reference price for sell token
+        sell_token = order.sell_token.lower()
+        token_info = auction.tokens.get(sell_token)
+        if token_info is None or token_info.reference_price is None:
+            logger.warning(
+                "limit_order_missing_reference_price",
+                order_uid=order.uid[:18] + "...",
+                sell_token=sell_token[-8:],
+            )
+            return None
+
+        reference_price = int(token_info.reference_price)
+        if reference_price == 0:
+            return None
+
+        # Calculate fee: gas_cost * 1e18 / reference_price
+        gas_cost_wei = self.gas * gas_price
+        fee = (gas_cost_wei * FEE_BASE) // reference_price
+
+        logger.debug(
+            "limit_order_fee_calculated",
+            order_uid=order.uid[:18] + "...",
+            gas=self.gas,
+            gas_price=gas_price,
+            reference_price=reference_price,
+            fee=fee,
+        )
+
+        return fee
+
     @staticmethod
-    def combine(results: list["StrategyResult"]) -> "StrategyResult":
+    def combine(results: list[StrategyResult]) -> StrategyResult:
         """Combine multiple strategy results into one.
 
         Merges fills, interactions, and prices from all results.
@@ -291,7 +415,7 @@ class StrategyResult:
         )
 
     @staticmethod
-    def _validate_fills_satisfy_limits(fills: list["OrderFill"]) -> None:
+    def _validate_fills_satisfy_limits(fills: list[OrderFill]) -> None:
         """Validate that all fills satisfy their order's limit price.
 
         For each fill, checks that the ACTUAL fill rate (buy_filled/sell_filled)

@@ -137,7 +137,7 @@ class Solver:
 
         # Combine all results into final solution
         combined = StrategyResult.combine(results)
-        solution = combined.build_solution(solution_id=0)
+        solution = combined.build_solution(solution_id=0, auction=auction)
 
         return SolverResponse(solutions=[solution])
 
@@ -164,5 +164,30 @@ class Solver:
         return original.model_copy(update={"orders": orders})
 
 
-# Singleton solver instance
-solver = Solver()
+# Singleton solver instance with optional V3 support via environment
+def _create_default_solver() -> Solver:
+    """Create the default solver, optionally with V3 support.
+
+    V3 support is enabled if RPC_URL environment variable is set.
+    This allows the solver to get quotes from UniswapV3 QuoterV2 contract.
+
+    Returns:
+        Configured Solver instance
+    """
+    import os
+
+    rpc_url = os.environ.get("RPC_URL")
+    if rpc_url:
+        # V3 support enabled
+        from solver.amm.uniswap_v3 import UniswapV3AMM, Web3UniswapV3Quoter
+
+        logger.info("v3_support_enabled", rpc_url=rpc_url[:50] + "...")
+        quoter = Web3UniswapV3Quoter(rpc_url)
+        v3_amm = UniswapV3AMM(quoter=quoter)
+        return Solver(v3_amm=v3_amm)
+    else:
+        logger.info("v3_support_disabled", reason="RPC_URL not set")
+        return Solver()
+
+
+solver = _create_default_solver()
