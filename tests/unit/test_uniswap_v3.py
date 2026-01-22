@@ -756,3 +756,158 @@ class TestSwapRouterABI:
         assert "amountOut" in component_names
         assert "amountInMaximum" in component_names
         assert "sqrtPriceLimitX96" in component_names
+
+
+class TestUniswapV3AMM:
+    """Tests for UniswapV3AMM class."""
+
+    @pytest.fixture
+    def pool(self):
+        """Create a test V3 pool."""
+        return UniswapV3Pool(
+            address="0x88e6A0c2dDD26FEEb64F039a2c41296FcB3f5640",
+            token0="0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",  # USDC
+            token1="0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",  # WETH
+            fee=3000,
+            sqrt_price_x96=0,
+            liquidity=0,
+            tick=0,
+        )
+
+    def test_amm_returns_none_when_no_quoter(self, pool):
+        """Test AMM returns None when no quoter is configured."""
+        from solver.amm.uniswap_v3 import UniswapV3AMM
+
+        amm = UniswapV3AMM(quoter=None)
+
+        result = amm.simulate_swap(pool, pool.token1, 10**18)
+        assert result is None
+
+        result = amm.simulate_swap_exact_output(pool, pool.token1, 3000 * 10**6)
+        assert result is None
+
+    def test_amm_uses_quoter_for_simulate_swap(self, pool):
+        """Test AMM uses quoter for exact input simulation."""
+        from solver.amm.uniswap_v3 import MockUniswapV3Quoter, UniswapV3AMM
+
+        # Configure mock quoter: 1 WETH -> 3000 USDC
+        quoter = MockUniswapV3Quoter(default_rate=3000.0)
+        amm = UniswapV3AMM(quoter=quoter)
+
+        result = amm.simulate_swap(pool, pool.token1, 10**18)  # 1 WETH in
+
+        assert result is not None
+        assert result.amount_in == 10**18
+        assert result.amount_out == int(10**18 * 3000.0)
+        assert result.pool_address == pool.address
+        assert result.gas_estimate == pool.gas_estimate
+
+    def test_amm_uses_quoter_for_simulate_swap_exact_output(self, pool):
+        """Test AMM uses quoter for exact output simulation."""
+        from solver.amm.uniswap_v3 import MockUniswapV3Quoter, UniswapV3AMM
+
+        # Configure mock quoter: 1 WETH = 3000 USDC
+        quoter = MockUniswapV3Quoter(default_rate=3000.0)
+        amm = UniswapV3AMM(quoter=quoter)
+
+        result = amm.simulate_swap_exact_output(pool, pool.token1, 3000 * 10**6)  # Want 3000 USDC
+
+        assert result is not None
+        assert result.amount_out == 3000 * 10**6
+        # amount_in = amount_out / rate = 3000 * 10**6 / 3000 = 10**6
+        assert result.amount_in == int(3000 * 10**6 / 3000.0)
+        assert result.pool_address == pool.address
+
+    def test_amm_returns_none_when_quote_fails(self, pool):
+        """Test AMM returns None when quoter returns None."""
+        from solver.amm.uniswap_v3 import MockUniswapV3Quoter, UniswapV3AMM
+
+        # Quoter with no configured quotes and no default rate
+        quoter = MockUniswapV3Quoter()
+        amm = UniswapV3AMM(quoter=quoter)
+
+        result = amm.simulate_swap(pool, pool.token1, 10**18)
+        assert result is None
+
+    def test_amm_returns_correct_gas_estimate(self, pool):
+        """Test AMM returns pool's gas estimate in result."""
+        from solver.amm.uniswap_v3 import MockUniswapV3Quoter, UniswapV3AMM
+
+        quoter = MockUniswapV3Quoter(default_rate=3000.0)
+        amm = UniswapV3AMM(quoter=quoter)
+
+        # Default gas estimate
+        result = amm.simulate_swap(pool, pool.token1, 10**18)
+        assert result is not None
+        assert result.gas_estimate == V3_SWAP_GAS_COST
+
+        # Custom gas estimate
+        pool.gas_estimate = 150_000
+        result = amm.simulate_swap(pool, pool.token1, 10**18)
+        assert result is not None
+        assert result.gas_estimate == 150_000
+
+    def test_amm_normalizes_token_addresses_in_result(self, pool):
+        """Test AMM normalizes token addresses in SwapResult."""
+        from solver.amm.uniswap_v3 import MockUniswapV3Quoter, UniswapV3AMM
+
+        quoter = MockUniswapV3Quoter(default_rate=3000.0)
+        amm = UniswapV3AMM(quoter=quoter)
+
+        # Use uppercase token address
+        result = amm.simulate_swap(pool, "0xC02AAA39B223FE8D0A0E5C4F27EAD9083C756CC2", 10**18)
+
+        assert result is not None
+        # Addresses should be normalized (lowercase with 0x prefix)
+        assert result.token_in == "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2"
+        assert result.token_out == "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
+
+    def test_amm_encode_swap(self, pool):
+        """Test AMM encode_swap produces valid calldata."""
+        from solver.amm.uniswap_v3 import SWAP_ROUTER_V2_ADDRESS, UniswapV3AMM
+
+        amm = UniswapV3AMM()  # No quoter needed for encoding
+
+        router, calldata = amm.encode_swap(
+            pool=pool,
+            token_in=pool.token1,  # WETH
+            amount_in=10**18,
+            amount_out_min=2900 * 10**6,
+            recipient="0x9008D19f58AAbD9eD0D60971565AA8510560ab41",
+        )
+
+        assert router == SWAP_ROUTER_V2_ADDRESS
+        assert calldata.startswith("0x04e45aaf")  # exactInputSingle selector
+
+    def test_amm_encode_swap_exact_output(self, pool):
+        """Test AMM encode_swap_exact_output produces valid calldata."""
+        from solver.amm.uniswap_v3 import SWAP_ROUTER_V2_ADDRESS, UniswapV3AMM
+
+        amm = UniswapV3AMM()  # No quoter needed for encoding
+
+        router, calldata = amm.encode_swap_exact_output(
+            pool=pool,
+            token_in=pool.token1,  # WETH
+            amount_out=3000 * 10**6,
+            amount_in_max=11 * 10**17,  # 1.1 WETH max
+            recipient="0x9008D19f58AAbD9eD0D60971565AA8510560ab41",
+        )
+
+        assert router == SWAP_ROUTER_V2_ADDRESS
+        assert calldata.startswith("0x5023b4df")  # exactOutputSingle selector
+
+    def test_amm_passes_correct_fee_to_quoter(self, pool):
+        """Test AMM passes pool fee to quoter."""
+        from solver.amm.uniswap_v3 import MockUniswapV3Quoter, UniswapV3AMM
+
+        quoter = MockUniswapV3Quoter(default_rate=3000.0)
+        amm = UniswapV3AMM(quoter=quoter)
+
+        # Use a pool with 0.05% fee
+        pool.fee = 500
+
+        amm.simulate_swap(pool, pool.token1, 10**18)
+
+        # Check the quoter was called with the correct fee
+        assert len(quoter.calls) == 1
+        assert quoter.calls[0][3] == 500  # fee is 4th element in call tuple
