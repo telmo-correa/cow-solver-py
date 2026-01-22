@@ -25,6 +25,8 @@ Usage pattern:
 
 from __future__ import annotations
 
+from typing import NoReturn
+
 UINT256_MAX = 2**256 - 1
 
 
@@ -185,7 +187,7 @@ class SafeInt:
             raise DivisionByZero(f"Modulo by zero: {other} % 0")
         return SafeInt(other % self._value)
 
-    def __truediv__(self, other: SafeInt | int) -> SafeInt:
+    def __truediv__(self, other: SafeInt | int) -> NoReturn:
         """True division is not supported - use // for integer division.
 
         Raises:
@@ -197,7 +199,7 @@ class SafeInt:
             "or .ceiling_div() for ceiling division."
         )
 
-    def __rtruediv__(self, other: int) -> SafeInt:
+    def __rtruediv__(self, other: int) -> NoReturn:
         """True division is not supported - use // for integer division.
 
         Raises:
