@@ -8,15 +8,17 @@ This directory tracks progress across AI-assisted development sessions.
 |-------|----------|--------|---------|
 | [Phase 1](phase-1-summary.md) | 1-9 | Complete | Infrastructure + Single Order Routing |
 | [Phase 2](phase-2-summary.md) | 10-15 | Complete | CoW Matching |
-| [Phase 3.1](phase-3-summary.md) | 16-23 | Complete | UniswapV3 Integration |
+| [Phase 3.1](phase-3.1-summary.md) | 16-23 | Complete | UniswapV3 Integration |
+| [Phase 3.2](phase-3.2-summary.md) | 25-34 | Complete | Balancer Integration + Code Quality |
 
 ## Current Status
 
 - **Phase 1:** Complete (single-order AMM routing)
 - **Phase 2:** Complete (CoW matching, partial fills)
-- **Phase 3:** Slice 3.1 Complete (UniswapV3), Slice 3.2 Complete (Balancer weighted + stable pools)
-- **Code Quality:** Fee Calculator Service, SafeInt wrapper, Fixed-Point Math
-- **Tests:** 647 passing, 14 skipped
+- **Phase 3.1:** Complete (UniswapV3 concentrated liquidity)
+- **Phase 3.2:** Complete (Balancer weighted + stable pools, SafeInt, benchmarks)
+- **Tests:** 651 passing, 14 skipped
+- **Liquidity:** V2, V3, Balancer weighted, Balancer stable
 - **Next:** Curve pools or multi-order optimization
 
 ## Session Archive
@@ -49,16 +51,16 @@ Individual session logs are preserved in the `archive/` directory for reference.
 | [22](archive/session-22.md) | 2026-01-22 | Real Quoter Integration |
 | [23](archive/session-23.md) | 2026-01-22 | Limit Order Fee Handling |
 | [24](archive/session-24.md) | 2026-01-22 | Fee Calculator Service |
-| [25](session-25.md) | 2026-01-22 | SafeInt Safe Arithmetic |
-| [26](session-26.md) | 2026-01-22 | V3 Benchmarking |
-| [27](session-27.md) | 2026-01-22 | Balancer Fixed-Point and Weighted Pool Math (Slices 3.2.1-3.2.2) |
-| [28](session-28.md) | 2026-01-22 | Stable Pool Math Bug Fix and Code Review |
-| [29](session-29.md) | 2026-01-22 | Pool Parsing and Registry (Slice 3.2.4) |
-| [30](session-30.md) | 2026-01-22 | Code Review and Quality Improvements (Slice 3.2.4) |
-| [31](session-31.md) | 2026-01-22 | Balancer AMM Integration (Slice 3.2.5) |
-| [32](session-32.md) | 2026-01-22 | Router Integration for Balancer Pools (Slice 3.2.6) |
-| [33](session-33.md) | 2026-01-22 | Integration Tests for Balancer Pools (Slice 3.2.7) |
-| [34](session-34.md) | 2026-01-22 | Balancer Benchmarking (Slice 3.2.8) |
+| [25](archive/session-25.md) | 2026-01-22 | SafeInt Safe Arithmetic |
+| [26](archive/session-26.md) | 2026-01-22 | V3 Benchmarking |
+| [27](archive/session-27.md) | 2026-01-22 | Balancer Fixed-Point and Weighted Pool Math |
+| [28](archive/session-28.md) | 2026-01-22 | Stable Pool Math Bug Fix |
+| [29](archive/session-29.md) | 2026-01-22 | Pool Parsing and Registry |
+| [30](archive/session-30.md) | 2026-01-22 | Code Review and Quality Improvements |
+| [31](archive/session-31.md) | 2026-01-22 | Balancer AMM Integration |
+| [32](archive/session-32.md) | 2026-01-22 | Router Integration for Balancer |
+| [33](archive/session-33.md) | 2026-01-22 | Integration Tests for Balancer |
+| [34](archive/session-34.md) | 2026-01-22 | Balancer Benchmarking |
 
 ## Session Template
 

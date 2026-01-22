@@ -12,7 +12,7 @@ This file provides context for AI assistants working on this project. Read this 
 3. Create portfolio material with quantified performance comparisons
 4. Explore where Python can compete with Rust and where it can't
 
-**Status:** Phase 1 complete. Phase 2 complete (2-order CoW matching). Phase 3 Slice 3.1 complete (UniswapV3).
+**Status:** Phase 1-3 complete. Full liquidity support: V2, V3, Balancer weighted, Balancer stable.
 
 ## What is CoW Protocol?
 
@@ -82,7 +82,7 @@ cow-solver-py/
 
 ## Current State
 
-### What's Done (Phase 0 + Phase 1 + Phase 2 + Phase 3 Slice 3.1)
+### What's Done (Phase 0 + Phase 1 + Phase 2 + Phase 3)
 - ✅ Project skeleton with pyproject.toml
 - ✅ Pydantic models matching CoW OpenAPI spec
 - ✅ FastAPI endpoint that accepts auctions
@@ -109,8 +109,12 @@ cow-solver-py/
 - ✅ **V3 settlement encoding** (SwapRouterV2 calldata)
 - ✅ **Best-quote selection** (V2 vs V3 comparison)
 - ✅ **Limit order fee calculation** (matching Rust baseline behavior)
+- ✅ **Balancer weighted pools** (fixed-point math, power functions)
+- ✅ **Balancer stable pools** (StableSwap invariant, Newton-Raphson)
+- ✅ **Multi-source routing** (V2, V3, weighted, stable pools)
+- ✅ **SafeInt arithmetic** (overflow/underflow protection)
 
-**Total: 288 passing tests** (unit + integration)
+**Total: 651 passing tests** (unit + integration)
 
 ### Rust Baseline Solver Limitations
 
@@ -124,22 +128,23 @@ See `BENCHMARKS.md` for details. Benchmarks are split into:
 - `benchmark/` - Shared functionality (Python vs Rust comparison)
 - `benchmark_python_only/` - Python-only features (CoW matching)
 
-### What's Next (Phase 3: Liquidity Expansion)
+### What's Next (Phase 4: Unified Optimization)
 See `PLAN.md` for full details.
 
-> **Why Liquidity First:** Multi-order CoW detection has been deferred to Phase 4.
-> The optimal solution requires joint optimization across CoW + all AMM sources.
-> We're adding liquidity sources first to understand the full problem space before
-> designing the unified optimizer.
+> **Phase 3 Complete:** All liquidity sources integrated (V2, V3, Balancer weighted, Balancer stable).
+> Python solver matches Rust baseline exactly on all benchmark fixtures.
+> Next: Multi-order CoW detection and unified optimization.
 
 **Slice 3.1: UniswapV3 Integration** ✅ COMPLETE
 - [x] V3 pool parsing and quoter interface
 - [x] Best-quote selection between V2 and V3
 - [x] Limit order fee calculation
 
-**Slice 3.2: Balancer/Curve Integration** ⬅️ NEXT
-- [ ] Weighted pool math (Balancer)
-- [ ] Stable pool math (Curve/Balancer)
+**Slice 3.2: Balancer Integration** ✅ COMPLETE
+- [x] Weighted pool math (Balancer)
+- [x] Stable pool math (Curve/Balancer)
+- [x] Multi-source routing (V2, V3, weighted, stable)
+- [x] Exact match with Rust baseline on all Balancer benchmarks
 
 ## Key Files to Know
 
@@ -150,6 +155,8 @@ See `PLAN.md` for full details.
 | `solver/models/solution.py` | Output data structures (Solution, Trade, Interaction) |
 | `solver/amm/uniswap_v2.py` | UniswapV2 AMM math and encoding |
 | `solver/amm/uniswap_v3.py` | UniswapV3 AMM with quoter-based swap calculation |
+| `solver/amm/balancer.py` | Balancer weighted/stable pools, math, AMMs |
+| `solver/math/fixed_point.py` | Bfp class for 18-decimal fixed-point arithmetic |
 | `solver/strategies/base.py` | SolutionStrategy protocol, StrategyResult, fee calculation |
 | `solver/strategies/matching_rules.py` | Data-driven matching rules (constraint tables) |
 | `solver/strategies/cow_match.py` | CoW matching (perfect + partial) |

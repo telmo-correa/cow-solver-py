@@ -16,7 +16,9 @@ This project implements a solver for [CoW Protocol](https://cow.fi/) batch aucti
 ## Status
 
 - **Phase 1 Complete** — Single order routing via UniswapV2 (direct + multi-hop)
-- **Phase 2 Slice 2.2 Complete** — Partial CoW + AMM composition (all order types, fill-or-kill)
+- **Phase 2 Complete** — CoW matching (2-order peer-to-peer, partial fills)
+- **Phase 3 Complete** — Liquidity expansion (V3, Balancer weighted, Balancer stable)
+- **651 tests passing** — Full coverage with Rust baseline parity
 
 See [PLAN.md](PLAN.md) for the detailed implementation roadmap.
 
@@ -65,7 +67,8 @@ python -m scripts.collect_auctions --count 50
 solver/          # Main solver package
   api/           # FastAPI endpoints
   models/        # Pydantic schemas
-  amm/           # AMM math (UniswapV2)
+  amm/           # AMM math (V2, V3, Balancer)
+  math/          # Fixed-point arithmetic
   strategies/    # Solution strategies (CoW matching, AMM routing)
   routing/       # Order routing and solution building
   constants.py   # Centralized constants

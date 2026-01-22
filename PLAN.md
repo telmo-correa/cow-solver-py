@@ -138,16 +138,10 @@ Each slice delivers end-to-end functionality for a specific auction type, with t
 
 ---
 
-## Phase 3: Liquidity Expansion ⬅️ CURRENT FOCUS
+## Phase 3: Liquidity Expansion ✅ COMPLETE
 
-> **Why this is next:** Before designing a unified optimizer for multi-order CoW + AMM,
-> we need to understand the full liquidity landscape. Each AMM type has different
-> price curves (constant product, concentrated liquidity, weighted pools) that affect
-> the optimization problem. Adding these sources first lets us:
-> 1. Achieve feature parity with the Rust baseline
-> 2. Understand the real complexity of multi-source routing
-> 3. Measure where our sequential approach leaves surplus on the table
-> 4. Design the unified optimizer with full context
+> **Completed:** All liquidity sources integrated with exact Rust baseline match.
+> Full multi-source routing: V2, V3, Balancer weighted, Balancer stable pools.
 
 ### Slice 3.1: UniswapV3 Integration ✅ COMPLETE
 **Goal:** Add concentrated liquidity support (very different from V2)
@@ -199,22 +193,28 @@ Each slice delivers end-to-end functionality for a specific auction type, with t
 
 **Exit Criteria:** V3 pools integrated, tested, and benchmarked against Rust. ✅
 
-### Slice 3.2: Balancer/Curve Integration
+### Slice 3.2: Balancer Integration ✅ COMPLETE
 **Goal:** Add weighted and stable pool support
 
-- [ ] Weighted pool math (Balancer)
-- [ ] Stable pool math (Curve/Balancer)
-- [ ] Parse pool parameters from auction data
-- [ ] Test: auctions with Balancer/Curve liquidity
-- [ ] Benchmark: compare with Rust baseline
+- [x] Fixed-point math (Bfp class, 18-decimal precision)
+- [x] Weighted pool math (calc_out_given_in, calc_in_given_out)
+- [x] Stable pool math (StableSwap invariant, Newton-Raphson)
+- [x] Pool parsing from auction data
+- [x] BalancerWeightedAMM and BalancerStableAMM classes
+- [x] Router integration (multi-hop, partial fills)
+- [x] Integration tests: 7 tests matching Rust baseline exactly
+- [x] Benchmark: 5/5 exact match with Rust baseline
 
-### Slice 3.3: Multi-Source Routing
+**Sessions:** 25-34 (see `docs/sessions/phase-3.2-summary.md`)
+
+### Slice 3.3: Multi-Source Routing ✅ COMPLETE
 **Goal:** Route through best available liquidity
 
-- [ ] Quote comparison across DEXs (V2, V3, Balancer)
-- [ ] Select best execution venue per order
-- [ ] Test: auctions with multiple liquidity options
-- [ ] Benchmark: measure improvement over single-source
+- [x] Quote comparison across DEXs (V2, V3, Balancer weighted, Balancer stable)
+- [x] Select best execution venue per order
+- [x] Multi-hop through mixed pool types
+- [x] Test: auctions with multiple liquidity options
+- [x] Benchmark: exact match with Rust baseline
 
 ### Slice 3.4: Split Routing (Optional)
 **Goal:** Split orders across multiple venues for better execution
@@ -224,11 +224,13 @@ Each slice delivers end-to-end functionality for a specific auction type, with t
 - [ ] Test: large orders that benefit from splitting
 - [ ] Benchmark: this approaches unified optimization territory
 
-**Exit Criteria:** Solver uses multiple liquidity sources, matching Rust baseline capabilities.
+**Exit Criteria:** Solver uses multiple liquidity sources, matching Rust baseline capabilities. ✅
+
+**Tests:** 651 passing, 14 skipped
 
 ---
 
-## Phase 4: Unified Optimization
+## Phase 4: Unified Optimization ⬅️ NEXT
 
 > **The Big Picture:** The optimal solution isn't "CoW matching" OR "AMM routing" —
 > it's the joint optimization across all mechanisms. This phase designs a unified
