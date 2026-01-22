@@ -39,6 +39,10 @@ __all__ = [
     "BalancerError",
     "MaxInRatioError",
     "MaxOutRatioError",
+    "InvalidFeeError",
+    "InvalidScalingFactorError",
+    "ZeroWeightError",
+    "ZeroBalanceError",
 ]
 
 
@@ -61,6 +65,30 @@ class MaxInRatioError(BalancerError):
 
 class MaxOutRatioError(BalancerError):
     """Error 305: Output amount exceeds 30% of balance_out."""
+
+    pass
+
+
+class InvalidFeeError(BalancerError):
+    """Swap fee must be in range [0, 1)."""
+
+    pass
+
+
+class InvalidScalingFactorError(BalancerError):
+    """Scaling factor must be positive."""
+
+    pass
+
+
+class ZeroWeightError(BalancerError):
+    """Token weight must be positive."""
+
+    pass
+
+
+class ZeroBalanceError(BalancerError):
+    """Token balance must be positive for swaps."""
 
     pass
 
@@ -133,7 +161,12 @@ def scale_up(amount: int, scaling_factor: int) -> Bfp:
 
     Returns:
         Amount as Bfp (18-decimal fixed-point)
+
+    Raises:
+        InvalidScalingFactorError: If scaling_factor <= 0
     """
+    if scaling_factor <= 0:
+        raise InvalidScalingFactorError(f"Scaling factor must be positive, got {scaling_factor}")
     return Bfp.from_wei(amount * scaling_factor)
 
 
@@ -146,7 +179,12 @@ def scale_down_down(bfp: Bfp, scaling_factor: int) -> int:
 
     Returns:
         Amount in token's native decimals
+
+    Raises:
+        InvalidScalingFactorError: If scaling_factor <= 0
     """
+    if scaling_factor <= 0:
+        raise InvalidScalingFactorError(f"Scaling factor must be positive, got {scaling_factor}")
     return bfp.value // scaling_factor
 
 
@@ -159,7 +197,12 @@ def scale_down_up(bfp: Bfp, scaling_factor: int) -> int:
 
     Returns:
         Amount in token's native decimals
+
+    Raises:
+        InvalidScalingFactorError: If scaling_factor <= 0
     """
+    if scaling_factor <= 0:
+        raise InvalidScalingFactorError(f"Scaling factor must be positive, got {scaling_factor}")
     if bfp.value == 0:
         return 0
     return (bfp.value - 1) // scaling_factor + 1
@@ -177,11 +220,16 @@ def subtract_swap_fee_amount(amount: int, swap_fee: Decimal) -> int:
 
     Args:
         amount: Input amount before fee
-        swap_fee: Fee as decimal (e.g., 0.003 for 0.3%)
+        swap_fee: Fee as decimal (e.g., 0.003 for 0.3%), must be in [0, 1)
 
     Returns:
         Amount after fee deduction
+
+    Raises:
+        InvalidFeeError: If swap_fee is not in range [0, 1)
     """
+    if swap_fee < 0 or swap_fee >= 1:
+        raise InvalidFeeError(f"Swap fee must be in range [0, 1), got {swap_fee}")
     amount_bfp = Bfp.from_wei(amount)
     fee_bfp = Bfp.from_decimal(swap_fee)
     fee_amount = amount_bfp.mul_up(fee_bfp)
@@ -190,20 +238,25 @@ def subtract_swap_fee_amount(amount: int, swap_fee: Decimal) -> int:
 
 
 def add_swap_fee_amount(amount: int, swap_fee: Decimal) -> int:
-    """Add swap fee to output amount.
+    """Add swap fee to the calculated input amount.
 
-    Used for buy orders (exact output): fee is added after calculating
-    the required input.
+    Used for buy orders (exact output): after calculating the raw input
+    needed via calc_in_given_out, this function adds the fee on top.
 
     Formula: amount_with_fee = amount / (1 - fee)
 
     Args:
-        amount: Input amount before fee
-        swap_fee: Fee as decimal (e.g., 0.003 for 0.3%)
+        amount: Raw input amount from calc_in_given_out (before fee consideration)
+        swap_fee: Fee as decimal (e.g., 0.003 for 0.3%), must be in [0, 1)
 
     Returns:
-        Amount including fee
+        Final input amount including fee
+
+    Raises:
+        InvalidFeeError: If swap_fee is not in range [0, 1)
     """
+    if swap_fee < 0 or swap_fee >= 1:
+        raise InvalidFeeError(f"Swap fee must be in range [0, 1), got {swap_fee}")
     fee_bfp = Bfp.from_decimal(swap_fee)
     complement = fee_bfp.complement()  # 1 - fee
     amount_bfp = Bfp.from_wei(amount)
@@ -234,10 +287,10 @@ def calc_out_given_in(
         amount_out = balance_out * (1 - (balance_in / (balance_in + amount_in))^(weight_in / weight_out))
 
     Args:
-        balance_in: Scaled balance of input token
-        weight_in: Weight of input token
-        balance_out: Scaled balance of output token
-        weight_out: Weight of output token
+        balance_in: Scaled balance of input token (must be positive)
+        weight_in: Weight of input token (must be positive)
+        balance_out: Scaled balance of output token (must be positive)
+        weight_out: Weight of output token (must be positive)
         amount_in: Scaled input amount (after fee subtraction)
         _version: Pool version for power function variant (V3Plus optimization TODO)
 
@@ -246,7 +299,21 @@ def calc_out_given_in(
 
     Raises:
         MaxInRatioError: If amount_in > balance_in * 0.3 (30% limit)
+        ZeroWeightError: If weight_in or weight_out is zero
+        ZeroBalanceError: If balance_in or balance_out is zero
     """
+    # Validate weights
+    if weight_in.value <= 0:
+        raise ZeroWeightError("weight_in must be positive")
+    if weight_out.value <= 0:
+        raise ZeroWeightError("weight_out must be positive")
+
+    # Validate balances
+    if balance_in.value <= 0:
+        raise ZeroBalanceError("balance_in must be positive")
+    if balance_out.value <= 0:
+        raise ZeroBalanceError("balance_out must be positive")
+
     # Check ratio limit: amount_in must not exceed 30% of balance_in
     max_amount_in = balance_in.mul_down(MAX_IN_RATIO)
     if amount_in.value > max_amount_in.value:
@@ -287,10 +354,10 @@ def calc_in_given_out(
         amount_in = balance_in * ((balance_out / (balance_out - amount_out))^(weight_out / weight_in) - 1)
 
     Args:
-        balance_in: Scaled balance of input token
-        weight_in: Weight of input token
-        balance_out: Scaled balance of output token
-        weight_out: Weight of output token
+        balance_in: Scaled balance of input token (must be positive)
+        weight_in: Weight of input token (must be positive)
+        balance_out: Scaled balance of output token (must be positive)
+        weight_out: Weight of output token (must be positive)
         amount_out: Scaled output amount
         _version: Pool version for power function variant (V3Plus optimization TODO)
 
@@ -299,7 +366,21 @@ def calc_in_given_out(
 
     Raises:
         MaxOutRatioError: If amount_out > balance_out * 0.3 (30% limit)
+        ZeroWeightError: If weight_in or weight_out is zero
+        ZeroBalanceError: If balance_in or balance_out is zero or if amount_out >= balance_out
     """
+    # Validate weights
+    if weight_in.value <= 0:
+        raise ZeroWeightError("weight_in must be positive")
+    if weight_out.value <= 0:
+        raise ZeroWeightError("weight_out must be positive")
+
+    # Validate balances
+    if balance_in.value <= 0:
+        raise ZeroBalanceError("balance_in must be positive")
+    if balance_out.value <= 0:
+        raise ZeroBalanceError("balance_out must be positive")
+
     # Check ratio limit: amount_out must not exceed 30% of balance_out
     max_amount_out = balance_out.mul_down(MAX_OUT_RATIO)
     if amount_out.value > max_amount_out.value:
@@ -308,6 +389,9 @@ def calc_in_given_out(
         )
 
     # denominator = balance_out - amount_out
+    # Check for zero denominator (would cause division by zero)
+    if amount_out.value >= balance_out.value:
+        raise ZeroBalanceError("amount_out must be less than balance_out")
     denominator = balance_out.sub(amount_out)
 
     # base = balance_out / denominator (rounded up)

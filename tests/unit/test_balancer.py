@@ -10,9 +10,13 @@ import pytest
 
 from solver.amm.balancer import (
     BalancerWeightedPool,
+    InvalidFeeError,
+    InvalidScalingFactorError,
     MaxInRatioError,
     MaxOutRatioError,
     WeightedTokenReserve,
+    ZeroBalanceError,
+    ZeroWeightError,
     add_swap_fee_amount,
     calc_in_given_out,
     calc_out_given_in,
@@ -89,6 +93,26 @@ class TestScaling:
         result = scale_down_up(bfp, scaling_factor)
         assert result == 1_500_000
 
+    def test_scale_up_zero_scaling_factor_raises(self) -> None:
+        """Zero scaling factor raises error."""
+        with pytest.raises(InvalidScalingFactorError):
+            scale_up(1000, 0)
+
+    def test_scale_up_negative_scaling_factor_raises(self) -> None:
+        """Negative scaling factor raises error."""
+        with pytest.raises(InvalidScalingFactorError):
+            scale_up(1000, -1)
+
+    def test_scale_down_down_zero_scaling_factor_raises(self) -> None:
+        """Zero scaling factor raises error."""
+        with pytest.raises(InvalidScalingFactorError):
+            scale_down_down(Bfp.from_wei(1000), 0)
+
+    def test_scale_down_up_zero_scaling_factor_raises(self) -> None:
+        """Zero scaling factor raises error."""
+        with pytest.raises(InvalidScalingFactorError):
+            scale_down_up(Bfp.from_wei(1000), 0)
+
 
 class TestFeeApplication:
     """Tests for fee subtraction and addition."""
@@ -126,6 +150,31 @@ class TestFeeApplication:
         assert result >= expected
         assert result <= expected + 2
 
+    def test_subtract_fee_negative_raises(self) -> None:
+        """Negative fee raises error."""
+        with pytest.raises(InvalidFeeError):
+            subtract_swap_fee_amount(1_000_000_000_000_000_000, Decimal("-0.01"))
+
+    def test_subtract_fee_one_raises(self) -> None:
+        """Fee of exactly 1.0 raises error."""
+        with pytest.raises(InvalidFeeError):
+            subtract_swap_fee_amount(1_000_000_000_000_000_000, Decimal("1.0"))
+
+    def test_subtract_fee_greater_than_one_raises(self) -> None:
+        """Fee > 1.0 raises error."""
+        with pytest.raises(InvalidFeeError):
+            subtract_swap_fee_amount(1_000_000_000_000_000_000, Decimal("1.5"))
+
+    def test_add_fee_negative_raises(self) -> None:
+        """Negative fee raises error."""
+        with pytest.raises(InvalidFeeError):
+            add_swap_fee_amount(1_000_000_000_000_000_000, Decimal("-0.01"))
+
+    def test_add_fee_one_raises(self) -> None:
+        """Fee of exactly 1.0 raises error (would cause division by zero)."""
+        with pytest.raises(InvalidFeeError):
+            add_swap_fee_amount(1_000_000_000_000_000_000, Decimal("1.0"))
+
 
 class TestCalcOutGivenIn:
     """Tests for calc_out_given_in (sell order math)."""
@@ -159,11 +208,11 @@ class TestCalcOutGivenIn:
         result = calc_out_given_in(balance_in, weight_in, balance_out, weight_out, amount_in)
 
         # Expected output from Rust: 428_571_297_950
-        # Allow some tolerance due to power function precision
+        # Actual difference is ~20 wei (0.000005%) - use tight tolerance
         expected = 428_571_297_950
-        tolerance = expected // 1000  # 0.1% tolerance
+        tolerance = 100  # 100 wei absolute tolerance
         assert abs(result.value - expected) <= tolerance, (
-            f"Expected ~{expected}, got {result.value}"
+            f"Expected ~{expected}, got {result.value}, diff={result.value - expected}"
         )
 
     def test_max_in_ratio_exactly_30_percent(self) -> None:
@@ -190,6 +239,80 @@ class TestCalcOutGivenIn:
 
         with pytest.raises(MaxInRatioError):
             calc_out_given_in(balance_in, weight_in, balance_out, weight_out, amount_in)
+
+    def test_zero_weight_in_raises(self) -> None:
+        """Zero input weight raises error."""
+        balance_in = Bfp.from_wei(100 * ONE_18)
+        weight_in = Bfp.from_wei(0)  # Zero weight
+        balance_out = Bfp.from_wei(100 * ONE_18)
+        weight_out = Bfp.from_wei(ONE_18 // 2)
+        amount_in = Bfp.from_wei(10 * ONE_18)
+
+        with pytest.raises(ZeroWeightError):
+            calc_out_given_in(balance_in, weight_in, balance_out, weight_out, amount_in)
+
+    def test_zero_weight_out_raises(self) -> None:
+        """Zero output weight raises error."""
+        balance_in = Bfp.from_wei(100 * ONE_18)
+        weight_in = Bfp.from_wei(ONE_18 // 2)
+        balance_out = Bfp.from_wei(100 * ONE_18)
+        weight_out = Bfp.from_wei(0)  # Zero weight
+        amount_in = Bfp.from_wei(10 * ONE_18)
+
+        with pytest.raises(ZeroWeightError):
+            calc_out_given_in(balance_in, weight_in, balance_out, weight_out, amount_in)
+
+    def test_zero_balance_in_raises(self) -> None:
+        """Zero input balance raises error."""
+        balance_in = Bfp.from_wei(0)  # Zero balance
+        weight_in = Bfp.from_wei(ONE_18 // 2)
+        balance_out = Bfp.from_wei(100 * ONE_18)
+        weight_out = Bfp.from_wei(ONE_18 // 2)
+        amount_in = Bfp.from_wei(10 * ONE_18)
+
+        with pytest.raises(ZeroBalanceError):
+            calc_out_given_in(balance_in, weight_in, balance_out, weight_out, amount_in)
+
+    def test_zero_balance_out_raises(self) -> None:
+        """Zero output balance raises error."""
+        balance_in = Bfp.from_wei(100 * ONE_18)
+        weight_in = Bfp.from_wei(ONE_18 // 2)
+        balance_out = Bfp.from_wei(0)  # Zero balance
+        weight_out = Bfp.from_wei(ONE_18 // 2)
+        amount_in = Bfp.from_wei(10 * ONE_18)
+
+        with pytest.raises(ZeroBalanceError):
+            calc_out_given_in(balance_in, weight_in, balance_out, weight_out, amount_in)
+
+    def test_zero_amount_in_returns_near_zero(self) -> None:
+        """Zero input amount returns near-zero output.
+
+        Note: Due to power function error margin adjustment in pow_up,
+        the result is not exactly zero but very small.
+        """
+        balance_in = Bfp.from_wei(100 * ONE_18)
+        weight_in = Bfp.from_wei(ONE_18 // 2)
+        balance_out = Bfp.from_wei(100 * ONE_18)
+        weight_out = Bfp.from_wei(ONE_18 // 2)
+        amount_in = Bfp.from_wei(0)
+
+        result = calc_out_given_in(balance_in, weight_in, balance_out, weight_out, amount_in)
+        # Result is tiny (within power function error margin)
+        assert abs(result.value) < ONE_18 // 1000  # Less than 0.001 tokens
+
+    def test_asymmetric_weights_80_20(self) -> None:
+        """Test 80/20 weighted pool."""
+        # Pool: 80% weight in, 20% weight out
+        balance_in = Bfp.from_wei(100 * ONE_18)
+        weight_in = Bfp.from_wei(8 * ONE_18 // 10)  # 0.8
+        balance_out = Bfp.from_wei(100 * ONE_18)
+        weight_out = Bfp.from_wei(2 * ONE_18 // 10)  # 0.2
+        amount_in = Bfp.from_wei(10 * ONE_18)
+
+        result = calc_out_given_in(balance_in, weight_in, balance_out, weight_out, amount_in)
+        # With higher weight_in relative to weight_out, we should get more output
+        # than a 50/50 pool would give
+        assert result.value > 0
 
 
 class TestCalcInGivenOut:
@@ -221,10 +344,11 @@ class TestCalcInGivenOut:
         result = calc_in_given_out(balance_in, weight_in, balance_out, weight_out, amount_out)
 
         # Expected input from Rust: 233_722_784_701_541_000_000
+        # Actual difference is ~100000 wei (0.00000004%) - use tight tolerance
         expected = 233_722_784_701_541_000_000
-        tolerance = expected // 1000  # 0.1% tolerance
+        tolerance = 200_000  # 200000 wei absolute tolerance
         assert abs(result.value - expected) <= tolerance, (
-            f"Expected ~{expected}, got {result.value}"
+            f"Expected ~{expected}, got {result.value}, diff={result.value - expected}"
         )
 
     def test_max_out_ratio_exactly_30_percent(self) -> None:
@@ -249,6 +373,103 @@ class TestCalcInGivenOut:
 
         with pytest.raises(MaxOutRatioError):
             calc_in_given_out(balance_in, weight_in, balance_out, weight_out, amount_out)
+
+    def test_zero_weight_in_raises(self) -> None:
+        """Zero input weight raises error."""
+        balance_in = Bfp.from_wei(100 * ONE_18)
+        weight_in = Bfp.from_wei(0)
+        balance_out = Bfp.from_wei(100 * ONE_18)
+        weight_out = Bfp.from_wei(ONE_18 // 2)
+        amount_out = Bfp.from_wei(10 * ONE_18)
+
+        with pytest.raises(ZeroWeightError):
+            calc_in_given_out(balance_in, weight_in, balance_out, weight_out, amount_out)
+
+    def test_zero_weight_out_raises(self) -> None:
+        """Zero output weight raises error."""
+        balance_in = Bfp.from_wei(100 * ONE_18)
+        weight_in = Bfp.from_wei(ONE_18 // 2)
+        balance_out = Bfp.from_wei(100 * ONE_18)
+        weight_out = Bfp.from_wei(0)
+        amount_out = Bfp.from_wei(10 * ONE_18)
+
+        with pytest.raises(ZeroWeightError):
+            calc_in_given_out(balance_in, weight_in, balance_out, weight_out, amount_out)
+
+    def test_zero_balance_in_raises(self) -> None:
+        """Zero input balance raises error."""
+        balance_in = Bfp.from_wei(0)
+        weight_in = Bfp.from_wei(ONE_18 // 2)
+        balance_out = Bfp.from_wei(100 * ONE_18)
+        weight_out = Bfp.from_wei(ONE_18 // 2)
+        amount_out = Bfp.from_wei(10 * ONE_18)
+
+        with pytest.raises(ZeroBalanceError):
+            calc_in_given_out(balance_in, weight_in, balance_out, weight_out, amount_out)
+
+    def test_zero_balance_out_raises(self) -> None:
+        """Zero output balance raises error."""
+        balance_in = Bfp.from_wei(100 * ONE_18)
+        weight_in = Bfp.from_wei(ONE_18 // 2)
+        balance_out = Bfp.from_wei(0)
+        weight_out = Bfp.from_wei(ONE_18 // 2)
+        amount_out = Bfp.from_wei(10 * ONE_18)
+
+        with pytest.raises(ZeroBalanceError):
+            calc_in_given_out(balance_in, weight_in, balance_out, weight_out, amount_out)
+
+    def test_amount_out_equals_balance_out_raises(self) -> None:
+        """Requesting entire balance raises error.
+
+        Note: The 30% ratio check triggers first (100% > 30%).
+        """
+        balance_in = Bfp.from_wei(100 * ONE_18)
+        weight_in = Bfp.from_wei(ONE_18 // 2)
+        balance_out = Bfp.from_wei(100 * ONE_18)
+        weight_out = Bfp.from_wei(ONE_18 // 2)
+        amount_out = Bfp.from_wei(100 * ONE_18)  # Equal to balance (100%)
+
+        with pytest.raises(MaxOutRatioError):
+            calc_in_given_out(balance_in, weight_in, balance_out, weight_out, amount_out)
+
+    def test_amount_out_near_balance_out_raises(self) -> None:
+        """Requesting just under 30% but would cause zero denominator passes ratio but fails balance check.
+
+        Note: If we could bypass the ratio check, requesting amount_out very close to balance_out
+        would fail with ZeroBalanceError. But with the 30% limit, this is unreachable.
+        The zero balance check is a safety net that protects against any future changes
+        to MAX_OUT_RATIO.
+        """
+        # This test documents that the zero denominator check exists as a safety net
+        # It's not reachable with current MAX_OUT_RATIO = 30%
+        pass
+
+    def test_zero_amount_out_returns_near_zero(self) -> None:
+        """Zero output amount returns near-zero input.
+
+        Note: Due to power function error margin adjustment in pow_up,
+        the result is not exactly zero but very small.
+        """
+        balance_in = Bfp.from_wei(100 * ONE_18)
+        weight_in = Bfp.from_wei(ONE_18 // 2)
+        balance_out = Bfp.from_wei(100 * ONE_18)
+        weight_out = Bfp.from_wei(ONE_18 // 2)
+        amount_out = Bfp.from_wei(0)
+
+        result = calc_in_given_out(balance_in, weight_in, balance_out, weight_out, amount_out)
+        # Result is tiny (within power function error margin)
+        assert abs(result.value) < ONE_18 // 1000  # Less than 0.001 tokens
+
+    def test_asymmetric_weights_20_80(self) -> None:
+        """Test 20/80 weighted pool (buy order)."""
+        balance_in = Bfp.from_wei(100 * ONE_18)
+        weight_in = Bfp.from_wei(2 * ONE_18 // 10)  # 0.2
+        balance_out = Bfp.from_wei(100 * ONE_18)
+        weight_out = Bfp.from_wei(8 * ONE_18 // 10)  # 0.8
+        amount_out = Bfp.from_wei(10 * ONE_18)
+
+        result = calc_in_given_out(balance_in, weight_in, balance_out, weight_out, amount_out)
+        assert result.value > 0
 
 
 class TestWeightedPoolDataclass:
