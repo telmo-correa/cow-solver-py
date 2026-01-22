@@ -1341,6 +1341,97 @@ def _get_stable_reserves(
     return reserve_in, index_in, reserve_out, index_out
 
 
+# -----------------------------------------------------------------------------
+# Partial Fill Binary Search Helpers
+# -----------------------------------------------------------------------------
+
+
+def _binary_search_max_sell_fill(
+    simulate_fn: Any,
+    sell_amount: int,
+    buy_amount: int,
+) -> int:
+    """Binary search for maximum sell order fill that satisfies limit price.
+
+    Args:
+        simulate_fn: Callable that takes amount_in and returns SwapResult or None
+        sell_amount: Order's sell amount (search range upper bound)
+        buy_amount: Order's minimum buy amount (for limit check)
+
+    Returns:
+        Maximum input amount that satisfies the limit, or 0 if impossible
+    """
+    if sell_amount <= 0 or buy_amount <= 0:
+        return 0
+
+    lo, hi = 0, sell_amount
+
+    while lo < hi:
+        mid = (lo + hi + 1) // 2
+        result = simulate_fn(mid)
+
+        if result is None:
+            hi = mid - 1
+            continue
+
+        # Check limit: output/input >= buy_amount/sell_amount
+        if result.amount_out * sell_amount >= buy_amount * mid:
+            lo = mid
+        else:
+            hi = mid - 1
+
+    # Verify the final result
+    if lo > 0:
+        result = simulate_fn(lo)
+        if result is None or result.amount_out * sell_amount < buy_amount * lo:
+            return 0
+
+    return lo
+
+
+def _binary_search_max_buy_fill(
+    simulate_fn: Any,
+    sell_amount: int,
+    buy_amount: int,
+) -> int:
+    """Binary search for maximum buy order fill that satisfies limit price.
+
+    Args:
+        simulate_fn: Callable that takes amount_out and returns SwapResult or None
+        sell_amount: Order's maximum sell amount (for limit check)
+        buy_amount: Order's desired buy amount (search range upper bound)
+
+    Returns:
+        Maximum output amount that satisfies the limit, or 0 if impossible
+    """
+    if sell_amount <= 0 or buy_amount <= 0:
+        return 0
+
+    lo, hi = 0, buy_amount
+
+    while lo < hi:
+        mid = (lo + hi + 1) // 2
+        result = simulate_fn(mid)
+
+        if result is None:
+            hi = mid - 1
+            continue
+
+        # Check limit: input/output <= sell_amount/buy_amount
+        if result.amount_in * buy_amount <= sell_amount * mid:
+            lo = mid
+        else:
+            hi = mid - 1
+
+    # Verify the final result
+    if lo > 0:
+        result = simulate_fn(lo)
+        if result is None or result.amount_in * buy_amount > sell_amount * lo:
+            return 0
+
+    return lo
+
+
 class BalancerWeightedAMM:
     """Balancer V2 weighted pool AMM for swap simulation.
 
@@ -1490,6 +1581,42 @@ class BalancerWeightedAMM:
             )
             return None
 
+    def max_fill_sell_order(
+        self,
+        pool: BalancerWeightedPool,
+        token_in: str,
+        token_out: str,
+        sell_amount: int,
+        buy_amount: int,
+    ) -> int:
+        """Calculate maximum input for a sell order that satisfies the limit price.
+
+        Uses binary search since weighted pool math doesn't yield a closed-form solution.
+        """
+        return _binary_search_max_sell_fill(
+            simulate_fn=lambda amt: self.simulate_swap(pool, token_in, token_out, amt),
+            sell_amount=sell_amount,
+            buy_amount=buy_amount,
+        )
+
+    def max_fill_buy_order(
+        self,
+        pool: BalancerWeightedPool,
+        token_in: str,
+        token_out: str,
+        sell_amount: int,
+        buy_amount: int,
+    ) -> int:
+        """Calculate maximum output for a buy order that satisfies the limit price.
+
+        Uses binary search since weighted pool math doesn't yield a closed-form solution.
+        """
+        return _binary_search_max_buy_fill(
+            simulate_fn=lambda amt: self.simulate_swap_exact_output(pool, token_in, token_out, amt),
+            sell_amount=sell_amount,
+            buy_amount=buy_amount,
+        )
+
 
 class BalancerStableAMM:
     """Balancer V2 stable pool AMM for swap simulation.
@@ -1627,3 +1754,39 @@ class BalancerStableAMM:
                 error=str(e),
             )
             return None
+
+    def max_fill_sell_order(
+        self,
+        pool: BalancerStablePool,
+        token_in: str,
+        token_out: str,
+        sell_amount: int,
+        buy_amount: int,
+    ) -> int:
+        """Calculate maximum input for a sell order that satisfies the limit price.
+
+        Uses binary search since stable pool math doesn't yield a closed-form solution.
+        """
+        return _binary_search_max_sell_fill(
+            simulate_fn=lambda amt: self.simulate_swap(pool, token_in, token_out, amt),
+            sell_amount=sell_amount,
+            buy_amount=buy_amount,
+        )
+
+    def max_fill_buy_order(
+        self,
+        pool: BalancerStablePool,
+        token_in: str,
+        token_out: str,
+        sell_amount: int,
+        buy_amount: int,
+    ) -> int:
+        """Calculate maximum output for a buy order that satisfies the limit price.
+
+        Uses binary search since stable pool math doesn't yield a closed-form solution.
+        """
+        return _binary_search_max_buy_fill(
+            simulate_fn=lambda amt: self.simulate_swap_exact_output(pool, token_in, token_out, amt),
+            sell_amount=sell_amount,
+            buy_amount=buy_amount,
+        )

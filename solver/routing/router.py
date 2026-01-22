@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any
 
 import structlog
 
@@ -41,7 +41,16 @@ from solver.models.solution import (
 from solver.models.types import normalize_address
 
 if TYPE_CHECKING:
+    from solver.amm.balancer import (
+        BalancerStableAMM,
+        BalancerStablePool,
+        BalancerWeightedAMM,
+        BalancerWeightedPool,
+    )
     from solver.amm.uniswap_v3 import UniswapV3AMM, UniswapV3Pool
+
+# Type alias for any pool type
+AnyPool = "UniswapV2Pool | UniswapV3Pool | BalancerWeightedPool | BalancerStablePool"
 
 logger = structlog.get_logger()
 
@@ -50,7 +59,7 @@ logger = structlog.get_logger()
 class HopResult:
     """Result of a single hop in a multi-hop route."""
 
-    pool: UniswapV2Pool | UniswapV3Pool
+    pool: UniswapV2Pool | UniswapV3Pool | BalancerWeightedPool | BalancerStablePool
     input_token: str
     output_token: str
     amount_in: int
@@ -64,12 +73,16 @@ class RoutingResult:
     order: Order
     amount_in: int
     amount_out: int
-    pool: UniswapV2Pool | UniswapV3Pool | None  # None when no pool found
+    pool: (
+        UniswapV2Pool | UniswapV3Pool | BalancerWeightedPool | BalancerStablePool | None
+    )  # None when no pool found
     success: bool
     error: str | None = None
     # Multi-hop routing fields
     path: list[str] | None = None  # Token path for multi-hop swaps
-    pools: list[UniswapV2Pool | UniswapV3Pool] | None = None  # Pools along the path
+    pools: (
+        list[UniswapV2Pool | UniswapV3Pool | BalancerWeightedPool | BalancerStablePool] | None
+    ) = None  # Pools along the path
     hops: list[HopResult] | None = None  # Detailed results for each hop
     gas_estimate: int = POOL_SWAP_GAS_COST  # Default single-hop gas (60k per swap)
 
@@ -83,13 +96,17 @@ class SingleOrderRouter:
     """Routes single orders through AMM pools.
 
     This router handles one order at a time, finding the best pool
-    for the token pair across both V2 and V3 liquidity.
+    for the token pair across V2, V3, and Balancer liquidity.
 
     Args:
         amm: AMM implementation for V2 swap simulation and encoding.
              Defaults to the UniswapV2 singleton.
         v3_amm: AMM implementation for V3 swap simulation and encoding.
                 If None, V3 pools are not used for routing.
+        weighted_amm: AMM implementation for Balancer weighted pools.
+                      If None, weighted pools are not used for routing.
+        stable_amm: AMM implementation for Balancer stable pools.
+                    If None, stable pools are not used for routing.
         pool_registry: Registry of available pools for routing.
                        If None, an empty registry is used.
         pool_finder: DEPRECATED - Use pool_registry instead.
@@ -100,6 +117,8 @@ class SingleOrderRouter:
         self,
         amm: UniswapV2 | None = None,
         v3_amm: UniswapV3AMM | None = None,
+        weighted_amm: BalancerWeightedAMM | None = None,
+        stable_amm: BalancerStableAMM | None = None,
         pool_registry: PoolRegistry | None = None,
         pool_finder: Callable[[str, str], UniswapV2Pool | None] | None = None,
     ) -> None:
@@ -108,12 +127,16 @@ class SingleOrderRouter:
         Args:
             amm: AMM implementation for V2. Defaults to uniswap_v2 singleton.
             v3_amm: AMM implementation for V3. If None, V3 is disabled.
+            weighted_amm: AMM implementation for Balancer weighted pools. If None, disabled.
+            stable_amm: AMM implementation for Balancer stable pools. If None, disabled.
             pool_registry: Pool registry for lookups. If None, uses empty registry.
             pool_finder: DEPRECATED - Legacy pool lookup function. If provided
                          without pool_registry, wraps it in a simple registry.
         """
         self.amm = amm if amm is not None else uniswap_v2
         self.v3_amm = v3_amm
+        self.weighted_amm = weighted_amm
+        self.stable_amm = stable_amm
         self._pool_finder: Callable[[str, str], UniswapV2Pool | None]
 
         # Handle pool_registry vs legacy pool_finder
@@ -225,15 +248,8 @@ class SingleOrderRouter:
                 all_pools = [legacy_pool]
 
         if all_pools:
-            # Filter to V2/V3 pools only (Balancer support coming in Slice 3.2.5)
-            from solver.amm.uniswap_v3 import UniswapV3Pool
-
-            v2_v3_pools: list[UniswapV2Pool | UniswapV3Pool] = [
-                p for p in all_pools if isinstance(p, (UniswapV2Pool, UniswapV3Pool))
-            ]
-
-            # Find the best pool based on quote
-            best_result = self._find_best_direct_route(order, v2_v3_pools, sell_amount, buy_amount)
+            # Find the best pool based on quote (V2, V3, and Balancer pools)
+            best_result = self._find_best_direct_route(order, all_pools, sell_amount, buy_amount)
             if best_result is not None:
                 return best_result
 
@@ -244,17 +260,20 @@ class SingleOrderRouter:
                 order, f"No route found for {order.sell_token}/{order.buy_token}"
             )
 
-        # Get pools for the path (multi-hop is V2-only for now)
-        try:
-            pools = self._registry.get_all_pools_on_path(path)
-        except ValueError as e:
-            return self._error_result(order, str(e))
+        # Select best pools for each hop based on quotes
+        selection_result = self._select_best_pools_for_path(
+            path, sell_amount, is_sell=order.is_sell_order
+        )
+        if selection_result is None:
+            return self._error_result(order, f"No valid pools found for multi-hop path {path}")
+        pools, _ = selection_result
 
         logger.info(
             "using_multihop_route",
             order_uid=order.uid,
             path=[p[-8:] for p in path],  # Log last 8 chars of addresses
             hops=len(path) - 1,
+            pool_types=[self._get_pool_type(p) for p in pools],
         )
 
         if order.is_sell_order:
@@ -265,7 +284,7 @@ class SingleOrderRouter:
     def _find_best_direct_route(
         self,
         order: Order,
-        pools: list[UniswapV2Pool | UniswapV3Pool],
+        pools: list[UniswapV2Pool | UniswapV3Pool | BalancerWeightedPool | BalancerStablePool],
         sell_amount: int,
         buy_amount: int,
     ) -> RoutingResult | None:
@@ -277,16 +296,23 @@ class SingleOrderRouter:
 
         Args:
             order: The order to route
-            pools: List of candidate pools (V2 and V3)
+            pools: List of candidate pools (V2, V3, Balancer weighted, Balancer stable)
             sell_amount: Order's sell amount
             buy_amount: Order's buy amount
 
         Returns:
             Best RoutingResult, or None if all pools failed
         """
+        from solver.amm.balancer import BalancerStablePool, BalancerWeightedPool
         from solver.amm.uniswap_v3 import UniswapV3Pool
 
-        candidates: list[tuple[UniswapV2Pool | UniswapV3Pool, int, int]] = []
+        candidates: list[
+            tuple[
+                UniswapV2Pool | UniswapV3Pool | BalancerWeightedPool | BalancerStablePool,
+                int,
+                int,
+            ]
+        ] = []
 
         for pool in pools:
             if isinstance(pool, UniswapV3Pool):
@@ -304,6 +330,43 @@ class SingleOrderRouter:
                     )
                     if result is not None:
                         candidates.append((pool, result.amount_in, result.amount_out))
+
+            elif isinstance(pool, BalancerWeightedPool):
+                # Balancer weighted pool - use weighted AMM
+                if self.weighted_amm is None:
+                    continue
+
+                if order.is_sell_order:
+                    result = self.weighted_amm.simulate_swap(
+                        pool, order.sell_token, order.buy_token, sell_amount
+                    )
+                    if result is not None:
+                        candidates.append((pool, result.amount_in, result.amount_out))
+                else:
+                    result = self.weighted_amm.simulate_swap_exact_output(
+                        pool, order.sell_token, order.buy_token, buy_amount
+                    )
+                    if result is not None:
+                        candidates.append((pool, result.amount_in, result.amount_out))
+
+            elif isinstance(pool, BalancerStablePool):
+                # Balancer stable pool - use stable AMM
+                if self.stable_amm is None:
+                    continue
+
+                if order.is_sell_order:
+                    result = self.stable_amm.simulate_swap(
+                        pool, order.sell_token, order.buy_token, sell_amount
+                    )
+                    if result is not None:
+                        candidates.append((pool, result.amount_in, result.amount_out))
+                else:
+                    result = self.stable_amm.simulate_swap_exact_output(
+                        pool, order.sell_token, order.buy_token, buy_amount
+                    )
+                    if result is not None:
+                        candidates.append((pool, result.amount_in, result.amount_out))
+
             else:
                 # V2 pool - use V2 AMM
                 if order.is_sell_order:
@@ -329,7 +392,7 @@ class SingleOrderRouter:
             logger.info(
                 "best_pool_selected",
                 order_uid=order.uid[:18] + "...",
-                pool_type="v3" if isinstance(best_pool, UniswapV3Pool) else "v2",
+                pool_type=self._get_pool_type(best_pool),
                 pool_address=best_pool.address[:10] + "...",
                 candidates=len(candidates),
                 amount_in=best_in,
@@ -339,11 +402,145 @@ class SingleOrderRouter:
         # Route through the best pool
         if isinstance(best_pool, UniswapV3Pool):
             return self._route_through_v3_pool(order, best_pool, sell_amount, buy_amount)
+        elif isinstance(best_pool, (BalancerWeightedPool, BalancerStablePool)):
+            return self._route_through_balancer_pool(order, best_pool, sell_amount, buy_amount)
         else:
             if order.is_sell_order:
                 return self._route_sell_order(order, best_pool, sell_amount, buy_amount)
             else:
                 return self._route_buy_order(order, best_pool, sell_amount, buy_amount)
+
+    def _get_pool_type(
+        self,
+        pool: (UniswapV2Pool | UniswapV3Pool | BalancerWeightedPool | BalancerStablePool),
+    ) -> str:
+        """Get the type string for a pool."""
+        from solver.amm.balancer import BalancerStablePool, BalancerWeightedPool
+        from solver.amm.uniswap_v3 import UniswapV3Pool
+
+        if isinstance(pool, UniswapV3Pool):
+            return "v3"
+        elif isinstance(pool, BalancerWeightedPool):
+            return "balancer_weighted"
+        elif isinstance(pool, BalancerStablePool):
+            return "balancer_stable"
+        return "v2"
+
+    def _select_best_pools_for_path(
+        self,
+        path: list[str],
+        amount_in: int,
+        is_sell: bool,
+    ) -> (
+        tuple[
+            list[UniswapV2Pool | UniswapV3Pool | BalancerWeightedPool | BalancerStablePool],
+            int,
+        ]
+        | None
+    ):
+        """Select the best pool for each hop in a multi-hop path based on quotes.
+
+        Uses a greedy approach: for each hop, selects the pool that gives the
+        best output given the current input amount. This is O(n*m) where n is
+        the number of hops and m is the average number of pools per hop.
+
+        Args:
+            path: List of token addresses forming the swap path
+            amount_in: Initial input amount for sell orders
+            is_sell: True for sell orders (forward simulation),
+                     False for buy orders (backward simulation)
+
+        Returns:
+            Tuple of (selected_pools, final_amount) if successful, None if any hop fails.
+            For sell orders, final_amount is the output. For buy orders, it's the input.
+        """
+        if not is_sell:
+            # For buy orders, we'd need to simulate backward which is more complex.
+            # Fall back to the registry's default selection for now.
+            try:
+                pools = self._registry.get_all_pools_on_path(path)
+                return pools, amount_in
+            except ValueError:
+                return None
+
+        selected_pools: list[
+            UniswapV2Pool | UniswapV3Pool | BalancerWeightedPool | BalancerStablePool
+        ] = []
+        current_amount = amount_in
+
+        for i in range(len(path) - 1):
+            token_in = path[i]
+            token_out = path[i + 1]
+            candidate_pools = self._registry.get_pools_for_pair(token_in, token_out)
+
+            if not candidate_pools:
+                return None
+
+            best_pool = None
+            best_output = 0
+
+            for pool in candidate_pools:
+                output = self._simulate_hop_output(pool, token_in, token_out, current_amount)
+                if output is not None and output > best_output:
+                    best_output = output
+                    best_pool = pool
+
+            if best_pool is None or best_output == 0:
+                return None
+
+            selected_pools.append(best_pool)
+            current_amount = best_output
+
+        return selected_pools, current_amount
+
+    def _simulate_hop_output(
+        self,
+        pool: UniswapV2Pool | UniswapV3Pool | BalancerWeightedPool | BalancerStablePool,
+        token_in: str,
+        token_out: str,
+        amount_in: int,
+    ) -> int | None:
+        """Simulate a single hop and return the output amount.
+
+        Args:
+            pool: The pool to simulate through
+            token_in: Input token address
+            token_out: Output token address
+            amount_in: Input amount
+
+        Returns:
+            Output amount, or None if simulation fails
+        """
+        from solver.amm.balancer import BalancerStablePool, BalancerWeightedPool
+        from solver.amm.uniswap_v3 import UniswapV3Pool
+
+        if isinstance(pool, UniswapV3Pool):
+            if self.v3_amm is None:
+                return None
+            result = self.v3_amm.simulate_swap(pool, token_in, amount_in)
+            return result.amount_out if result else None
+
+        elif isinstance(pool, BalancerWeightedPool):
+            if self.weighted_amm is None:
+                return None
+            result = self.weighted_amm.simulate_swap(pool, token_in, token_out, amount_in)
+            return result.amount_out if result else None
+
+        elif isinstance(pool, BalancerStablePool):
+            if self.stable_amm is None:
+                return None
+            result = self.stable_amm.simulate_swap(pool, token_in, token_out, amount_in)
+            return result.amount_out if result else None
+
+        else:
+            # V2 pool
+            try:
+                reserve_in, reserve_out = pool.get_reserves(token_in)
+                return self.amm.get_amount_out(
+                    amount_in, reserve_in, reserve_out, pool.fee_multiplier
+                )
+            except (ValueError, ZeroDivisionError):
+                return None
 
     def _route_through_v3_pool(
         self,
@@ -364,12 +561,12 @@ class SingleOrderRouter:
             RoutingResult with the routing outcome
         """
         if self.v3_amm is None:
-            return self._error_result(order, "V3 AMM not configured")
+            return self._error_result(order, "V3: AMM not configured")
 
         if order.is_sell_order:
             result = self.v3_amm.simulate_swap(pool, order.sell_token, sell_amount)
             if result is None:
-                return self._error_result(order, "V3 quote failed")
+                return self._error_result(order, "V3: quote failed")
 
             # Check if output meets minimum
             if result.amount_out < buy_amount:
@@ -404,7 +601,7 @@ class SingleOrderRouter:
             # Buy order - exact output
             result = self.v3_amm.simulate_swap_exact_output(pool, order.sell_token, buy_amount)
             if result is None:
-                return self._error_result(order, "V3 quote failed")
+                return self._error_result(order, "V3: quote failed")
 
             # Check if required input exceeds maximum
             if result.amount_in > sell_amount:
@@ -435,6 +632,319 @@ class SingleOrderRouter:
                 success=True,
                 gas_estimate=pool.gas_estimate,
             )
+
+    def _route_through_balancer_pool(
+        self,
+        order: Order,
+        pool: BalancerWeightedPool | BalancerStablePool,
+        sell_amount: int,
+        buy_amount: int,
+    ) -> RoutingResult:
+        """Route an order through a Balancer pool (weighted or stable).
+
+        Args:
+            order: The order to route
+            pool: The Balancer pool to use (weighted or stable)
+            sell_amount: Order's sell amount
+            buy_amount: Order's buy amount (minimum for sell orders, exact for buy)
+
+        Returns:
+            RoutingResult with the routing outcome
+        """
+        from solver.amm.balancer import BalancerWeightedPool
+
+        # Dispatch to type-specific handler
+        if isinstance(pool, BalancerWeightedPool):
+            return self._route_through_weighted_pool(order, pool, sell_amount, buy_amount)
+        else:
+            return self._route_through_stable_pool(order, pool, sell_amount, buy_amount)
+
+    def _route_through_weighted_pool(
+        self,
+        order: Order,
+        pool: BalancerWeightedPool,
+        sell_amount: int,
+        buy_amount: int,
+    ) -> RoutingResult:
+        """Route an order through a Balancer weighted pool."""
+        if self.weighted_amm is None:
+            return self._error_result(order, "Balancer weighted: AMM not configured")
+
+        if order.is_sell_order:
+            result = self.weighted_amm.simulate_swap(
+                pool, order.sell_token, order.buy_token, sell_amount
+            )
+            if result is None:
+                if order.partially_fillable:
+                    return self._try_partial_balancer_fill(
+                        order, pool, self.weighted_amm, "weighted", sell_amount, buy_amount
+                    )
+                return self._error_result(order, "Balancer weighted: quote failed")
+
+            if result.amount_out < buy_amount:
+                if order.partially_fillable:
+                    return self._try_partial_balancer_fill(
+                        order, pool, self.weighted_amm, "weighted", sell_amount, buy_amount
+                    )
+                return RoutingResult(
+                    order=order,
+                    amount_in=sell_amount,
+                    amount_out=result.amount_out,
+                    pool=pool,
+                    success=False,
+                    error=f"Output {result.amount_out} below minimum {buy_amount}",
+                )
+
+            return self._build_balancer_result(order, pool, sell_amount, result.amount_out)
+        else:
+            result = self.weighted_amm.simulate_swap_exact_output(
+                pool, order.sell_token, order.buy_token, buy_amount
+            )
+            if result is None:
+                if order.partially_fillable:
+                    return self._try_partial_balancer_fill(
+                        order, pool, self.weighted_amm, "weighted", sell_amount, buy_amount
+                    )
+                return self._error_result(order, "Balancer weighted: quote failed")
+
+            if result.amount_in > sell_amount:
+                if order.partially_fillable:
+                    return self._try_partial_balancer_fill(
+                        order, pool, self.weighted_amm, "weighted", sell_amount, buy_amount
+                    )
+                return RoutingResult(
+                    order=order,
+                    amount_in=result.amount_in,
+                    amount_out=buy_amount,
+                    pool=pool,
+                    success=False,
+                    error=f"Required input {result.amount_in} exceeds maximum {sell_amount}",
+                )
+
+            return self._build_balancer_result(order, pool, result.amount_in, buy_amount)
+
+    def _route_through_stable_pool(
+        self,
+        order: Order,
+        pool: BalancerStablePool,
+        sell_amount: int,
+        buy_amount: int,
+    ) -> RoutingResult:
+        """Route an order through a Balancer stable pool."""
+        if self.stable_amm is None:
+            return self._error_result(order, "Balancer stable: AMM not configured")
+
+        if order.is_sell_order:
+            result = self.stable_amm.simulate_swap(
+                pool, order.sell_token, order.buy_token, sell_amount
+            )
+            if result is None:
+                if order.partially_fillable:
+                    return self._try_partial_balancer_fill(
+                        order, pool, self.stable_amm, "stable", sell_amount, buy_amount
+                    )
+                return self._error_result(order, "Balancer stable: quote failed")
+
+            if result.amount_out < buy_amount:
+                if order.partially_fillable:
+                    return self._try_partial_balancer_fill(
+                        order, pool, self.stable_amm, "stable", sell_amount, buy_amount
+                    )
+                return RoutingResult(
+                    order=order,
+                    amount_in=sell_amount,
+                    amount_out=result.amount_out,
+                    pool=pool,
+                    success=False,
+                    error=f"Output {result.amount_out} below minimum {buy_amount}",
+                )
+
+            return self._build_balancer_result(order, pool, sell_amount, result.amount_out)
+        else:
+            result = self.stable_amm.simulate_swap_exact_output(
+                pool, order.sell_token, order.buy_token, buy_amount
+            )
+            if result is None:
+                if order.partially_fillable:
+                    return self._try_partial_balancer_fill(
+                        order, pool, self.stable_amm, "stable", sell_amount, buy_amount
+                    )
+                return self._error_result(order, "Balancer stable: quote failed")
+
+            if result.amount_in > sell_amount:
+                if order.partially_fillable:
+                    return self._try_partial_balancer_fill(
+                        order, pool, self.stable_amm, "stable", sell_amount, buy_amount
+                    )
+                return RoutingResult(
+                    order=order,
+                    amount_in=result.amount_in,
+                    amount_out=buy_amount,
+                    pool=pool,
+                    success=False,
+                    error=f"Required input {result.amount_in} exceeds maximum {sell_amount}",
+                )
+
+            return self._build_balancer_result(order, pool, result.amount_in, buy_amount)
+
+    def _build_balancer_result(
+        self,
+        order: Order,
+        pool: BalancerWeightedPool | BalancerStablePool,
+        amount_in: int,
+        amount_out: int,
+    ) -> RoutingResult:
+        """Build a successful routing result for a Balancer pool."""
+        hop = HopResult(
+            pool=pool,
+            input_token=normalize_address(order.sell_token),
+            output_token=normalize_address(order.buy_token),
+            amount_in=amount_in,
+            amount_out=amount_out,
+        )
+
+        return RoutingResult(
+            order=order,
+            amount_in=amount_in,
+            amount_out=amount_out,
+            pool=pool,
+            pools=[pool],
+            hops=[hop],
+            success=True,
+            gas_estimate=pool.gas_estimate,
+        )
+
+    def _try_partial_balancer_fill(
+        self,
+        order: Order,
+        pool: BalancerWeightedPool | BalancerStablePool,
+        amm: Any,  # BalancerWeightedAMM or BalancerStableAMM - caller ensures match
+        pool_type: str,
+        sell_amount: int,
+        buy_amount: int,
+    ) -> RoutingResult:
+        """Try to find maximum partial fill for a Balancer pool order.
+
+        This is a unified method for both weighted and stable pools,
+        handling both sell and buy orders.
+
+        Args:
+            order: The order to partially fill
+            pool: The Balancer pool (weighted or stable)
+            amm: The AMM instance (BalancerWeightedAMM or BalancerStableAMM).
+                 Caller must ensure pool type matches AMM type.
+            pool_type: "weighted" or "stable" (for logging)
+            sell_amount: Order's sell amount
+            buy_amount: Order's buy amount
+
+        Returns:
+            RoutingResult with the partial fill outcome
+        """
+        is_sell = order.is_sell_order
+        order_uid_short = order.uid[:18] + "..."
+
+        # Calculate maximum fill amount
+        if is_sell:
+            max_fill = amm.max_fill_sell_order(
+                pool=pool,
+                token_in=order.sell_token,
+                token_out=order.buy_token,
+                sell_amount=sell_amount,
+                buy_amount=buy_amount,
+            )
+        else:
+            max_fill = amm.max_fill_buy_order(
+                pool=pool,
+                token_in=order.sell_token,
+                token_out=order.buy_token,
+                sell_amount=sell_amount,
+                buy_amount=buy_amount,
+            )
+
+        if max_fill <= 0:
+            logger.debug(
+                f"partial_{pool_type}_{'sell' if is_sell else 'buy'}_order_no_valid_fill",
+                order_uid=order_uid_short,
+                reason="pool_rate_worse_than_limit",
+            )
+            return RoutingResult(
+                order=order,
+                amount_in=0,
+                amount_out=0,
+                pool=pool,
+                success=False,
+                error="Pool rate worse than limit price, no partial fill possible",
+            )
+
+        # Simulate the swap at the max fill amount
+        if is_sell:
+            result = amm.simulate_swap(
+                pool=pool,
+                token_in=order.sell_token,
+                token_out=order.buy_token,
+                amount_in=max_fill,
+            )
+            fail_amount_in = max_fill
+            fail_amount_out = 0
+        else:
+            result = amm.simulate_swap_exact_output(
+                pool=pool,
+                token_in=order.sell_token,
+                token_out=order.buy_token,
+                amount_out=max_fill,
+            )
+            fail_amount_in = 0
+            fail_amount_out = max_fill
+
+        if result is None:
+            return RoutingResult(
+                order=order,
+                amount_in=fail_amount_in,
+                amount_out=fail_amount_out,
+                pool=pool,
+                success=False,
+                error=f"Balancer {pool_type}: swap simulation failed for partial fill",
+            )
+
+        # Verify the limit price constraint
+        if is_sell:
+            # Sell: output/input >= buy_amount/sell_amount
+            limit_satisfied = result.amount_out * sell_amount >= buy_amount * max_fill
+            final_in, final_out = max_fill, result.amount_out
+            log_key = "partial_sell"
+            fill_ratio = f"{max_fill * 100 // sell_amount}%"
+        else:
+            # Buy: input/output <= sell_amount/buy_amount
+            limit_satisfied = result.amount_in * buy_amount <= sell_amount * max_fill
+            final_in, final_out = result.amount_in, max_fill
+            log_key = "partial_buy"
+            fill_ratio = f"{max_fill * 100 // buy_amount}%"
+
+        if not limit_satisfied:
+            logger.warning(
+                "partial_fill_limit_check_failed",
+                order_uid=order_uid_short,
+                max_fill=max_fill,
+                amount_in=final_in,
+                amount_out=final_out,
+            )
+            return RoutingResult(
+                order=order,
+                amount_in=final_in,
+                amount_out=final_out,
+                pool=pool,
+                success=False,
+                error="Partial fill calculation error",
+            )
+
+        logger.info(
+            f"partial_fill_{pool_type}_{'sell' if is_sell else 'buy'}_order",
+            order_uid=order_uid_short,
+            **{log_key: max_fill},
+            fill_ratio=fill_ratio,
+        )
+
+        return self._build_balancer_result(order, pool, final_in, final_out)
 
     def _route_sell_order(
         self,
@@ -717,7 +1227,7 @@ class SingleOrderRouter:
     def _route_sell_order_multihop(
         self,
         order: Order,
-        pools: list[UniswapV2Pool],
+        pools: list[UniswapV2Pool | UniswapV3Pool | BalancerWeightedPool | BalancerStablePool],
         path: list[str],
         sell_amount: int,
         min_buy_amount: int,
@@ -727,18 +1237,57 @@ class SingleOrderRouter:
         For sell orders:
         - sell_amount is the exact amount to sell
         - buy_amount is the minimum acceptable output
+
+        Supports V2, V3, and Balancer pools in the multi-hop path.
         """
+        from solver.amm.balancer import BalancerStablePool, BalancerWeightedPool
+        from solver.amm.uniswap_v3 import UniswapV3Pool
+
         # Compute intermediate amounts for each hop
         hops: list[HopResult] = []
         current_amount = sell_amount
+        total_gas = 0
 
         for i, pool in enumerate(pools):
             token_in = normalize_address(path[i])
             token_out = normalize_address(path[i + 1])
-            reserve_in, reserve_out = pool.get_reserves(path[i])
-            amount_out = self.amm.get_amount_out(
-                current_amount, reserve_in, reserve_out, pool.fee_multiplier
-            )
+
+            # Dispatch to correct AMM based on pool type
+            if isinstance(pool, UniswapV3Pool):
+                if self.v3_amm is None:
+                    return self._error_result(order, "V3: AMM not configured for multi-hop")
+                result = self.v3_amm.simulate_swap(pool, path[i], current_amount)
+                if result is None:
+                    return self._error_result(order, f"V3: swap failed at hop {i}")
+                amount_out = result.amount_out
+                total_gas += pool.gas_estimate
+            elif isinstance(pool, BalancerWeightedPool):
+                if self.weighted_amm is None:
+                    return self._error_result(
+                        order, "Balancer weighted: AMM not configured for multi-hop"
+                    )
+                result = self.weighted_amm.simulate_swap(pool, path[i], path[i + 1], current_amount)
+                if result is None:
+                    return self._error_result(order, f"Balancer weighted: swap failed at hop {i}")
+                amount_out = result.amount_out
+                total_gas += pool.gas_estimate
+            elif isinstance(pool, BalancerStablePool):
+                if self.stable_amm is None:
+                    return self._error_result(
+                        order, "Balancer stable: AMM not configured for multi-hop"
+                    )
+                result = self.stable_amm.simulate_swap(pool, path[i], path[i + 1], current_amount)
+                if result is None:
+                    return self._error_result(order, f"Balancer stable: swap failed at hop {i}")
+                amount_out = result.amount_out
+                total_gas += pool.gas_estimate
+            else:
+                # V2 pool
+                reserve_in, reserve_out = pool.get_reserves(path[i])
+                amount_out = self.amm.get_amount_out(
+                    current_amount, reserve_in, reserve_out, pool.fee_multiplier
+                )
+                total_gas += POOL_SWAP_GAS_COST
 
             hops.append(
                 HopResult(
@@ -752,25 +1301,20 @@ class SingleOrderRouter:
             current_amount = amount_out
 
         final_amount_out = current_amount
-        gas_estimate = POOL_SWAP_GAS_COST * len(pools)
 
         # Check if output meets minimum
-        # Cast pools for type compatibility (multihop is V2-only)
-        from solver.amm.uniswap_v3 import UniswapV3Pool
-
-        pools_union = cast(list[UniswapV2Pool | UniswapV3Pool], pools)
         if final_amount_out < min_buy_amount:
             return RoutingResult(
                 order=order,
                 amount_in=sell_amount,
                 amount_out=final_amount_out,
                 pool=pools[0],  # First pool for compatibility
-                pools=pools_union,
+                pools=pools,
                 path=path,
                 hops=hops,
                 success=False,
                 error=f"Output {final_amount_out} below minimum {min_buy_amount}",
-                gas_estimate=gas_estimate,
+                gas_estimate=total_gas,
             )
 
         return RoutingResult(
@@ -778,17 +1322,17 @@ class SingleOrderRouter:
             amount_in=sell_amount,
             amount_out=final_amount_out,
             pool=pools[0],
-            pools=pools_union,
+            pools=pools,
             path=path,
             hops=hops,
             success=True,
-            gas_estimate=gas_estimate,
+            gas_estimate=total_gas,
         )
 
     def _route_buy_order_multihop(
         self,
         order: Order,
-        pools: list[UniswapV2Pool],
+        pools: list[UniswapV2Pool | UniswapV3Pool | BalancerWeightedPool | BalancerStablePool],
         path: list[str],
         max_sell_amount: int,
         buy_amount: int,
@@ -798,27 +1342,68 @@ class SingleOrderRouter:
         For buy orders:
         - buy_amount is the exact amount to receive
         - sell_amount is the maximum willing to pay
+
+        Supports V2, V3, and Balancer pools in the multi-hop path.
         """
+        from solver.amm.balancer import BalancerStablePool, BalancerWeightedPool
+        from solver.amm.uniswap_v3 import UniswapV3Pool
+
         # Work backwards to compute required inputs for each hop
-        # First, calculate amounts working backwards
         amounts: list[int] = [0] * (len(pools) + 1)
         amounts[-1] = buy_amount  # Final output is the desired buy amount
+        total_gas = 0
 
         for i in range(len(pools) - 1, -1, -1):
             pool = pools[i]
             token_in = path[i]
-            reserve_in, reserve_out = pool.get_reserves(token_in)
-            amounts[i] = self.amm.get_amount_in(
-                amounts[i + 1], reserve_in, reserve_out, pool.fee_multiplier
-            )
+            token_out = path[i + 1]
+
+            # Dispatch to correct AMM based on pool type
+            if isinstance(pool, UniswapV3Pool):
+                if self.v3_amm is None:
+                    return self._error_result(order, "V3: AMM not configured for multi-hop")
+                result = self.v3_amm.simulate_swap_exact_output(pool, token_in, amounts[i + 1])
+                if result is None:
+                    return self._error_result(order, f"V3: exact output failed at hop {i}")
+                amounts[i] = result.amount_in
+                total_gas += pool.gas_estimate
+            elif isinstance(pool, BalancerWeightedPool):
+                if self.weighted_amm is None:
+                    return self._error_result(
+                        order, "Balancer weighted: AMM not configured for multi-hop"
+                    )
+                result = self.weighted_amm.simulate_swap_exact_output(
+                    pool, token_in, token_out, amounts[i + 1]
+                )
+                if result is None:
+                    return self._error_result(
+                        order, f"Balancer weighted: exact output failed at hop {i}"
+                    )
+                amounts[i] = result.amount_in
+                total_gas += pool.gas_estimate
+            elif isinstance(pool, BalancerStablePool):
+                if self.stable_amm is None:
+                    return self._error_result(
+                        order, "Balancer stable: AMM not configured for multi-hop"
+                    )
+                result = self.stable_amm.simulate_swap_exact_output(
+                    pool, token_in, token_out, amounts[i + 1]
+                )
+                if result is None:
+                    return self._error_result(
+                        order, f"Balancer stable: exact output failed at hop {i}"
+                    )
+                amounts[i] = result.amount_in
+                total_gas += pool.gas_estimate
+            else:
+                # V2 pool
+                reserve_in, reserve_out = pool.get_reserves(token_in)
+                amounts[i] = self.amm.get_amount_in(
+                    amounts[i + 1], reserve_in, reserve_out, pool.fee_multiplier
+                )
+                total_gas += POOL_SWAP_GAS_COST
 
         required_input = amounts[0]
-        gas_estimate = POOL_SWAP_GAS_COST * len(pools)
-
-        # Cast pools for type compatibility (multihop is V2-only)
-        from solver.amm.uniswap_v3 import UniswapV3Pool
-
-        pools_union = cast(list[UniswapV2Pool | UniswapV3Pool], pools)
 
         # Check if required input exceeds maximum
         if required_input > max_sell_amount:
@@ -827,11 +1412,11 @@ class SingleOrderRouter:
                 amount_in=required_input,
                 amount_out=buy_amount,
                 pool=pools[0],
-                pools=pools_union,
+                pools=pools,
                 path=path,
                 success=False,
                 error=f"Required input {required_input} exceeds maximum {max_sell_amount}",
-                gas_estimate=gas_estimate,
+                gas_estimate=total_gas,
             )
 
         # Now build hop results with actual amounts
@@ -854,11 +1439,11 @@ class SingleOrderRouter:
             amount_in=required_input,
             amount_out=buy_amount,
             pool=pools[0],
-            pools=pools_union,
+            pools=pools,
             path=path,
             hops=hops,
             success=True,
-            gas_estimate=gas_estimate,
+            gas_estimate=total_gas,
         )
 
     def build_solution(

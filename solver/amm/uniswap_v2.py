@@ -785,8 +785,13 @@ class PoolRegistry:
 
         return None
 
-    def get_all_pools_on_path(self, path: list[str]) -> list[UniswapV2Pool]:
+    def get_all_pools_on_path(
+        self, path: list[str]
+    ) -> list[UniswapV2Pool | UniswapV3Pool | BalancerWeightedPool | BalancerStablePool]:
         """Get all pools needed to execute a multi-hop swap path.
+
+        For each hop in the path, selects a pool from available options.
+        Priority: V2 > V3 > Balancer Weighted > Balancer Stable
 
         Args:
             path: List of token addresses forming the swap path
@@ -797,12 +802,25 @@ class PoolRegistry:
         Raises:
             ValueError: If any pool in the path is not found
         """
-        pools = []
+        pools: list[UniswapV2Pool | UniswapV3Pool | BalancerWeightedPool | BalancerStablePool] = []
         for i in range(len(path) - 1):
-            pool = self.get_pool(path[i], path[i + 1])
-            if pool is None:
+            all_pools = self.get_pools_for_pair(path[i], path[i + 1])
+            if not all_pools:
                 raise ValueError(f"No pool found for {path[i]} -> {path[i + 1]}")
-            pools.append(pool)
+
+            # Select best pool - prioritize V2 for simplicity in multi-hop
+            selected_pool: (
+                UniswapV2Pool | UniswapV3Pool | BalancerWeightedPool | BalancerStablePool | None
+            ) = None
+            for pool in all_pools:
+                if isinstance(pool, UniswapV2Pool):
+                    selected_pool = pool
+                    break
+            if selected_pool is None:
+                # Fall back to first available pool
+                selected_pool = all_pools[0]
+
+            pools.append(selected_pool)
         return pools
 
     @property

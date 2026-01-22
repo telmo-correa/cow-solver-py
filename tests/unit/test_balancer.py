@@ -2940,3 +2940,305 @@ class TestBalancerMultiTokenPools:
         assert result_ac is not None
         # Results should differ because B has weight 0.34 while C has 0.33
         assert result_ab.amount_out != result_ac.amount_out
+
+
+class TestWeightedMaxFill:
+    """Tests for max_fill_sell_order and max_fill_buy_order on weighted pools."""
+
+    TOKEN_A = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    TOKEN_B = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+
+    def _make_weighted_pool(self) -> BalancerWeightedPool:
+        """Create a 50/50 weighted pool for testing."""
+        return BalancerWeightedPool(
+            id="test-weighted-pool",
+            address="0x1111111111111111111111111111111111111111",
+            pool_id="0x" + "11" * 32,
+            reserves=(
+                WeightedTokenReserve(
+                    token=self.TOKEN_A,
+                    balance=100_000_000_000_000_000_000_000,  # 100K tokens
+                    weight=Decimal("0.5"),
+                    scaling_factor=1,
+                ),
+                WeightedTokenReserve(
+                    token=self.TOKEN_B,
+                    balance=100_000_000_000_000_000_000_000,  # 100K tokens
+                    weight=Decimal("0.5"),
+                    scaling_factor=1,
+                ),
+            ),
+            fee=Decimal("0.003"),
+            version="v3Plus",
+            gas_estimate=120_000,
+        )
+
+    def test_max_fill_sell_order_full_fill_possible(self) -> None:
+        """When full fill satisfies limit, returns full amount."""
+        from solver.amm.balancer import BalancerWeightedAMM
+
+        amm = BalancerWeightedAMM()
+        pool = self._make_weighted_pool()
+
+        # Selling 1000 tokens with a very generous limit price
+        sell_amount = 1000_000_000_000_000_000_000  # 1000 tokens
+        buy_amount = 100_000_000_000_000_000_000  # 100 tokens min (10:1 rate)
+
+        max_fill = amm.max_fill_sell_order(
+            pool, self.TOKEN_A, self.TOKEN_B, sell_amount, buy_amount
+        )
+
+        # Should be able to fill entire sell amount
+        assert max_fill == sell_amount
+
+    def test_max_fill_sell_order_partial_fill(self) -> None:
+        """When full fill doesn't satisfy limit, returns partial fill."""
+        from solver.amm.balancer import BalancerWeightedAMM
+
+        amm = BalancerWeightedAMM()
+        pool = self._make_weighted_pool()
+
+        # Selling 10000 tokens requiring 1:1 rate (impossible to fill fully due to slippage)
+        sell_amount = 10_000_000_000_000_000_000_000  # 10K tokens
+        buy_amount = 10_000_000_000_000_000_000_000  # 10K tokens min (1:1 rate)
+
+        max_fill = amm.max_fill_sell_order(
+            pool, self.TOKEN_A, self.TOKEN_B, sell_amount, buy_amount
+        )
+
+        # Should return some partial amount less than sell_amount
+        assert max_fill < sell_amount
+        assert max_fill >= 0
+
+    def test_max_fill_sell_order_impossible(self) -> None:
+        """When limit price is impossible, returns 0."""
+        from solver.amm.balancer import BalancerWeightedAMM
+
+        amm = BalancerWeightedAMM()
+        pool = self._make_weighted_pool()
+
+        # Asking for way more output than possible (100:1 rate in a 50/50 pool)
+        sell_amount = 1000_000_000_000_000_000_000  # 1000 tokens
+        buy_amount = 100_000_000_000_000_000_000_000  # 100K tokens min (impossible)
+
+        max_fill = amm.max_fill_sell_order(
+            pool, self.TOKEN_A, self.TOKEN_B, sell_amount, buy_amount
+        )
+
+        assert max_fill == 0
+
+    def test_max_fill_sell_order_verifies_limit(self) -> None:
+        """Max fill result actually satisfies the limit price."""
+        from solver.amm.balancer import BalancerWeightedAMM
+
+        amm = BalancerWeightedAMM()
+        pool = self._make_weighted_pool()
+
+        sell_amount = 5_000_000_000_000_000_000_000  # 5K tokens
+        buy_amount = 4_000_000_000_000_000_000_000  # 4K tokens min (reasonable limit)
+
+        max_fill = amm.max_fill_sell_order(
+            pool, self.TOKEN_A, self.TOKEN_B, sell_amount, buy_amount
+        )
+
+        if max_fill > 0:
+            result = amm.simulate_swap(pool, self.TOKEN_A, self.TOKEN_B, max_fill)
+            assert result is not None
+            # Verify: output/input >= buy_amount/sell_amount
+            assert result.amount_out * sell_amount >= buy_amount * max_fill
+
+    def test_max_fill_buy_order_full_fill_possible(self) -> None:
+        """When full fill satisfies limit, returns full buy amount."""
+        from solver.amm.balancer import BalancerWeightedAMM
+
+        amm = BalancerWeightedAMM()
+        pool = self._make_weighted_pool()
+
+        # Buying 1000 tokens with generous sell budget
+        sell_amount = 10_000_000_000_000_000_000_000  # 10K tokens max
+        buy_amount = 1000_000_000_000_000_000_000  # 1000 tokens desired
+
+        max_fill = amm.max_fill_buy_order(pool, self.TOKEN_A, self.TOKEN_B, sell_amount, buy_amount)
+
+        # Should be able to buy the full amount
+        assert max_fill == buy_amount
+
+    def test_max_fill_buy_order_partial_fill(self) -> None:
+        """When full fill doesn't satisfy limit, returns partial fill."""
+        from solver.amm.balancer import BalancerWeightedAMM
+
+        amm = BalancerWeightedAMM()
+        pool = self._make_weighted_pool()
+
+        # Very tight budget that won't allow full buy
+        sell_amount = 500_000_000_000_000_000_000  # 500 tokens max
+        buy_amount = 1000_000_000_000_000_000_000  # 1000 tokens desired (impossible at 1:1)
+
+        max_fill = amm.max_fill_buy_order(pool, self.TOKEN_A, self.TOKEN_B, sell_amount, buy_amount)
+
+        # Should return some partial amount less than buy_amount
+        assert max_fill < buy_amount
+        assert max_fill >= 0
+
+    def test_max_fill_buy_order_verifies_limit(self) -> None:
+        """Max fill result actually satisfies the limit price."""
+        from solver.amm.balancer import BalancerWeightedAMM
+
+        amm = BalancerWeightedAMM()
+        pool = self._make_weighted_pool()
+
+        sell_amount = 2_000_000_000_000_000_000_000  # 2K tokens max
+        buy_amount = 1500_000_000_000_000_000_000  # 1.5K tokens desired
+
+        max_fill = amm.max_fill_buy_order(pool, self.TOKEN_A, self.TOKEN_B, sell_amount, buy_amount)
+
+        if max_fill > 0:
+            result = amm.simulate_swap_exact_output(pool, self.TOKEN_A, self.TOKEN_B, max_fill)
+            assert result is not None
+            # Verify: input/output <= sell_amount/buy_amount
+            assert result.amount_in * buy_amount <= sell_amount * max_fill
+
+    def test_max_fill_zero_amounts(self) -> None:
+        """Zero amounts return 0."""
+        from solver.amm.balancer import BalancerWeightedAMM
+
+        amm = BalancerWeightedAMM()
+        pool = self._make_weighted_pool()
+
+        assert amm.max_fill_sell_order(pool, self.TOKEN_A, self.TOKEN_B, 0, 100) == 0
+        assert amm.max_fill_sell_order(pool, self.TOKEN_A, self.TOKEN_B, 100, 0) == 0
+        assert amm.max_fill_buy_order(pool, self.TOKEN_A, self.TOKEN_B, 0, 100) == 0
+        assert amm.max_fill_buy_order(pool, self.TOKEN_A, self.TOKEN_B, 100, 0) == 0
+
+
+class TestStableMaxFill:
+    """Tests for max_fill_sell_order and max_fill_buy_order on stable pools."""
+
+    TOKEN_A = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    TOKEN_B = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+
+    def _make_stable_pool(self) -> BalancerStablePool:
+        """Create a stable pool for testing."""
+        return BalancerStablePool(
+            id="test-stable-pool",
+            address="0x2222222222222222222222222222222222222222",
+            pool_id="0x" + "22" * 32,
+            reserves=(
+                StableTokenReserve(
+                    token=self.TOKEN_A,
+                    balance=100_000_000_000_000_000_000_000_000,  # 100M tokens
+                    scaling_factor=1,
+                ),
+                StableTokenReserve(
+                    token=self.TOKEN_B,
+                    balance=100_000_000_000_000_000_000_000_000,  # 100M tokens
+                    scaling_factor=1,
+                ),
+            ),
+            fee=Decimal("0.0001"),  # 0.01%
+            amplification_parameter=Decimal("5000"),
+            gas_estimate=100_000,
+        )
+
+    def test_max_fill_sell_order_full_fill_possible(self) -> None:
+        """When full fill satisfies limit, returns full amount."""
+        from solver.amm.balancer import BalancerStableAMM
+
+        amm = BalancerStableAMM()
+        pool = self._make_stable_pool()
+
+        # Stable pools should be near 1:1, so generous 0.9:1 limit should work
+        sell_amount = 1000_000_000_000_000_000_000  # 1000 tokens
+        buy_amount = 900_000_000_000_000_000_000  # 900 tokens min (0.9:1)
+
+        max_fill = amm.max_fill_sell_order(
+            pool, self.TOKEN_A, self.TOKEN_B, sell_amount, buy_amount
+        )
+
+        # Should be able to fill entire sell amount
+        assert max_fill == sell_amount
+
+    def test_max_fill_sell_order_partial_fill(self) -> None:
+        """When full fill doesn't satisfy limit, returns partial fill."""
+        from solver.amm.balancer import BalancerStableAMM
+
+        amm = BalancerStableAMM()
+        pool = self._make_stable_pool()
+
+        # Require strict 1:1 rate with a large amount (slippage will prevent full fill)
+        sell_amount = 10_000_000_000_000_000_000_000_000  # 10M tokens
+        buy_amount = 10_000_000_000_000_000_000_000_000  # 10M tokens min
+
+        max_fill = amm.max_fill_sell_order(
+            pool, self.TOKEN_A, self.TOKEN_B, sell_amount, buy_amount
+        )
+
+        # Might get partial fill or 0 if limit too strict
+        assert max_fill <= sell_amount
+        assert max_fill >= 0
+
+    def test_max_fill_sell_order_verifies_limit(self) -> None:
+        """Max fill result actually satisfies the limit price."""
+        from solver.amm.balancer import BalancerStableAMM
+
+        amm = BalancerStableAMM()
+        pool = self._make_stable_pool()
+
+        sell_amount = 5_000_000_000_000_000_000_000  # 5K tokens
+        buy_amount = 4_900_000_000_000_000_000_000  # 4.9K tokens min (0.98:1)
+
+        max_fill = amm.max_fill_sell_order(
+            pool, self.TOKEN_A, self.TOKEN_B, sell_amount, buy_amount
+        )
+
+        if max_fill > 0:
+            result = amm.simulate_swap(pool, self.TOKEN_A, self.TOKEN_B, max_fill)
+            assert result is not None
+            # Verify: output/input >= buy_amount/sell_amount
+            assert result.amount_out * sell_amount >= buy_amount * max_fill
+
+    def test_max_fill_buy_order_full_fill_possible(self) -> None:
+        """When full fill satisfies limit, returns full buy amount."""
+        from solver.amm.balancer import BalancerStableAMM
+
+        amm = BalancerStableAMM()
+        pool = self._make_stable_pool()
+
+        # Generous 1.1:1 rate should allow full fill
+        sell_amount = 1100_000_000_000_000_000_000  # 1.1K tokens max
+        buy_amount = 1000_000_000_000_000_000_000  # 1K tokens desired
+
+        max_fill = amm.max_fill_buy_order(pool, self.TOKEN_A, self.TOKEN_B, sell_amount, buy_amount)
+
+        # Should be able to buy the full amount
+        assert max_fill == buy_amount
+
+    def test_max_fill_buy_order_verifies_limit(self) -> None:
+        """Max fill result actually satisfies the limit price."""
+        from solver.amm.balancer import BalancerStableAMM
+
+        amm = BalancerStableAMM()
+        pool = self._make_stable_pool()
+
+        sell_amount = 1050_000_000_000_000_000_000  # 1050 tokens max
+        buy_amount = 1000_000_000_000_000_000_000  # 1000 tokens desired
+
+        max_fill = amm.max_fill_buy_order(pool, self.TOKEN_A, self.TOKEN_B, sell_amount, buy_amount)
+
+        if max_fill > 0:
+            result = amm.simulate_swap_exact_output(pool, self.TOKEN_A, self.TOKEN_B, max_fill)
+            assert result is not None
+            # Verify: input/output <= sell_amount/buy_amount
+            assert result.amount_in * buy_amount <= sell_amount * max_fill
+
+    def test_max_fill_zero_amounts(self) -> None:
+        """Zero amounts return 0."""
+        from solver.amm.balancer import BalancerStableAMM
+
+        amm = BalancerStableAMM()
+        pool = self._make_stable_pool()
+
+        assert amm.max_fill_sell_order(pool, self.TOKEN_A, self.TOKEN_B, 0, 100) == 0
+        assert amm.max_fill_sell_order(pool, self.TOKEN_A, self.TOKEN_B, 100, 0) == 0
+        assert amm.max_fill_buy_order(pool, self.TOKEN_A, self.TOKEN_B, 0, 100) == 0
+        assert amm.max_fill_buy_order(pool, self.TOKEN_A, self.TOKEN_B, 100, 0) == 0
