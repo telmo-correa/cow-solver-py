@@ -52,6 +52,7 @@ Individual session logs are preserved in the `archive/` directory for reference.
 | [25](session-25.md) | 2026-01-22 | SafeInt Safe Arithmetic |
 | [26](session-26.md) | 2026-01-22 | V3 Benchmarking |
 | [27](session-27.md) | 2026-01-22 | Balancer Fixed-Point and Weighted Pool Math (Slices 3.2.1-3.2.2) |
+| [28](session-28.md) | 2026-01-22 | Stable Pool Math Bug Fix and Code Review |
 
 ## Session Template
 
