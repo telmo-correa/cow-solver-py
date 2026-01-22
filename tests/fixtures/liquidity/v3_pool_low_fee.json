@@ -1,0 +1,16 @@
+{
+  "id": "v3-pool-usdc-usdt-500",
+  "kind": "concentratedLiquidity",
+  "address": "0x3416cF6C708Da44DB2624D63ea0AAef7113527C6",
+  "router": "0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45",
+  "gasEstimate": "106000",
+  "tokens": [
+    "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+    "0xdAC17F958D2ee523a2206206994597C13D831ec7"
+  ],
+  "sqrtPrice": "79228162514264337593543950336",
+  "liquidity": "50000000000000000000",
+  "tick": "0",
+  "liquidityNet": {},
+  "fee": "0.0005"
+}

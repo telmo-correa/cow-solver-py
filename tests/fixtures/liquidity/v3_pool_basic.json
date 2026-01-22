@@ -1,0 +1,21 @@
+{
+  "id": "v3-pool-weth-usdc-3000",
+  "kind": "concentratedLiquidity",
+  "address": "0x88e6A0c2dDD26FEEb64F039a2c41296FcB3f5640",
+  "router": "0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45",
+  "gasEstimate": "106000",
+  "tokens": [
+    "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+    "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
+  ],
+  "sqrtPrice": "1234567890123456789012345678",
+  "liquidity": "12345678901234567890",
+  "tick": "-202000",
+  "liquidityNet": {
+    "-887220": "1000000000000000000",
+    "-202200": "500000000000000000",
+    "-201800": "-500000000000000000",
+    "887220": "-1000000000000000000"
+  },
+  "fee": "0.003"
+}

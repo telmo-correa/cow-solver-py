@@ -12,7 +12,7 @@ This file provides context for AI assistants working on this project. Read this 
 3. Create portfolio material with quantified performance comparisons
 4. Explore where Python can compete with Rust and where it can't
 
-**Status:** Phase 1 complete. Phase 2 complete (2-order CoW matching). Phase 3 (Liquidity Expansion) is next.
+**Status:** Phase 1 complete. Phase 2 complete (2-order CoW matching). Phase 3 in progress (UniswapV3 - Slice 3.1.1 done).
 
 ## What is CoW Protocol?
 
@@ -48,7 +48,8 @@ cow-solver-py/
 │   │   └── solution.py    # Solution, Trade, Interaction
 │   ├── amm/               # AMM math
 │   │   ├── base.py        # SwapResult dataclass
-│   │   └── uniswap_v2.py  # UniswapV2 implementation
+│   │   ├── uniswap_v2.py  # UniswapV2 implementation
+│   │   └── uniswap_v3.py  # UniswapV3 pool parsing & constants
 │   ├── strategies/        # Solution strategies
 │   │   ├── base.py        # SolutionStrategy protocol
 │   │   ├── cow_match.py   # CoW matching strategy
@@ -103,7 +104,7 @@ cow-solver-py/
 - ✅ **AMM partial fills** (exact calculation outperforms Rust's binary search)
 - ✅ **Data-driven matching rules** (matching_rules.py for auditability)
 
-**Total: 202 passing tests** (unit + integration)
+**Total: 224 passing tests** (unit + integration)
 
 ### Rust Baseline Solver Limitations
 
@@ -142,6 +143,7 @@ See `PLAN.md` for full details.
 | `solver/models/auction.py` | Input data structures |
 | `solver/models/solution.py` | Output data structures |
 | `solver/amm/uniswap_v2.py` | UniswapV2 AMM math and encoding |
+| `solver/amm/uniswap_v3.py` | UniswapV3 pool parsing, constants, quoter protocol |
 | `solver/strategies/base.py` | SolutionStrategy protocol, StrategyResult, OrderFill |
 | `solver/strategies/matching_rules.py` | Data-driven matching rules (constraint tables) |
 | `solver/strategies/cow_match.py` | CoW matching (perfect + partial) |
