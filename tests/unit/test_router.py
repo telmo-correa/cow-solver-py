@@ -1557,3 +1557,205 @@ class TestMixedMultiHopRouting:
         # Registry fallback prioritizes V2 pools
         assert isinstance(result.hops[0].pool, UniswapV2Pool)
         assert isinstance(result.hops[1].pool, UniswapV2Pool)
+
+    def _make_stable_pool(self, token0: str, token1: str, balance0: int, balance1: int):
+        """Create a Balancer stable pool for testing."""
+        from decimal import Decimal
+
+        from solver.amm.balancer import BalancerStablePool, StableTokenReserve
+
+        return BalancerStablePool(
+            id=f"stable-{token0[-4:]}-{token1[-4:]}",
+            address=f"0x{token0[-6:]}{token1[-6:]}4444444444444444444444",
+            pool_id="0x" + "44" * 32,
+            reserves=(
+                StableTokenReserve(
+                    token=token0.lower(),
+                    balance=balance0,
+                    scaling_factor=1,
+                ),
+                StableTokenReserve(
+                    token=token1.lower(),
+                    balance=balance1,
+                    scaling_factor=1,
+                ),
+            ),
+            fee=Decimal("0.0001"),  # 0.01%
+            amplification_parameter=Decimal("5000"),
+            gas_estimate=100_000,
+        )
+
+    def test_multihop_v2_then_stable(self):
+        """Multi-hop route: V2 pool for hop 1, stable pool for hop 2."""
+        from solver.amm.balancer import BalancerStableAMM
+
+        # Create pools: WETH -> DAI (V2), DAI -> USDC (stable)
+        v2_pool = self._make_v2_pool(
+            self.WETH,
+            self.DAI,
+            100_000_000_000_000_000_000_000,  # 100K WETH
+            200_000_000_000_000_000_000_000_000,  # 200M DAI
+        )
+        stable_pool = self._make_stable_pool(
+            self.DAI,
+            self.USDC,
+            100_000_000_000_000_000_000_000_000,  # 100M DAI (18 decimals)
+            100_000_000_000_000_000_000_000_000,  # 100M USDC (18 decimals for stable math)
+        )
+
+        registry = PoolRegistry()
+        registry.add_pool(v2_pool)
+        registry.add_stable_pool(stable_pool)
+
+        stable_amm = BalancerStableAMM()
+        router = SingleOrderRouter(pool_registry=registry, stable_amm=stable_amm)
+
+        order = make_order(
+            sell_token=self.WETH,
+            buy_token=self.USDC,
+            sell_amount="1000000000000000000",  # 1 WETH
+            buy_amount="1",  # Very low min
+        )
+        result = router.route_order(order)
+
+        assert result.success is True
+        assert result.hops is not None
+        assert len(result.hops) == 2
+        # First hop through V2
+        assert isinstance(result.hops[0].pool, UniswapV2Pool)
+        assert result.amount_out > 0
+
+    def test_multihop_stable_then_v2(self):
+        """Multi-hop route: stable pool for hop 1, V2 pool for hop 2."""
+        from solver.amm.balancer import BalancerStableAMM, BalancerStablePool
+
+        # Create pools: DAI -> USDC (stable), USDC -> WETH (V2)
+        stable_pool = self._make_stable_pool(
+            self.DAI,
+            self.USDC,
+            100_000_000_000_000_000_000_000_000,  # 100M DAI
+            100_000_000_000_000_000_000_000_000,  # 100M USDC (18 decimals for stable math)
+        )
+        v2_pool = self._make_v2_pool(
+            self.USDC,
+            self.WETH,
+            100_000_000_000_000_000_000_000_000,  # 100M USDC (scaled to 18 decimals)
+            50_000_000_000_000_000_000_000,  # 50K WETH
+        )
+
+        registry = PoolRegistry()
+        registry.add_pool(v2_pool)
+        registry.add_stable_pool(stable_pool)
+
+        stable_amm = BalancerStableAMM()
+        router = SingleOrderRouter(pool_registry=registry, stable_amm=stable_amm)
+
+        order = make_order(
+            sell_token=self.DAI,
+            buy_token=self.WETH,
+            sell_amount="1000000000000000000000",  # 1000 DAI
+            buy_amount="1",  # Very low min
+        )
+        result = router.route_order(order)
+
+        assert result.success is True
+        assert result.hops is not None
+        assert len(result.hops) == 2
+        # First hop should be through stable pool
+        assert isinstance(result.hops[0].pool, BalancerStablePool)
+        # Second hop through V2
+        assert isinstance(result.hops[1].pool, UniswapV2Pool)
+        assert result.amount_out > 0
+
+    def test_multihop_mixed_weighted_stable(self):
+        """Multi-hop through weighted then stable pool."""
+        from solver.amm.balancer import (
+            BalancerStableAMM,
+            BalancerStablePool,
+            BalancerWeightedAMM,
+            BalancerWeightedPool,
+        )
+
+        # Path: WETH -> DAI (weighted) -> USDC (stable)
+        weighted_pool = self._make_weighted_pool(
+            self.WETH,
+            self.DAI,
+            50_000_000_000_000_000_000_000,  # 50K WETH
+            100_000_000_000_000_000_000_000_000,  # 100M DAI
+        )
+        stable_pool = self._make_stable_pool(
+            self.DAI,
+            self.USDC,
+            100_000_000_000_000_000_000_000_000,  # 100M DAI
+            100_000_000_000_000_000_000_000_000,  # 100M USDC
+        )
+
+        registry = PoolRegistry()
+        registry.add_weighted_pool(weighted_pool)
+        registry.add_stable_pool(stable_pool)
+
+        weighted_amm = BalancerWeightedAMM()
+        stable_amm = BalancerStableAMM()
+        router = SingleOrderRouter(
+            pool_registry=registry, weighted_amm=weighted_amm, stable_amm=stable_amm
+        )
+
+        order = make_order(
+            sell_token=self.WETH,
+            buy_token=self.USDC,
+            sell_amount="1000000000000000000",  # 1 WETH
+            buy_amount="1",
+        )
+        result = router.route_order(order)
+
+        assert result.success is True
+        assert result.hops is not None
+        assert len(result.hops) == 2
+        # First hop through weighted
+        assert isinstance(result.hops[0].pool, BalancerWeightedPool)
+        # Second hop through stable
+        assert isinstance(result.hops[1].pool, BalancerStablePool)
+        assert result.amount_out > 0
+
+    def test_multihop_buy_order_through_stable(self):
+        """Buy order multi-hop through stable pool."""
+        from solver.amm.balancer import BalancerStableAMM
+
+        # Path: WETH -> DAI (V2) -> USDC (stable)
+        v2_pool = self._make_v2_pool(
+            self.WETH,
+            self.DAI,
+            100_000_000_000_000_000_000_000,  # 100K WETH
+            200_000_000_000_000_000_000_000_000,  # 200M DAI
+        )
+        stable_pool = self._make_stable_pool(
+            self.DAI,
+            self.USDC,
+            100_000_000_000_000_000_000_000_000,  # 100M DAI
+            100_000_000_000_000_000_000_000_000,  # 100M USDC
+        )
+
+        registry = PoolRegistry()
+        registry.add_pool(v2_pool)
+        registry.add_stable_pool(stable_pool)
+
+        stable_amm = BalancerStableAMM()
+        router = SingleOrderRouter(pool_registry=registry, stable_amm=stable_amm)
+
+        # Buy order: want USDC, spend WETH
+        order = make_order(
+            sell_token=self.WETH,
+            buy_token=self.USDC,
+            sell_amount="10000000000000000000",  # 10 WETH max
+            buy_amount="1000000000000000000000",  # Want 1000 USDC (18 decimals)
+            kind=OrderKind.BUY,
+        )
+        result = router.route_order(order)
+
+        assert result.success is True
+        assert result.hops is not None
+        assert len(result.hops) == 2
+        # Buy order should work backwards through the path
+        assert result.amount_out == 1000000000000000000000  # Exact buy amount
+        assert result.amount_in > 0
+        assert result.amount_in <= 10000000000000000000
