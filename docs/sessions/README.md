@@ -50,6 +50,7 @@ Individual session logs are preserved in the `archive/` directory for reference.
 | [23](archive/session-23.md) | 2026-01-22 | Limit Order Fee Handling |
 | [24](archive/session-24.md) | 2026-01-22 | Fee Calculator Service |
 | [25](session-25.md) | 2026-01-22 | SafeInt Safe Arithmetic |
+| [26](session-26.md) | 2026-01-22 | V3 Benchmarking |
 
 ## Session Template
 
