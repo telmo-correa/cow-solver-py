@@ -1587,7 +1587,7 @@ class TestMixedMultiHopRouting:
 
     def test_multihop_v2_then_stable(self):
         """Multi-hop route: V2 pool for hop 1, stable pool for hop 2."""
-        from solver.amm.balancer import BalancerStableAMM
+        from solver.amm.balancer import BalancerStableAMM, BalancerStablePool
 
         # Create pools: WETH -> DAI (V2), DAI -> USDC (stable)
         v2_pool = self._make_v2_pool(
@@ -1623,6 +1623,8 @@ class TestMixedMultiHopRouting:
         assert len(result.hops) == 2
         # First hop through V2
         assert isinstance(result.hops[0].pool, UniswapV2Pool)
+        # Second hop through stable
+        assert isinstance(result.hops[1].pool, BalancerStablePool)
         assert result.amount_out > 0
 
     def test_multihop_stable_then_v2(self):
