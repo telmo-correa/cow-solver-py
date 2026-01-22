@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 import structlog
 
 if TYPE_CHECKING:
+    from solver.amm.balancer import BalancerStableAMM, BalancerWeightedAMM
     from solver.amm.uniswap_v3 import UniswapV3AMM
     from solver.strategies.base import SolutionStrategy
 
@@ -46,6 +47,8 @@ class Solver:
         router: SingleOrderRouter | None = None,
         amm: UniswapV2 | None = None,
         v3_amm: UniswapV3AMM | None = None,
+        weighted_amm: BalancerWeightedAMM | None = None,
+        stable_amm: BalancerStableAMM | None = None,
     ) -> None:
         """Initialize the solver with strategies.
 
@@ -57,16 +60,30 @@ class Solver:
             amm: Deprecated. For backwards compatibility, if provided,
                  creates AmmRoutingStrategy with this AMM.
             v3_amm: UniswapV3 AMM for V3 pool routing. If None, V3 pools are skipped.
+            weighted_amm: Balancer weighted AMM. If None, weighted pools are skipped.
+            stable_amm: Balancer stable AMM. If None, stable pools are skipped.
         """
         if strategies is not None:
             self.strategies = strategies
-        elif router is not None or amm is not None or v3_amm is not None:
+        elif (
+            router is not None
+            or amm is not None
+            or v3_amm is not None
+            or weighted_amm is not None
+            or stable_amm is not None
+        ):
             # Backwards compatibility: create strategies from legacy params
             from solver.strategies import AmmRoutingStrategy, CowMatchStrategy
 
             self.strategies = [
                 CowMatchStrategy(),
-                AmmRoutingStrategy(amm=amm, router=router, v3_amm=v3_amm),
+                AmmRoutingStrategy(
+                    amm=amm,
+                    router=router,
+                    v3_amm=v3_amm,
+                    weighted_amm=weighted_amm,
+                    stable_amm=stable_amm,
+                ),
             ]
         else:
             # Default strategies

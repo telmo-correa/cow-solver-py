@@ -20,6 +20,7 @@ from solver.routing.router import RoutingResult, SingleOrderRouter
 from solver.strategies.base import OrderFill, StrategyResult
 
 if TYPE_CHECKING:
+    from solver.amm.balancer import BalancerStableAMM, BalancerWeightedAMM
     from solver.amm.uniswap_v3 import UniswapV3AMM
 
 logger = structlog.get_logger()
@@ -60,6 +61,8 @@ class AmmRoutingStrategy:
         amm: UniswapV2 | None = None,
         router: SingleOrderRouter | None = None,
         v3_amm: UniswapV3AMM | None = None,
+        weighted_amm: BalancerWeightedAMM | None = None,
+        stable_amm: BalancerStableAMM | None = None,
     ) -> None:
         """Initialize the AMM routing strategy.
 
@@ -71,10 +74,14 @@ class AmmRoutingStrategy:
                     orders won't affect the injected router's pool finder.
                     This is acceptable for unit tests with mocked behavior.
             v3_amm: UniswapV3 AMM for V3 pool routing. If None, V3 pools are skipped.
+            weighted_amm: Balancer weighted AMM. If None, weighted pools are skipped.
+            stable_amm: Balancer stable AMM. If None, stable pools are skipped.
         """
         self.amm = amm if amm is not None else uniswap_v2
         self._injected_router = router
         self.v3_amm = v3_amm
+        self.weighted_amm = weighted_amm
+        self.stable_amm = stable_amm
 
     def _get_router(self, pool_registry: PoolRegistry) -> SingleOrderRouter:
         """Get the router to use for routing orders.
@@ -89,7 +96,13 @@ class AmmRoutingStrategy:
         """
         if self._injected_router is not None:
             return self._injected_router
-        return SingleOrderRouter(amm=self.amm, pool_registry=pool_registry, v3_amm=self.v3_amm)
+        return SingleOrderRouter(
+            amm=self.amm,
+            pool_registry=pool_registry,
+            v3_amm=self.v3_amm,
+            weighted_amm=self.weighted_amm,
+            stable_amm=self.stable_amm,
+        )
 
     def _route_and_build(
         self, order: Order, pool_registry: PoolRegistry

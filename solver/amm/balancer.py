@@ -218,7 +218,10 @@ class BalancerStablePool:
         address: Pool contract address
         pool_id: balancerPoolId (32-byte hex string for settlement encoding)
         reserves: Token reserves, sorted by token address
-        amplification_parameter: A parameter (scaled by AMP_PRECISION=1000)
+        amplification_parameter: Raw A parameter from auction JSON (e.g., 5000.0).
+            NOTE: This is the unscaled value. The AMM internally multiplies
+            by AMP_PRECISION (1000) before passing to the stable math functions,
+            so A=5000 becomes 5,000,000 in calculations.
         fee: Swap fee as decimal (e.g., 0.0001 for 0.01%)
         gas_estimate: Gas cost estimate from auction data
     """
@@ -427,8 +430,8 @@ def calc_out_given_in(
     exponent = weight_in.div_down(weight_out)
 
     # power = base ^ exponent (rounded up)
-    # V0 and V3Plus use the same pow_up (V3Plus optimization not implemented yet)
-    power = base.pow_up(exponent)
+    # V3Plus uses optimized pow_up_v3 for common exponents (1, 2, 4)
+    power = base.pow_up_v3(exponent) if _version == "v3Plus" else base.pow_up(exponent)
 
     # amount_out = balance_out * (1 - power) (rounded down)
     return balance_out.mul_down(power.complement())
@@ -499,7 +502,8 @@ def calc_in_given_out(
     exponent = weight_out.div_up(weight_in)
 
     # power = base ^ exponent (rounded up)
-    power = base.pow_up(exponent)
+    # V3Plus uses optimized pow_up_v3 for common exponents (1, 2, 4)
+    power = base.pow_up_v3(exponent) if _version == "v3Plus" else base.pow_up(exponent)
 
     # ratio = power - 1
     one = Bfp(ONE_18)
@@ -921,10 +925,23 @@ def _parse_scaling_factor(
     token_addr: str,
     liquidity_id: str,
     pool_type: str,
+    token_data: TokenBalance | None = None,
 ) -> int:
-    """Parse scaling factor with fallback to default of 1."""
+    """Parse scaling factor with fallback to default of 1.
+
+    Looks up scaling factor in two places:
+    1. Top-level scaling_factors_dict (Python auction format)
+    2. Per-token data with "scalingFactor" key (Rust auction format)
+
+    Falls back to 1 if not found or invalid.
+    """
     token_addr_lower = token_addr.lower()
-    scaling_raw = scaling_factors_dict.get(token_addr_lower, "1")
+    scaling_raw: Any = scaling_factors_dict.get(token_addr_lower)
+    if scaling_raw is None and token_data is not None:
+        # Try per-token data (Rust auction format uses "scalingFactor")
+        scaling_raw = token_data.get("scalingFactor", "1")
+    if scaling_raw is None:
+        scaling_raw = "1"
     try:
         return int(scaling_raw)
     except (ValueError, TypeError):
@@ -992,14 +1009,13 @@ def parse_weighted_pool(liquidity: Liquidity) -> BalancerWeightedPool | None:
         logger.debug("weighted_pool_missing_pool_id", liquidity_id=liquidity.id)
         return None
 
-    # Get weights dict from top-level (required for weighted pools)
+    # Try to get weights from top-level dict first (Python format)
     weights_dict_raw = _get_liquidity_extra(liquidity, "weights")
-    if weights_dict_raw is None or not isinstance(weights_dict_raw, dict):
-        logger.debug("weighted_pool_missing_weights", liquidity_id=liquidity.id)
-        return None
+    weights_dict: dict[str, str] = {}
+    if weights_dict_raw is not None and isinstance(weights_dict_raw, dict):
+        weights_dict = _normalize_dict_keys(weights_dict_raw)
 
-    # Normalize dicts for case-insensitive lookup
-    weights_dict = _normalize_dict_keys(weights_dict_raw)
+    # Get scaling factors dict (may be top-level or per-token)
     scaling_factors_raw = _get_liquidity_extra(liquidity, "scalingFactors", {})
     scaling_factors_dict = (
         _normalize_dict_keys(scaling_factors_raw) if isinstance(scaling_factors_raw, dict) else {}
@@ -1022,8 +1038,12 @@ def parse_weighted_pool(liquidity: Liquidity) -> BalancerWeightedPool | None:
 
         token_addr_lower = token_addr.lower()
 
-        # Get weight from top-level weights dict (required for weighted pools)
-        weight_raw = weights_dict.get(token_addr_lower)
+        # Get weight: first try top-level dict, then try per-token data (Rust format)
+        weight_raw: str | None = weights_dict.get(token_addr_lower)
+        if weight_raw is None:
+            # Try to get weight from token data (Rust auction format)
+            weight_from_data = token_data.get("weight")
+            weight_raw = str(weight_from_data) if weight_from_data is not None else None
         if weight_raw is None:
             logger.debug(
                 "weighted_pool_missing_weight",
@@ -1058,9 +1078,9 @@ def parse_weighted_pool(liquidity: Liquidity) -> BalancerWeightedPool | None:
         if balance is None:
             return None
 
-        # Get scaling factor
+        # Get scaling factor (supports both top-level dict and per-token data)
         scaling_factor = _parse_scaling_factor(
-            scaling_factors_dict, token_addr, liquidity.id, "weighted_pool"
+            scaling_factors_dict, token_addr, liquidity.id, "weighted_pool", token_data
         )
 
         reserves.append(
@@ -1194,9 +1214,9 @@ def parse_stable_pool(liquidity: Liquidity) -> BalancerStablePool | None:
         if balance is None:
             return None
 
-        # Get scaling factor
+        # Get scaling factor (supports both top-level dict and per-token data)
         scaling_factor = _parse_scaling_factor(
-            scaling_factors_dict, token_addr, liquidity.id, "stable_pool"
+            scaling_factors_dict, token_addr, liquidity.id, "stable_pool", token_data
         )
 
         reserves.append(
@@ -1659,8 +1679,9 @@ class BalancerStableAMM:
             amount_in_after_fee = subtract_swap_fee_amount(amount_in_scaled.value, pool.fee)
 
             # Calculate output
+            # Note: amp must be scaled by AMP_PRECISION (JSON has raw A value)
             amount_out_scaled = stable_calc_out_given_in(
-                amp=int(pool.amplification_parameter),
+                amp=int(pool.amplification_parameter * AMP_PRECISION),
                 balances=balances,
                 token_index_in=index_in,
                 token_index_out=index_out,
@@ -1723,8 +1744,9 @@ class BalancerStableAMM:
             amount_out_scaled = scale_up(amount_out, reserve_out.scaling_factor)
 
             # Calculate required input (before fee)
+            # Note: amp must be scaled by AMP_PRECISION (JSON has raw A value)
             amount_in_raw = stable_calc_in_given_out(
-                amp=int(pool.amplification_parameter),
+                amp=int(pool.amplification_parameter * AMP_PRECISION),
                 balances=balances,
                 token_index_in=index_in,
                 token_index_out=index_out,

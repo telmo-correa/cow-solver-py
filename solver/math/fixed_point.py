@@ -332,13 +332,17 @@ def pow_raw(x: int, y: int) -> int:
 
     # Compute ln(x) * y
     # Use higher precision _ln_36 when x is close to 1
+    # Note: All divisions must use truncation toward zero (like Rust/Solidity)
     if LN_36_LOWER_BOUND < x < LN_36_UPPER_BOUND:
         ln_36_x = _ln_36(x)
-        logx_times_y = (ln_36_x // ONE_18) * y + ((ln_36_x % ONE_18) * y) // ONE_18
+        # Rust-style division and remainder (truncate toward zero)
+        div1 = _div_trunc(ln_36_x, ONE_18)
+        rem1 = ln_36_x - div1 * ONE_18  # Rust remainder
+        logx_times_y = div1 * y + _div_trunc(rem1 * y, ONE_18)
     else:
         logx_times_y = _ln(x) * y
 
-    logx_times_y //= ONE_18
+    logx_times_y = _div_trunc(logx_times_y, ONE_18)
 
     if not (MIN_NATURAL_EXPONENT <= logx_times_y <= MAX_NATURAL_EXPONENT):
         raise ProductOutOfBounds(f"Product {logx_times_y} outside valid range")
@@ -459,7 +463,11 @@ class Bfp:
     def pow_down(self, exp: Bfp) -> Bfp:
         """Compute self^exp with downward rounding."""
         raw = pow_raw(self.value, exp.value)
-        max_error = (raw * self.MAX_POW_RELATIVE_ERROR) // self.ONE + 1
+        # max_error = mul_up(raw, MAX_POW_RELATIVE_ERROR) + 1
+        # Inline mul_up: ((product - 1) // ONE) + 1 when product > 0, else 0
+        product = raw * self.MAX_POW_RELATIVE_ERROR
+        mul_up_result = ((product - 1) // self.ONE + 1) if product > 0 else 0
+        max_error = mul_up_result + 1
         if raw < max_error:
             return Bfp(0)
         return Bfp(raw - max_error)
@@ -467,8 +475,37 @@ class Bfp:
     def pow_up(self, exp: Bfp) -> Bfp:
         """Compute self^exp with upward rounding."""
         raw = pow_raw(self.value, exp.value)
-        max_error = (raw * self.MAX_POW_RELATIVE_ERROR) // self.ONE + 1
+        # max_error = mul_up(raw, MAX_POW_RELATIVE_ERROR) + 1
+        # Inline mul_up: ((product - 1) // ONE) + 1 when product > 0, else 0
+        product = raw * self.MAX_POW_RELATIVE_ERROR
+        mul_up_result = ((product - 1) // self.ONE + 1) if product > 0 else 0
+        max_error = mul_up_result + 1
         return Bfp(raw + max_error)
+
+    def pow_up_v3(self, exp: Bfp) -> Bfp:
+        """Compute self^exp with upward rounding (V3Plus variant).
+
+        V3Plus pools use optimized power calculations for common exponents
+        to avoid precision loss in the ln/exp round-trip:
+        - exponent == 1: return self directly
+        - exponent == 2: return self * self (mul_up)
+        - exponent == 4: return (self * self) * (self * self) (mul_up)
+
+        For other exponents, falls back to pow_up.
+        """
+        ONE = Bfp(self.ONE)
+        TWO = Bfp(2 * self.ONE)
+        FOUR = Bfp(4 * self.ONE)
+
+        if exp == ONE:
+            return self
+        elif exp == TWO:
+            return self.mul_up(self)
+        elif exp == FOUR:
+            square = self.mul_up(self)
+            return square.mul_up(square)
+        else:
+            return self.pow_up(exp)
 
 
 # =============================================================================

@@ -14,9 +14,9 @@ This directory tracks progress across AI-assisted development sessions.
 
 - **Phase 1:** Complete (single-order AMM routing)
 - **Phase 2:** Complete (CoW matching, partial fills)
-- **Phase 3:** Slice 3.1 Complete (UniswapV3 integration), Slice 3.2.6 complete (Balancer router integration)
+- **Phase 3:** Slice 3.1 Complete (UniswapV3), Slice 3.2 Complete (Balancer weighted + stable pools)
 - **Code Quality:** Fee Calculator Service, SafeInt wrapper, Fixed-Point Math
-- **Tests:** 640 passing, 14 skipped
+- **Tests:** 647 passing, 14 skipped
 - **Next:** Curve pools or multi-order optimization
 
 ## Session Archive
@@ -57,6 +57,7 @@ Individual session logs are preserved in the `archive/` directory for reference.
 | [30](session-30.md) | 2026-01-22 | Code Review and Quality Improvements (Slice 3.2.4) |
 | [31](session-31.md) | 2026-01-22 | Balancer AMM Integration (Slice 3.2.5) |
 | [32](session-32.md) | 2026-01-22 | Router Integration for Balancer Pools (Slice 3.2.6) |
+| [33](session-33.md) | 2026-01-22 | Integration Tests for Balancer Pools (Slice 3.2.7) |
 
 ## Session Template
 

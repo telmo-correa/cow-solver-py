@@ -1,0 +1,77 @@
+{
+  "id": "1",
+  "tokens": {
+    "0x6810e776880c02933d47db1b9fc05908e5386b96": {
+      "decimals": 18,
+      "symbol": "GNO",
+      "referencePrice": "59970737022467696",
+      "availableBalance": "0",
+      "trusted": true
+    },
+    "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2": {
+      "decimals": 18,
+      "symbol": "WETH",
+      "referencePrice": "1000000000000000000",
+      "availableBalance": "0",
+      "trusted": true
+    },
+    "0xdef1ca1fb7fbcdc777520aa7f396b4e015f497ab": {
+      "decimals": 18,
+      "symbol": "COW",
+      "referencePrice": "35756662383952",
+      "availableBalance": "0",
+      "trusted": true
+    }
+  },
+  "orders": [
+    {
+      "uid": "0x2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a",
+      "sellToken": "0x6810e776880c02933d47db1b9fc05908e5386b96",
+      "buyToken": "0xdef1ca1fb7fbcdc777520aa7f396b4e015f497ab",
+      "sellAmount": "1000000000000000000",
+      "fullSellAmount": "1000000000000000000",
+      "buyAmount": "1",
+      "fullBuyAmount": "1",
+      "feeAmount": "0",
+      "feePolicies": [],
+      "validTo": 0,
+      "kind": "sell",
+      "owner": "0x5b1e2c2762667331bc91648052f646d1b0d35984",
+      "partiallyFillable": false,
+      "preInteractions": [],
+      "postInteractions": [],
+      "sellTokenSource": "erc20",
+      "buyTokenDestination": "erc20",
+      "class": "market",
+      "appData": "0x6000000000000000000000000000000000000000000000000000000000000007",
+      "signingScheme": "presign",
+      "signature": "0x"
+    }
+  ],
+  "liquidity": [
+    {
+      "kind": "weightedProduct",
+      "tokens": {
+        "0x6810e776880c02933d47db1b9fc05908e5386b96": {
+          "balance": "11260752191375725565253",
+          "scalingFactor": "1",
+          "weight": "0.5"
+        },
+        "0xdef1ca1fb7fbcdc777520aa7f396b4e015f497ab": {
+          "balance": "18764168403990393422000071",
+          "scalingFactor": "1",
+          "weight": "0.5"
+        }
+      },
+      "fee": "0.005",
+      "id": "weighted-gno-cow",
+      "address": "0x92762b42a06dcdddc5b7362cfb01e631c4d44b40",
+      "balancerPoolId": "0x92762b42a06dcdddc5b7362cfb01e631c4d44b40000200000000000000000182",
+      "gasEstimate": "88892",
+      "version": "v0"
+    }
+  ],
+  "effectiveGasPrice": "1000000000",
+  "deadline": "2106-01-01T00:00:00.000Z",
+  "surplusCapturingJitOrderOwners": []
+}

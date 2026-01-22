@@ -2735,8 +2735,10 @@ class TestBalancerAMMIntegration:
         amount_in_scaled = scale_up(amount_in, 1)
         amount_in_after_fee = subtract_swap_fee_amount(amount_in_scaled.value, Decimal("0.0004"))
 
+        # Note: AMM multiplies pool.amplification_parameter by AMP_PRECISION (1000)
+        # so we need to do the same for the manual calculation to match
         amount_out_scaled = stable_calc_out_given_in(
-            amp=200,
+            amp=200 * 1000,  # scaled by AMP_PRECISION
             balances=balances,
             token_index_in=0,
             token_index_out=1,

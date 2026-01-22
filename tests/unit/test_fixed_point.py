@@ -358,10 +358,14 @@ class TestBfpPower:
         base = Bfp.from_int(2)
         exp_val = Bfp.from_int(2)
         # From Rust test vector: pow(2e18, 2e18) = 3999999999999999996
-        # pow_up adds error: 3999999999999999996 * 10000 / 10^18 + 1 = 40
+        # pow_up adds error: mul_up(raw, MAX_POW_RELATIVE_ERROR) + 1
+        # This matches Rust: raw.mul_up(MAX_POW_RELATIVE_ERROR).add(1)
         result = base.pow_up(exp_val)
         expected_raw = 3999999999999999996
-        max_error = expected_raw * 10000 // ONE_18 + 1
+        # mul_up calculation: ((product - 1) // ONE) + 1
+        product = expected_raw * Bfp.MAX_POW_RELATIVE_ERROR
+        mul_up_result = (product - 1) // ONE_18 + 1  # 40
+        max_error = mul_up_result + 1  # 41
         assert result.value == expected_raw + max_error
 
     def test_pow_down_less_than_pow_up(self) -> None:
