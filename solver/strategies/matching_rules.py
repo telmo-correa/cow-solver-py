@@ -324,28 +324,34 @@ def _partial_sell_buy(a: OrderAmounts) -> tuple[ExecutionAmounts, bool, bool] | 
 
     Partial when A offers more X than B wants.
     A is partially filled, B is fully filled.
+
+    Uses SafeInt for consistent arithmetic handling.
     """
+    # Wrap amounts in SafeInt for safe arithmetic
+    sell_a, buy_a = S(a.sell_a), S(a.buy_a)
+    sell_b, buy_b = S(a.sell_b), S(a.buy_b)
+
     # Only partial if A offers MORE than B wants
-    if a.sell_a <= a.buy_b:
+    if sell_a <= buy_b:
         return None
 
     # Check A's limit can be satisfied by B's payment
-    if a.sell_b * a.sell_a < a.buy_b * a.buy_a:
+    if sell_b * sell_a < buy_b * buy_a:
         logger.debug(
             "cow_partial_sell_buy_limit_not_met",
             reason="A's limit not satisfied by B's max payment",
         )
         return None
 
-    cow_x = a.buy_b  # X transferred (A→B)
-    cow_y = a.sell_b  # Y transferred (B→A)
+    cow_x = buy_b  # X transferred (A→B)
+    cow_y = sell_b  # Y transferred (B→A)
 
     return (
         ExecutionAmounts(
-            exec_sell_a=cow_x,
-            exec_buy_a=cow_y,
-            exec_sell_b=cow_y,
-            exec_buy_b=cow_x,
+            exec_sell_a=cow_x.value,
+            exec_buy_a=cow_y.value,
+            exec_sell_b=cow_y.value,
+            exec_buy_b=cow_x.value,
         ),
         True,  # A is partial
         False,  # B is fully filled
@@ -357,28 +363,34 @@ def _partial_buy_sell(a: OrderAmounts) -> tuple[ExecutionAmounts, bool, bool] | 
 
     Partial when B offers more Y than A wants.
     B is partially filled, A is fully filled.
+
+    Uses SafeInt for consistent arithmetic handling.
     """
+    # Wrap amounts in SafeInt for safe arithmetic
+    sell_a, buy_a = S(a.sell_a), S(a.buy_a)
+    sell_b, buy_b = S(a.sell_b), S(a.buy_b)
+
     # Only partial if B offers MORE than A wants
-    if a.sell_b <= a.buy_a:
+    if sell_b <= buy_a:
         return None
 
     # Check B's limit can be satisfied by A's payment
-    if a.sell_a * a.sell_b < a.buy_a * a.buy_b:
+    if sell_a * sell_b < buy_a * buy_b:
         logger.debug(
             "cow_partial_buy_sell_limit_not_met",
             reason="B's limit not satisfied by A's max payment",
         )
         return None
 
-    cow_x = a.sell_a  # X transferred (A→B)
-    cow_y = a.buy_a  # Y transferred (B→A)
+    cow_x = sell_a  # X transferred (A→B)
+    cow_y = buy_a  # Y transferred (B→A)
 
     return (
         ExecutionAmounts(
-            exec_sell_a=cow_x,
-            exec_buy_a=cow_y,
-            exec_sell_b=cow_y,
-            exec_buy_b=cow_x,
+            exec_sell_a=cow_x.value,
+            exec_buy_a=cow_y.value,
+            exec_sell_b=cow_y.value,
+            exec_buy_b=cow_x.value,
         ),
         False,  # A is fully filled
         True,  # B is partial
@@ -389,9 +401,15 @@ def _partial_buy_buy(a: OrderAmounts) -> tuple[ExecutionAmounts, bool, bool] | N
     """Partial match for two buy orders.
 
     Partial when exactly one can satisfy the other.
+
+    Uses SafeInt for consistent arithmetic handling.
     """
-    a_can_satisfy_b = a.sell_a >= a.buy_b
-    b_can_satisfy_a = a.sell_b >= a.buy_a
+    # Wrap amounts in SafeInt for safe arithmetic
+    sell_a, buy_a = S(a.sell_a), S(a.buy_a)
+    sell_b, buy_b = S(a.sell_b), S(a.buy_b)
+
+    a_can_satisfy_b = sell_a >= buy_b
+    b_can_satisfy_a = sell_b >= buy_a
 
     # Both can satisfy or neither can - no partial match
     if a_can_satisfy_b == b_can_satisfy_a:
@@ -399,23 +417,23 @@ def _partial_buy_buy(a: OrderAmounts) -> tuple[ExecutionAmounts, bool, bool] | N
 
     if a_can_satisfy_b:
         # B gets complete fill, A gets partial
-        cow_x = a.buy_b
-        cow_y = a.sell_b
+        cow_x = buy_b
+        cow_y = sell_b
         a_is_partial = True
         b_is_partial = False
     else:
         # A gets complete fill, B gets partial
-        cow_x = a.sell_a
-        cow_y = a.buy_a
+        cow_x = sell_a
+        cow_y = buy_a
         a_is_partial = False
         b_is_partial = True
 
     return (
         ExecutionAmounts(
-            exec_sell_a=cow_x,
-            exec_buy_a=cow_y,
-            exec_sell_b=cow_y,
-            exec_buy_b=cow_x,
+            exec_sell_a=cow_x.value,
+            exec_buy_a=cow_y.value,
+            exec_sell_b=cow_y.value,
+            exec_buy_b=cow_x.value,
         ),
         a_is_partial,
         b_is_partial,

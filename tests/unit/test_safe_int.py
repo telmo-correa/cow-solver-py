@@ -146,6 +146,18 @@ class TestSafeIntArithmetic:
         with pytest.raises(DivisionByZero):
             S(10) % S(0)
 
+    def test_truediv_raises_typeerror(self):
+        """True division raises TypeError to prevent float results."""
+        with pytest.raises(TypeError) as exc_info:
+            S(10) / S(3)
+        assert "floor division" in str(exc_info.value)
+
+    def test_rtruediv_raises_typeerror(self):
+        """Reverse true division raises TypeError."""
+        with pytest.raises(TypeError) as exc_info:
+            10 / S(3)
+        assert "floor division" in str(exc_info.value)
+
     def test_neg(self):
         """Negation works."""
         assert (-S(5)).value == -5
@@ -255,6 +267,12 @@ class TestSafeIntNamedOps:
         with pytest.raises(DivisionByZero):
             S(10).ceiling_div(0)
 
+    def test_ceiling_div_negative_raises(self):
+        """Ceiling division by negative raises ValueError."""
+        with pytest.raises(ValueError) as exc_info:
+            S(10).ceiling_div(-3)
+        assert "positive divisor" in str(exc_info.value)
+
     def test_min(self):
         """min() returns smaller value."""
         assert S(10).min(5).value == 5
@@ -309,6 +327,11 @@ class TestSafeIntNamedOps:
     def test_checked_ceiling_div_by_zero(self):
         """checked_ceiling_div returns None on zero."""
         result = S(10).checked_ceiling_div(0)
+        assert result is None
+
+    def test_checked_ceiling_div_negative(self):
+        """checked_ceiling_div returns None on negative divisor."""
+        result = S(10).checked_ceiling_div(-3)
         assert result is None
 
 

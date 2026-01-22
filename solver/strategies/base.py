@@ -263,14 +263,17 @@ class StrategyResult:
                     fee = validation.fee
                     assert fee is not None
                     # Use SafeInt for explicit underflow protection
+                    # Note: validate_fee_against_amount should prevent this, so if it
+                    # triggers, there's a bug in the validation logic
                     try:
                         executed = (S(fill.executed_amount) - S(fee)).value
                     except Underflow:
-                        logger.error(
-                            "fee_subtraction_underflow",
+                        logger.critical(
+                            "fee_subtraction_underflow_validation_bug",
                             order_uid=order_uid[:18] + "...",
                             fee=fee,
                             executed_amount=fill.executed_amount,
+                            reason="This indicates a bug in validate_fee_against_amount",
                         )
                         continue  # Skip this trade
                 else:

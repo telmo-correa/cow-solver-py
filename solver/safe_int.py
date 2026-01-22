@@ -2,9 +2,11 @@
 
 This module provides SafeInt, a lightweight wrapper that makes arithmetic
 operations safe by default:
-- Division by zero raises ArithmeticError
-- Subtraction underflow raises ArithmeticError
-- uint256 overflow is caught on conversion
+- Division by zero raises DivisionByZero
+- Subtraction underflow raises Underflow
+- uint256 overflow raises Uint256Overflow on to_uint256()
+
+All exceptions inherit from SafeIntError (which inherits from ArithmeticError).
 
 Usage pattern:
     from solver.safe_int import SafeInt, S
@@ -183,6 +185,29 @@ class SafeInt:
             raise DivisionByZero(f"Modulo by zero: {other} % 0")
         return SafeInt(other % self._value)
 
+    def __truediv__(self, other: SafeInt | int) -> SafeInt:
+        """True division is not supported - use // for integer division.
+
+        Raises:
+            TypeError: Always, to prevent accidental float division
+        """
+        raise TypeError(
+            "SafeInt does not support true division (/). "
+            "Use floor division (//) for integer division, "
+            "or .ceiling_div() for ceiling division."
+        )
+
+    def __rtruediv__(self, other: int) -> SafeInt:
+        """True division is not supported - use // for integer division.
+
+        Raises:
+            TypeError: Always, to prevent accidental float division
+        """
+        raise TypeError(
+            "SafeInt does not support true division (/). "
+            "Use floor division (//) for integer division."
+        )
+
     def __neg__(self) -> SafeInt:
         """Negate the value. Result may be negative."""
         return SafeInt(-self._value)
@@ -245,14 +270,21 @@ class SafeInt:
     def ceiling_div(self, other: SafeInt | int) -> SafeInt:
         """Ceiling division (rounds up).
 
-        Equivalent to: (self + other - 1) // other
+        Equivalent to: ceil(self / other) for positive values.
+
+        Note: This method is designed for positive divisors only.
+        For negative divisors, the formula (self + other - 1) // other
+        does not produce correct ceiling division results.
 
         Raises:
             DivisionByZero: If other is zero
+            ValueError: If other is negative
         """
         other_val = _extract_value(other)
         if other_val == 0:
             raise DivisionByZero(f"Ceiling division by zero: {self._value}")
+        if other_val < 0:
+            raise ValueError(f"ceiling_div requires positive divisor, got {other_val}")
         return SafeInt((self._value + other_val - 1) // other_val)
 
     def min(self, other: SafeInt | int) -> SafeInt:
@@ -299,9 +331,9 @@ class SafeInt:
         return SafeInt(self._value // other_val)
 
     def checked_ceiling_div(self, other: SafeInt | int) -> SafeInt | None:
-        """Ceiling division, returning None on zero instead of raising."""
+        """Ceiling division, returning None on zero or negative instead of raising."""
         other_val = _extract_value(other)
-        if other_val == 0:
+        if other_val <= 0:
             return None
         return SafeInt((self._value + other_val - 1) // other_val)
 
