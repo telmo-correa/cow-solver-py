@@ -17,7 +17,7 @@ The Rust "baseline" solver is part of the [CoW Protocol Services repository](htt
 | | Partially fillable (AMM) | ✅ | ✅ | Rust: binary search; Python: exact calculation (better) |
 | | Partially fillable (CoW) | ❌ | ✅ | Python-only: partial CoW matching |
 | **Liquidity** | UniswapV2 (constant product) | ✅ | ✅ | 0.3% fee |
-| | UniswapV3 (concentrated) | ⚠️ | ❌ | Requires RPC config |
+| | UniswapV3 (concentrated) | ⚠️ | ⚠️ | Both require RPC config |
 | | Balancer V2 weighted | ✅ | ❌ | V0 and V3+ versions |
 | | Balancer/Curve stable | ✅ | ❌ | With amplification |
 | | 0x limit orders | ✅ | ❌ | As liquidity source |
@@ -112,13 +112,22 @@ Both solvers run as HTTP servers and accept the same auction JSON format.
 
 **Terminal 1 - Python Solver (port 8000):**
 ```bash
+# V2 only:
 python -m solver.api.main
+
+# V2 + V3 (requires RPC):
+RPC_URL="https://eth.llamarpc.com" python -m solver.api.main
 ```
 
 **Terminal 2 - Rust Solver (port 8080):**
 ```bash
 # From the cowprotocol/services repo
+
+# V2 only:
 ./target/release/solvers --addr 127.0.0.1:8080 baseline --config crates/solvers/config/example.baseline.toml
+
+# V2 + V3 (requires uni-v3-node-url in config):
+./target/release/solvers --addr 127.0.0.1:8080 baseline --config crates/solvers/config/baseline_v3.toml
 ```
 
 ### Step 2: Run Benchmarks
@@ -138,22 +147,25 @@ python scripts/run_benchmarks.py --python-url http://localhost:8000 \
 
 ### Shared Functionality (Python vs Rust)
 
+Includes both V2 and V3 liquidity benchmarks (13 total test cases).
+
 ```
 ============================================================
 CoW Protocol Solver Benchmark (HTTP)
 ============================================================
 Auctions directory: tests/fixtures/auctions/benchmark
-Python solver: http://localhost:8000
-Rust solver:   http://localhost:8080
+Python solver: http://localhost:8000 (with RPC_URL)
+Rust solver:   http://localhost:8080 (with baseline_v3.toml)
 
-Total auctions: 9
-Successful: 9
+Total auctions: 13
+Successful: 13
 
-Python found solutions: 9/9
-Rust found solutions:   9/9
+Python found solutions: 13/13
+Rust found solutions:   13/13
 
 Individual Results:
 ------------------------------------------------------------
+  # V2 Liquidity Tests
   buy_usdc_with_weth:
     Result [✓]: Solutions match
   usdc_to_dai_multihop:
@@ -173,14 +185,28 @@ Individual Results:
   dai_to_usdc_multihop:
     Result [✓]: Solutions match
 
+  # V3 Liquidity Tests
+  v3_weth_to_usdc:
+    Result [✓]: Solutions match
+  v3_usdc_to_weth:
+    Result [✓]: Solutions match
+  v3_buy_weth:
+    Result [✓]: Solutions match
+  v2_v3_comparison:
+    Result [✓]: Solutions match
+
 Solution Comparison Summary:
-  Matching:     7/9
-  Improvements: 2/9 (Python better)
-  Regressions:  0/9
+  Matching:     11/13
+  Improvements: 2/13 (Python better - partial fill exact calculation)
+  Regressions:  0/13
   OK: All differences are improvements over Rust.
 ```
 
-**Summary**: Python matches Rust on 7 test cases and **outperforms** Rust on 2 partial fill cases. For partially fillable orders, Python calculates the exact maximum fill (38.7%, 35.6%) while Rust uses binary search fractions (25%). Python is approximately 2x slower than Rust.
+**Summary**: Python matches Rust on 11 test cases and **outperforms** Rust on 2 partial fill cases. For partially fillable orders, Python calculates the exact maximum fill (38.7%, 35.6%) while Rust uses binary search fractions (25%).
+
+**Performance**:
+- V2 swaps: Python ~1.5x slower than Rust (pure computation)
+- V3 swaps: Python ~2.9x slower than Rust (both use RPC, different implementations)
 
 ### Python-Only Features
 
@@ -241,6 +267,45 @@ curl -X POST http://127.0.0.1:8080/solve \
     -d '{"id":"1","tokens":{},"orders":[],"liquidity":[],"effectiveGasPrice":"1","deadline":"2030-01-01T00:00:00Z","surplusCapturingJitOrderOwners":[]}'
 # Expected: {"solutions":[]}
 ```
+
+## Enabling UniswapV3 Support
+
+Both Python and Rust solvers support UniswapV3 concentrated liquidity, but it requires RPC configuration to query the on-chain QuoterV2 contract.
+
+### Python Solver (V3)
+
+Set the `RPC_URL` environment variable:
+
+```bash
+RPC_URL="https://eth.llamarpc.com" python -m solver.api.main
+```
+
+Or use any Ethereum mainnet RPC endpoint (Alchemy, Infura, etc.).
+
+### Rust Solver (V3)
+
+Create or use a V3-enabled config file:
+
+```toml
+# crates/solvers/config/baseline_v3.toml
+chain-id = "1"
+base-tokens = ["0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"]
+max-hops = 1
+max-partial-attempts = 5
+native-token-price-estimation-amount = "100000000000000000"
+
+# Enable UniswapV3 with RPC
+uni-v3-node-url = "https://eth.llamarpc.com"
+```
+
+Start with the V3 config:
+```bash
+./target/release/solvers --addr 127.0.0.1:8080 baseline --config crates/solvers/config/baseline_v3.toml
+```
+
+### V3 Performance Note
+
+UniswapV3 quotes require on-chain RPC calls to the QuoterV2 contract (`eth_call`), which adds ~300-900ms latency per V3 pool. This makes V3 swaps significantly slower than V2 swaps (which are computed locally).
 
 ## Benchmark CLI Options
 
