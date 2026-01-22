@@ -58,6 +58,7 @@ Individual session logs are preserved in the `archive/` directory for reference.
 | [31](session-31.md) | 2026-01-22 | Balancer AMM Integration (Slice 3.2.5) |
 | [32](session-32.md) | 2026-01-22 | Router Integration for Balancer Pools (Slice 3.2.6) |
 | [33](session-33.md) | 2026-01-22 | Integration Tests for Balancer Pools (Slice 3.2.7) |
+| [34](session-34.md) | 2026-01-22 | Balancer Benchmarking (Slice 3.2.8) |
 
 ## Session Template
 
