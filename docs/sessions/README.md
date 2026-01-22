@@ -2,33 +2,13 @@
 
 This directory tracks progress across AI-assisted development sessions.
 
-## Sessions
+## Phase Summaries
 
-| Session | Date | Title | Key Accomplishments |
-|---------|------|-------|---------------------|
-| [01](session-01.md) | 2026-01-20 | Initial Setup | Project skeleton, models, benchmark harness |
-| [02](session-02.md) | 2026-01-20 | Single Order Routing | Slice 1.1 + 1.2: UniswapV2 routing |
-| [03](session-03.md) | 2026-01-20 | Code Review and Bug Fixes | Critical fixes, clearing prices |
-| [04](session-04.md) | 2026-01-20 | Comprehensive Code Review | Type safety, address normalization |
-| [05](session-05.md) | 2026-01-20 | Second Code Review Fixes | DAI address fix, network validation |
-| [06](session-06.md) | 2026-01-20 | Third Code Review Fixes | Router tests, TokenAmount model |
-| [07](session-07.md) | 2026-01-21 | Multi-hop Routing | Slice 1.4: BFS pathfinding, PoolRegistry |
-| [08](session-08.md) | 2026-01-21 | Benchmark Solution Comparison | Solution output verification |
-| [09](session-09.md) | 2026-01-21 | Code Review and Simplification | Dead code removal, -203 lines |
-| [10](session-10.md) | 2026-01-21 | CoW Matching (Slice 2.1) | Strategy pattern, peer-to-peer settlement |
-| [11](session-11.md) | 2026-01-21 | Buy Order Support | All order type combinations for CoW matching |
-| [12](session-12.md) | 2026-01-21 | Partial CoW + AMM (Slice 2.2) | Composable strategies, partial matching |
-| [13](session-13.md) | 2026-01-21 | AMM Partial Fill Support | Optimal partial fills, outperforms Rust |
-| [14](session-14.md) | 2026-01-21 | Code Quality Improvements | Refactoring, error handling, test coverage |
-| [15](session-15.md) | 2026-01-21 | Data-Driven Matching Rules | Rule tables, 62% code reduction |
-| [16](session-16.md) | 2026-01-22 | UniswapV3 Data Structures | V3 pool dataclass, parsing, fixtures |
-| [17](session-17.md) | 2026-01-22 | UniswapV3 Quoter Interface | Mock quoter, Web3 quoter, ABI |
-| [18](session-18.md) | 2026-01-22 | UniswapV3 Settlement Encoding | SwapRouterV2 encoding functions |
-| [19](session-19.md) | 2026-01-22 | UniswapV3 AMM Integration | V3 AMM class with quoter integration |
-| [20](session-20.md) | 2026-01-22 | UniswapV3 Router Integration | V3 in router, best-quote selection |
-| [21](session-21.md) | 2026-01-22 | UniswapV3 Integration Tests | V3 fixtures, 12 integration tests |
-| [22](session-22.md) | 2026-01-22 | Real Quoter Integration | RPC tests, pytest marker |
-| [23](session-23.md) | 2026-01-22 | Limit Order Fee Handling | Fee calculation, overflow analysis, fixture fixes |
+| Phase | Sessions | Status | Summary |
+|-------|----------|--------|---------|
+| [Phase 1](phase-1-summary.md) | 1-9 | Complete | Infrastructure + Single Order Routing |
+| [Phase 2](phase-2-summary.md) | 10-15 | Complete | CoW Matching |
+| [Phase 3.1](phase-3-summary.md) | 16-23 | Complete | UniswapV3 Integration |
 
 ## Current Status
 
@@ -36,7 +16,37 @@ This directory tracks progress across AI-assisted development sessions.
 - **Phase 2:** Complete (CoW matching, partial fills)
 - **Phase 3:** Slice 3.1 Complete (UniswapV3 integration)
 - **Tests:** 288 passing, 14 skipped
-- **Benchmark:** All fixtures pass (V2 + V3 with limit order fee support)
+- **Next:** Slice 3.2 (Balancer/Curve Integration)
+
+## Session Archive
+
+Individual session logs are preserved in the `archive/` directory for reference.
+
+| Session | Date | Title |
+|---------|------|-------|
+| [01](archive/session-01.md) | 2026-01-20 | Initial Setup |
+| [02](archive/session-02.md) | 2026-01-20 | Single Order Routing |
+| [03](archive/session-03.md) | 2026-01-20 | Code Review and Bug Fixes |
+| [04](archive/session-04.md) | 2026-01-20 | Comprehensive Code Review |
+| [05](archive/session-05.md) | 2026-01-20 | Second Code Review Fixes |
+| [06](archive/session-06.md) | 2026-01-20 | Third Code Review Fixes |
+| [07](archive/session-07.md) | 2026-01-21 | Multi-hop Routing |
+| [08](archive/session-08.md) | 2026-01-21 | Benchmark Solution Comparison |
+| [09](archive/session-09.md) | 2026-01-21 | Code Review and Simplification |
+| [10](archive/session-10.md) | 2026-01-21 | CoW Matching (Slice 2.1) |
+| [11](archive/session-11.md) | 2026-01-21 | Buy Order Support |
+| [12](archive/session-12.md) | 2026-01-21 | Partial CoW + AMM (Slice 2.2) |
+| [13](archive/session-13.md) | 2026-01-21 | AMM Partial Fill Support |
+| [14](archive/session-14.md) | 2026-01-21 | Code Quality Improvements |
+| [15](archive/session-15.md) | 2026-01-21 | Data-Driven Matching Rules |
+| [16](archive/session-16.md) | 2026-01-22 | UniswapV3 Data Structures |
+| [17](archive/session-17.md) | 2026-01-22 | UniswapV3 Quoter Interface |
+| [18](archive/session-18.md) | 2026-01-22 | UniswapV3 Settlement Encoding |
+| [19](archive/session-19.md) | 2026-01-22 | UniswapV3 AMM Integration |
+| [20](archive/session-20.md) | 2026-01-22 | UniswapV3 Router Integration |
+| [21](archive/session-21.md) | 2026-01-22 | UniswapV3 Integration Tests |
+| [22](archive/session-22.md) | 2026-01-22 | Real Quoter Integration |
+| [23](archive/session-23.md) | 2026-01-22 | Limit Order Fee Handling |
 
 ## Session Template
 
