@@ -1,4 +1,9 @@
-"""Fee calculator service for the solver."""
+"""Fee calculator service for the solver.
+
+Uses SafeInt for arithmetic operations to prevent:
+- Division by zero (caught by early returns, SafeInt adds explicit protection)
+- uint256 overflow (validated before returning fee)
+"""
 
 from typing import Protocol
 
@@ -7,6 +12,7 @@ import structlog
 from solver.fees.config import DEFAULT_FEE_CONFIG, FeeConfig
 from solver.fees.result import FeeError, FeeResult
 from solver.models.auction import AuctionInstance, Order, OrderClass, Token
+from solver.safe_int import S, Uint256Overflow
 
 logger = structlog.get_logger()
 
@@ -158,9 +164,25 @@ class DefaultFeeCalculator:
                 )
             return FeeResult.zero_fee()
 
-        # Calculate fee: gas_cost * 1e18 / reference_price
-        gas_cost_wei = gas_estimate * gas_price
+        # Calculate fee using SafeInt: gas_cost * 1e18 / reference_price
+        # Note: reference_price is validated non-zero above
+        gas_cost_wei = S(gas_estimate) * S(gas_price)
         fee = (gas_cost_wei * self.config.fee_base) // reference_price
+
+        # Validate fee fits in uint256 before returning
+        try:
+            fee_uint256 = fee.to_uint256()
+        except Uint256Overflow:
+            logger.warning(
+                "fee_calculation_overflow",
+                order_uid=order.uid[:18] + "...",
+                fee_value=str(fee.value),
+                reason="Calculated fee exceeds uint256",
+            )
+            return FeeResult.with_error(
+                FeeError.FEE_EXCEEDS_AMOUNT,
+                f"Calculated fee {fee.value} exceeds uint256 max",
+            )
 
         logger.debug(
             "fee_calculated",
@@ -168,10 +190,10 @@ class DefaultFeeCalculator:
             gas_estimate=gas_estimate,
             gas_price=gas_price,
             reference_price=reference_price,
-            fee=fee,
+            fee=fee_uint256,
         )
 
-        return FeeResult.with_fee(fee)
+        return FeeResult.with_fee(fee_uint256)
 
     def validate_fee_against_amount(
         self,

@@ -1,4 +1,9 @@
-"""Base protocol and data structures for solution strategies."""
+"""Base protocol and data structures for solution strategies.
+
+Uses SafeInt for arithmetic operations to prevent:
+- Underflow when subtracting fees from executed amounts
+- Division by zero in fill ratio calculations
+"""
 
 from __future__ import annotations
 
@@ -11,6 +16,7 @@ import structlog
 from solver.fees import DEFAULT_FEE_CALCULATOR, FeeCalculator
 from solver.models.auction import AuctionInstance, Order
 from solver.models.solution import Interaction, Solution, Trade, TradeKind
+from solver.safe_int import S, Underflow
 
 if TYPE_CHECKING:
     pass
@@ -256,7 +262,17 @@ class StrategyResult:
                     # Use validated fee (may be capped if config allows)
                     fee = validation.fee
                     assert fee is not None
-                    executed = fill.executed_amount - fee
+                    # Use SafeInt for explicit underflow protection
+                    try:
+                        executed = (S(fill.executed_amount) - S(fee)).value
+                    except Underflow:
+                        logger.error(
+                            "fee_subtraction_underflow",
+                            order_uid=order_uid[:18] + "...",
+                            fee=fee,
+                            executed_amount=fill.executed_amount,
+                        )
+                        continue  # Skip this trade
                 else:
                     # For buy orders, fee is added to the sell side
                     executed = fill.executed_amount

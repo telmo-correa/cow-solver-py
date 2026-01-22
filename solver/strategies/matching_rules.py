@@ -8,6 +8,10 @@ The rules are expressed as data structures rather than code, making them:
 - Self-documenting
 - Testable in isolation
 - Extensible for new order types
+
+All arithmetic operations use SafeInt to prevent:
+- Division by zero (raises DivisionByZero)
+- Subtraction underflow (raises Underflow)
 """
 
 from collections.abc import Callable
@@ -16,6 +20,8 @@ from enum import Enum
 from typing import NamedTuple
 
 import structlog
+
+from solver.safe_int import DivisionByZero, S
 
 logger = structlog.get_logger()
 
@@ -247,56 +253,66 @@ def _partial_sell_sell(a: OrderAmounts) -> tuple[ExecutionAmounts, bool, bool] |
     - If cow_x equals both, it's a perfect match (return None)
     - Calculate cow_y proportionally
     - Verify both limits are satisfied
+
+    Uses SafeInt for all divisions to prevent division by zero.
     """
+    # Wrap amounts in SafeInt for safe arithmetic
+    sell_a, buy_a = S(a.sell_a), S(a.buy_a)
+    sell_b, buy_b = S(a.sell_b), S(a.buy_b)
+
     # Check limits compatibility
-    if a.buy_a * a.buy_b > a.sell_a * a.sell_b:
+    if buy_a * buy_b > sell_a * sell_b:
         logger.debug("cow_partial_no_match_limits", reason="Limit prices not compatible")
         return None
 
-    cow_x = min(a.sell_a, a.buy_b)
+    cow_x = sell_a.min(buy_b)
 
     # Perfect match case - handled elsewhere
-    if cow_x == a.sell_a and cow_x == a.buy_b:
+    if cow_x == sell_a and cow_x == buy_b:
         return None
 
     # Determine which order is partial
-    a_is_partial = cow_x == a.buy_b  # B fully filled, A partial
-    b_is_partial = cow_x == a.sell_a  # A fully filled, B partial
+    a_is_partial = cow_x == buy_b  # B fully filled, A partial
+    b_is_partial = cow_x == sell_a  # A fully filled, B partial
 
-    # Calculate cow_y (keep if-else for clarity with explanatory comments)
-    if cow_x == a.buy_b:  # noqa: SIM108
-        cow_y = a.sell_b  # B gives all their Y
-    else:
-        cow_y = (cow_x * a.sell_b) // a.buy_b  # Proportional using B's rate
+    # Calculate cow_y using SafeInt division (raises on zero)
+    try:
+        if cow_x == buy_b:  # noqa: SIM108 - keep explicit for clarity
+            cow_y = sell_b  # B gives all their Y
+        else:
+            cow_y = (cow_x * sell_b) // buy_b  # Proportional using B's rate
 
-    # Verify A's limit (ceiling division)
-    a_min_receive = (cow_x * a.buy_a + a.sell_a - 1) // a.sell_a
-    if cow_y < a_min_receive:
-        logger.debug(
-            "cow_partial_no_match_a_limit",
-            reason="Partial fill doesn't satisfy A's limit",
-            cow_y=cow_y,
-            a_min_receive=a_min_receive,
-        )
-        return None
+        # Verify A's limit (ceiling division)
+        a_min_receive = (cow_x * buy_a).ceiling_div(sell_a)
+        if cow_y < a_min_receive:
+            logger.debug(
+                "cow_partial_no_match_a_limit",
+                reason="Partial fill doesn't satisfy A's limit",
+                cow_y=cow_y.value,
+                a_min_receive=a_min_receive.value,
+            )
+            return None
 
-    # Verify B's limit (ceiling division)
-    b_min_receive = (cow_y * a.buy_b + a.sell_b - 1) // a.sell_b
-    if cow_x < b_min_receive:
-        logger.debug(
-            "cow_partial_no_match_b_limit",
-            reason="Partial fill doesn't satisfy B's limit",
-            cow_x=cow_x,
-            b_min_receive=b_min_receive,
-        )
+        # Verify B's limit (ceiling division)
+        b_min_receive = (cow_y * buy_b).ceiling_div(sell_b)
+        if cow_x < b_min_receive:
+            logger.debug(
+                "cow_partial_no_match_b_limit",
+                reason="Partial fill doesn't satisfy B's limit",
+                cow_x=cow_x.value,
+                b_min_receive=b_min_receive.value,
+            )
+            return None
+    except DivisionByZero:
+        logger.debug("cow_partial_division_by_zero", reason="Zero amount in calculation")
         return None
 
     return (
         ExecutionAmounts(
-            exec_sell_a=cow_x,
-            exec_buy_a=cow_y,
-            exec_sell_b=cow_y,
-            exec_buy_b=cow_x,
+            exec_sell_a=cow_x.value,
+            exec_buy_a=cow_y.value,
+            exec_sell_b=cow_y.value,
+            exec_buy_b=cow_x.value,
         ),
         a_is_partial,
         b_is_partial,
