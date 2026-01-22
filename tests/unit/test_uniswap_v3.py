@@ -402,3 +402,160 @@ class TestV3Constants:
     def test_gas_cost(self):
         """Test gas cost constant."""
         assert V3_SWAP_GAS_COST == 106_000
+
+
+class TestMockUniswapV3Quoter:
+    """Tests for MockUniswapV3Quoter."""
+
+    def test_returns_configured_exact_input_quote(self):
+        """Test mock quoter returns configured value for exact input."""
+        from solver.amm.uniswap_v3 import MockUniswapV3Quoter, QuoteKey
+
+        token_in = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"  # WETH
+        token_out = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"  # USDC
+        fee = 3000
+        amount_in = 10**18  # 1 WETH
+
+        key = QuoteKey(token_in, token_out, fee, amount_in, is_exact_input=True)
+        expected_out = 3000 * 10**6  # 3000 USDC
+
+        quoter = MockUniswapV3Quoter(quotes={key: expected_out})
+        result = quoter.quote_exact_input(token_in, token_out, fee, amount_in)
+
+        assert result == expected_out
+
+    def test_returns_configured_exact_output_quote(self):
+        """Test mock quoter returns configured value for exact output."""
+        from solver.amm.uniswap_v3 import MockUniswapV3Quoter, QuoteKey
+
+        token_in = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"  # WETH
+        token_out = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"  # USDC
+        fee = 3000
+        amount_out = 3000 * 10**6  # 3000 USDC
+
+        key = QuoteKey(token_in, token_out, fee, amount_out, is_exact_input=False)
+        expected_in = 10**18  # 1 WETH
+
+        quoter = MockUniswapV3Quoter(quotes={key: expected_in})
+        result = quoter.quote_exact_output(token_in, token_out, fee, amount_out)
+
+        assert result == expected_in
+
+    def test_tracks_calls(self):
+        """Test mock quoter tracks all calls."""
+        from solver.amm.uniswap_v3 import MockUniswapV3Quoter
+
+        quoter = MockUniswapV3Quoter(default_rate=3000.0)
+
+        token_in = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
+        token_out = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
+
+        quoter.quote_exact_input(token_in, token_out, 3000, 10**18)
+        quoter.quote_exact_output(token_in, token_out, 500, 2000 * 10**6)
+
+        assert len(quoter.calls) == 2
+        assert quoter.calls[0] == ("exact_input", token_in, token_out, 3000, 10**18)
+        assert quoter.calls[1] == ("exact_output", token_in, token_out, 500, 2000 * 10**6)
+
+    def test_returns_none_for_unknown_quote(self):
+        """Test mock quoter returns None for unconfigured quotes."""
+        from solver.amm.uniswap_v3 import MockUniswapV3Quoter
+
+        quoter = MockUniswapV3Quoter()  # No quotes configured, no default_rate
+
+        result = quoter.quote_exact_input("0xAAAA", "0xBBBB", 3000, 10**18)
+
+        assert result is None
+
+    def test_uses_default_rate_for_exact_input(self):
+        """Test mock quoter uses default_rate for unconfigured exact input quotes."""
+        from solver.amm.uniswap_v3 import MockUniswapV3Quoter
+
+        quoter = MockUniswapV3Quoter(default_rate=2500.0)  # 1 token_in = 2500 token_out
+
+        amount_in = 2 * 10**18
+        result = quoter.quote_exact_input("0xAAAA", "0xBBBB", 3000, amount_in)
+
+        assert result == int(amount_in * 2500.0)
+
+    def test_uses_default_rate_for_exact_output(self):
+        """Test mock quoter uses default_rate for unconfigured exact output quotes."""
+        from solver.amm.uniswap_v3 import MockUniswapV3Quoter
+
+        quoter = MockUniswapV3Quoter(default_rate=2500.0)  # 1 token_in = 2500 token_out
+
+        amount_out = 5000 * 10**6
+        result = quoter.quote_exact_output("0xAAAA", "0xBBBB", 3000, amount_out)
+
+        # amount_in = amount_out / rate
+        assert result == int(amount_out / 2500.0)
+
+    def test_quote_key_address_normalization(self):
+        """Test QuoteKey normalizes addresses for comparison."""
+        from solver.amm.uniswap_v3 import MockUniswapV3Quoter, QuoteKey
+
+        # Use uppercase address in config
+        key = QuoteKey(
+            "0xC02AAA39B223FE8D0A0E5C4F27EAD9083C756CC2",
+            "0xA0B86991C6218B36C1D19D4A2E9EB0CE3606EB48",
+            3000,
+            10**18,
+            is_exact_input=True,
+        )
+        quoter = MockUniswapV3Quoter(quotes={key: 3000 * 10**6})
+
+        # Query with lowercase address
+        result = quoter.quote_exact_input(
+            "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",
+            "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+            3000,
+            10**18,
+        )
+
+        assert result == 3000 * 10**6
+
+
+class TestQuoterV2ABI:
+    """Tests for QuoterV2 ABI."""
+
+    def test_abi_has_required_functions(self):
+        """Test that ABI includes required functions."""
+        from solver.amm.uniswap_v3 import QUOTER_V2_ABI
+
+        function_names = {f["name"] for f in QUOTER_V2_ABI}
+        assert "quoteExactInputSingle" in function_names
+        assert "quoteExactOutputSingle" in function_names
+
+    def test_exact_input_single_params(self):
+        """Test quoteExactInputSingle has correct parameters."""
+        from solver.amm.uniswap_v3 import QUOTER_V2_ABI
+
+        func = next(f for f in QUOTER_V2_ABI if f["name"] == "quoteExactInputSingle")
+
+        # Should have tuple input with correct components
+        assert len(func["inputs"]) == 1
+        assert func["inputs"][0]["type"] == "tuple"
+
+        component_names = {c["name"] for c in func["inputs"][0]["components"]}
+        assert "tokenIn" in component_names
+        assert "tokenOut" in component_names
+        assert "amountIn" in component_names
+        assert "fee" in component_names
+        assert "sqrtPriceLimitX96" in component_names
+
+    def test_exact_output_single_params(self):
+        """Test quoteExactOutputSingle has correct parameters."""
+        from solver.amm.uniswap_v3 import QUOTER_V2_ABI
+
+        func = next(f for f in QUOTER_V2_ABI if f["name"] == "quoteExactOutputSingle")
+
+        # Should have tuple input with correct components
+        assert len(func["inputs"]) == 1
+        assert func["inputs"][0]["type"] == "tuple"
+
+        component_names = {c["name"] for c in func["inputs"][0]["components"]}
+        assert "tokenIn" in component_names
+        assert "tokenOut" in component_names
+        assert "amount" in component_names  # Note: "amount" not "amountOut"
+        assert "fee" in component_names
+        assert "sqrtPriceLimitX96" in component_names

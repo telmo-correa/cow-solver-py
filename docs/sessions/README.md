@@ -22,13 +22,14 @@ This directory tracks progress across AI-assisted development sessions.
 | [14](session-14.md) | 2026-01-21 | Code Quality Improvements | Refactoring, error handling, test coverage |
 | [15](session-15.md) | 2026-01-21 | Data-Driven Matching Rules | Rule tables, 62% code reduction |
 | [16](session-16.md) | 2026-01-22 | UniswapV3 Data Structures | V3 pool dataclass, parsing, fixtures |
+| [17](session-17.md) | 2026-01-22 | UniswapV3 Quoter Interface | Mock quoter, Web3 quoter, ABI |
 
 ## Current Status
 
 - **Phase 1:** Complete (single-order AMM routing)
 - **Phase 2:** Complete (CoW matching, partial fills)
 - **Phase 3:** In progress (Liquidity Expansion - UniswapV3)
-- **Tests:** 224 passing
+- **Tests:** 234 passing
 - **Benchmark:** All 15 fixtures pass (9 AMM + 6 CoW matching)
 
 ## Session Template
