@@ -51,7 +51,14 @@ async def solve(
         solver_instance: Injected solver (via FastAPI Depends)
 
     Returns:
-        SolverResponse containing proposed solutions
+        SolverResponse containing proposed solutions.
+        Uses `response_model_exclude_none=True` to omit None fields from JSON,
+        reducing payload size and matching CoW Protocol API expectations.
+
+    Error Handling:
+        - Invalid request schema: Returns 422 Validation Error (Pydantic)
+        - Unsupported network: Returns empty solutions (graceful degradation)
+        - Solver exception: Logs error, returns empty solutions
     """
     logger.info(
         "received_auction",
@@ -81,7 +88,20 @@ async def solve(
         return SolverResponse.empty()
 
     # Use the solver to find solutions
-    response = solver_instance.solve(auction)
+    # Wrap in try-except to prevent uncaught exceptions from crashing the server
+    try:
+        response = solver_instance.solve(auction)
+    except Exception:
+        # Log error with full traceback for debugging
+        logger.exception(
+            "solver_error",
+            auction_id=auction.id,
+            order_count=auction.order_count,
+            message="Solver raised an exception, returning empty solution",
+        )
+        # Return empty response rather than 500 error
+        # This allows the driver to continue and try other solvers
+        return SolverResponse.empty()
 
     logger.info(
         "returning_solutions",

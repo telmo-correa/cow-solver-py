@@ -11,6 +11,7 @@ import structlog
 
 from solver.math.fixed_point import AMP_PRECISION, Bfp
 from solver.models.types import normalize_address
+from solver.safe_int import UINT256_MAX
 
 from .errors import BalancerError
 from .pools import (
@@ -81,11 +82,28 @@ def converge_in_amount(
 
     for _ in range(6):
         bumped_in_amount = in_amount + bump
+        # Overflow protection: if bumped amount exceeds uint256, give up
+        if bumped_in_amount > UINT256_MAX:
+            logger.debug(
+                "converge_in_amount_overflow",
+                in_amount=in_amount,
+                bump=bump,
+                message="Bump would overflow uint256",
+            )
+            return None
         out_amount = get_amount_out(bumped_in_amount)
         if out_amount is None:
             return None
         if out_amount >= exact_out_amount:
             return (bumped_in_amount, out_amount)
+        # Overflow protection: cap bump at uint256 max to prevent unbounded growth
+        if bump > UINT256_MAX // 10:
+            logger.debug(
+                "converge_in_amount_bump_overflow",
+                bump=bump,
+                message="Bump multiplication would overflow uint256",
+            )
+            return None
         bump *= 10
 
     return None
@@ -141,6 +159,25 @@ def _get_weighted_reserves(
         )
         return None
 
+    # Zero-balance check to prevent division by zero in swap calculations
+    if reserve_in.balance == 0:
+        logger.debug(
+            "weighted_amm_zero_balance",
+            pool_id=pool.id,
+            token=token_in,
+            role="input",
+        )
+        return None
+
+    if reserve_out.balance == 0:
+        logger.debug(
+            "weighted_amm_zero_balance",
+            pool_id=pool.id,
+            token=token_out,
+            role="output",
+        )
+        return None
+
     return reserve_in, reserve_out
 
 
@@ -188,6 +225,25 @@ def _get_stable_reserves(
     if reserve_out is None or index_out is None:
         logger.debug(
             "stable_amm_token_not_found",
+            pool_id=pool.id,
+            token=token_out,
+            role="output",
+        )
+        return None
+
+    # Zero-balance check to prevent division by zero in swap calculations
+    if reserve_in.balance == 0:
+        logger.debug(
+            "stable_amm_zero_balance",
+            pool_id=pool.id,
+            token=token_in,
+            role="input",
+        )
+        return None
+
+    if reserve_out.balance == 0:
+        logger.debug(
+            "stable_amm_zero_balance",
             pool_id=pool.id,
             token=token_out,
             role="output",

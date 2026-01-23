@@ -12,25 +12,7 @@ from solver.amm.uniswap_v2 import UniswapV2Pool
 from solver.models.auction import Order, OrderClass, OrderKind
 from solver.pools import PoolRegistry
 from solver.routing.router import SingleOrderRouter
-
-
-def make_order(
-    sell_token: str = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
-    buy_token: str = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
-    sell_amount: str = "1000000000000000000",
-    buy_amount: str = "2000000000",
-    kind: OrderKind = OrderKind.SELL,
-) -> Order:
-    """Create a test order with sensible defaults."""
-    return Order(
-        uid="0x" + "01" * 56,
-        sellToken=sell_token,
-        buyToken=buy_token,
-        sellAmount=sell_amount,
-        buyAmount=buy_amount,
-        kind=kind,
-        **{"class": OrderClass.LIMIT},
-    )
+from tests.conftest import make_order
 
 
 class TestBalancerRouterIntegration:

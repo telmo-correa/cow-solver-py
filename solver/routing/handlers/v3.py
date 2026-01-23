@@ -60,7 +60,17 @@ class UniswapV3Handler(BaseHandler):
         sell_amount: int,
         min_buy_amount: int,
     ) -> RoutingResult:
-        """Route a sell order through V3 pool."""
+        """Route a sell order (exact input) through V3 pool.
+
+        Args:
+            order: The order being routed
+            pool: V3 pool to use for the swap
+            sell_amount: Exact amount to sell
+            min_buy_amount: Minimum acceptable output
+
+        Returns:
+            RoutingResult with success=True if output >= min_buy_amount
+        """
         assert self.amm is not None  # Checked by caller
 
         result = self.amm.simulate_swap(pool, order.sell_token, sell_amount)
@@ -89,7 +99,17 @@ class UniswapV3Handler(BaseHandler):
         max_sell_amount: int,
         buy_amount: int,
     ) -> RoutingResult:
-        """Route a buy order through V3 pool."""
+        """Route a buy order (exact output) through V3 pool.
+
+        Args:
+            order: The order being routed
+            pool: V3 pool to use for the swap
+            max_sell_amount: Maximum willing to pay
+            buy_amount: Exact amount to receive
+
+        Returns:
+            RoutingResult with success=True if required input <= max_sell_amount
+        """
         assert self.amm is not None  # Checked by caller
 
         result = self.amm.simulate_swap_exact_output(pool, order.sell_token, buy_amount)

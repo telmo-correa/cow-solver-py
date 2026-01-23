@@ -215,7 +215,9 @@ class Liquidity(BaseModel):
     # Optional fields for full format
     address: Address | None = None
     router: Address | None = None
-    gas_estimate: Uint256 | None = Field(default=None, alias="gasEstimate")
+    # Note: gas_estimate uses str (not Uint256) to allow fallback to default
+    # when invalid values are provided. Parsing code handles the conversion.
+    gas_estimate: str | None = Field(default=None, alias="gasEstimate")
     fee: str | None = None
     # Additional fields depend on the AMM type
     extra: dict[str, Any] = Field(default_factory=dict)

@@ -10,12 +10,70 @@ import pytest
 from solver.amm.base import SwapResult
 from solver.amm.uniswap_v2 import UniswapV2Pool
 from solver.models import AuctionInstance
+from solver.models.auction import Order, OrderClass, OrderKind
 from solver.pools import PoolRegistry
 from solver.routing.router import RoutingResult, SingleOrderRouter
 from solver.solver import Solver
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 AUCTIONS_DIR = FIXTURES_DIR / "auctions"
+
+# =============================================================================
+# Test token addresses (consistent across all tests)
+# =============================================================================
+
+TEST_WETH = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"  # WETH (18 decimals)
+TEST_USDC = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"  # USDC (6 decimals)
+TEST_DAI = "0x6B175474E89094C44Da98b954EescdeCB5F1C4C4"  # DAI (18 decimals)
+TEST_USDT = "0xdAC17F958D2ee523a2206206994597C13D831ec7"  # USDT (6 decimals)
+TEST_WBTC = "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599"  # WBTC (8 decimals)
+
+
+# =============================================================================
+# Test order factory
+# =============================================================================
+
+
+def make_order(
+    sell_token: str = TEST_WETH,
+    buy_token: str = TEST_USDC,
+    sell_amount: str = "1000000000000000000",  # 1 WETH
+    buy_amount: str = "2000000000",  # 2000 USDC (conservative limit for test pools)
+    kind: OrderKind = OrderKind.SELL,
+    order_class: OrderClass = OrderClass.LIMIT,
+    uid: str | None = None,
+    partially_fillable: bool = False,
+) -> Order:
+    """Create a test order with sensible defaults.
+
+    This is a shared factory function to reduce duplication across test files.
+
+    Args:
+        sell_token: Token to sell (default: WETH)
+        buy_token: Token to buy (default: USDC)
+        sell_amount: Amount to sell as decimal string (default: 1 WETH)
+        buy_amount: Amount to buy as decimal string (default: 2500 USDC)
+        kind: Order kind (sell or buy, default: sell)
+        order_class: Order class (market, limit, liquidity, default: limit)
+        uid: Order UID (default: auto-generated)
+        partially_fillable: Whether order can be partially filled (default: False)
+
+    Returns:
+        Order instance ready for testing
+    """
+    if uid is None:
+        uid = "0x" + "01" * 56  # Default test UID
+
+    return Order(
+        uid=uid,
+        sellToken=sell_token,
+        buyToken=buy_token,
+        sellAmount=sell_amount,
+        buyAmount=buy_amount,
+        kind=kind,
+        partiallyFillable=partially_fillable,
+        **{"class": order_class},
+    )
 
 
 @pytest.fixture

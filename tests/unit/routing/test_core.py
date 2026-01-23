@@ -1,48 +1,27 @@
 """Unit tests for router core functionality - error handling, buy orders, build solution."""
 
-from solver.models.auction import Order, OrderClass, OrderKind
+import pytest
+from pydantic import ValidationError
+
+from solver.models.auction import OrderKind
 from solver.routing.router import RoutingResult, SingleOrderRouter
+from tests.conftest import make_order
 
 # Note: The `router` fixture is defined in conftest.py with test pools
-
-
-def make_order(
-    sell_token: str = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
-    buy_token: str = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
-    sell_amount: str = "1000000000000000000",
-    buy_amount: str = "2000000000",
-    kind: OrderKind = OrderKind.SELL,
-) -> Order:
-    """Create a test order with sensible defaults."""
-    return Order(
-        uid="0x" + "01" * 56,
-        sellToken=sell_token,
-        buyToken=buy_token,
-        sellAmount=sell_amount,
-        buyAmount=buy_amount,
-        kind=kind,
-        **{"class": OrderClass.LIMIT},
-    )
 
 
 class TestRouterErrorHandling:
     """Tests for router error handling paths."""
 
-    def test_invalid_sell_amount_format(self, router):
-        """Non-numeric sell amount returns failure."""
-        order = make_order(sell_amount="not-a-number")
-        result = router.route_order(order)
+    def test_invalid_sell_amount_format(self):
+        """Non-numeric sell amount is rejected at Pydantic validation."""
+        with pytest.raises(ValidationError, match="Uint256 must be a decimal integer"):
+            make_order(sell_amount="not-a-number")
 
-        assert result.success is False
-        assert "Invalid amount format" in result.error
-
-    def test_invalid_buy_amount_format(self, router):
-        """Non-numeric buy amount returns failure."""
-        order = make_order(buy_amount="invalid")
-        result = router.route_order(order)
-
-        assert result.success is False
-        assert "Invalid amount format" in result.error
+    def test_invalid_buy_amount_format(self):
+        """Non-numeric buy amount is rejected at Pydantic validation."""
+        with pytest.raises(ValidationError, match="Uint256 must be a decimal integer"):
+            make_order(buy_amount="invalid")
 
     def test_zero_sell_amount(self, router):
         """Zero sell amount returns failure."""
@@ -52,13 +31,10 @@ class TestRouterErrorHandling:
         assert result.success is False
         assert "Sell amount must be positive" in result.error
 
-    def test_negative_sell_amount(self, router):
-        """Negative sell amount returns failure."""
-        order = make_order(sell_amount="-1000")
-        result = router.route_order(order)
-
-        assert result.success is False
-        assert "Sell amount must be positive" in result.error
+    def test_negative_sell_amount(self):
+        """Negative sell amount is rejected at Pydantic validation."""
+        with pytest.raises(ValidationError, match="Uint256 cannot be negative"):
+            make_order(sell_amount="-1000")
 
     def test_zero_buy_amount(self, router):
         """Zero buy amount returns failure."""
@@ -68,13 +44,10 @@ class TestRouterErrorHandling:
         assert result.success is False
         assert "Buy amount must be positive" in result.error
 
-    def test_negative_buy_amount(self, router):
-        """Negative buy amount returns failure."""
-        order = make_order(buy_amount="-500")
-        result = router.route_order(order)
-
-        assert result.success is False
-        assert "Buy amount must be positive" in result.error
+    def test_negative_buy_amount(self):
+        """Negative buy amount is rejected at Pydantic validation."""
+        with pytest.raises(ValidationError, match="Uint256 cannot be negative"):
+            make_order(buy_amount="-500")
 
     def test_no_pool_for_pair(self, router):
         """Unknown token pair returns failure."""

@@ -160,7 +160,20 @@ class BalancerHandler(BaseHandler):
         buy_amount: int,
         try_partial: Callable[[], RoutingResult],
     ) -> RoutingResult:
-        """Route a sell order through a Balancer pool."""
+        """Route a sell order (exact input) through a Balancer pool.
+
+        Args:
+            pool: The Balancer pool (weighted or stable)
+            amm: The AMM implementation (must match pool type)
+            pool_type: String identifier for logging ("weighted" or "stable")
+            order: The order to route
+            sell_amount: Exact amount to sell
+            buy_amount: Minimum acceptable output
+            try_partial: Callback to attempt partial fill if full fill fails
+
+        Returns:
+            RoutingResult with success=True if output >= buy_amount
+        """
         # Pool/AMM type match guaranteed by _route_weighted/_route_stable callers
         result = amm.simulate_swap(pool, order.sell_token, order.buy_token, sell_amount)  # type: ignore[arg-type]
         if result is None:
@@ -194,7 +207,20 @@ class BalancerHandler(BaseHandler):
         buy_amount: int,
         try_partial: Callable[[], RoutingResult],
     ) -> RoutingResult:
-        """Route a buy order through a Balancer pool."""
+        """Route a buy order (exact output) through a Balancer pool.
+
+        Args:
+            pool: The Balancer pool (weighted or stable)
+            amm: The AMM implementation (must match pool type)
+            pool_type: String identifier for logging ("weighted" or "stable")
+            order: The order to route
+            sell_amount: Maximum willing to pay
+            buy_amount: Exact amount to receive
+            try_partial: Callback to attempt partial fill if full fill fails
+
+        Returns:
+            RoutingResult with success=True if required input <= sell_amount
+        """
         # Pool/AMM type match guaranteed by _route_weighted/_route_stable callers
         result = amm.simulate_swap_exact_output(
             pool,  # type: ignore[arg-type]

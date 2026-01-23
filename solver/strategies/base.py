@@ -122,8 +122,11 @@ class OrderFill:
             return None
 
         # Generate a new UID for the remainder order
-        # Derived deterministically from original UID so it's reproducible
-        remainder_uid = self._derive_remainder_uid(self.order.uid)
+        # Derived deterministically from original UID + fill amounts so it's reproducible
+        # and unique for each partial fill amount (prevents UID collision on re-fills)
+        remainder_uid = self._derive_remainder_uid(
+            self.order.uid, self.sell_filled, self.buy_filled
+        )
 
         # Track the original UID for fill merging
         # If this order is already a remainder, preserve the root original_uid
@@ -143,25 +146,33 @@ class OrderFill:
         )
 
     @staticmethod
-    def _derive_remainder_uid(original_uid: str) -> str:
+    def _derive_remainder_uid(original_uid: str, sell_filled: int, buy_filled: int) -> str:
         """Derive a new UID for a remainder order.
 
-        Uses SHA-256 hash of original UID + ":remainder" to create a
-        deterministic but unique UID for the remainder portion.
+        Uses SHA-256 hash of original UID + fill amounts to create a
+        deterministic but unique UID for each partial fill state.
+
+        Including fill amounts ensures that multiple partial fills of the same
+        order produce different remainder UIDs, preventing UID collision when
+        an order is filled by multiple strategies in sequence.
 
         Args:
             original_uid: The original order's UID (hex string with 0x prefix)
+            sell_filled: Amount of sell token filled so far
+            buy_filled: Amount of buy token filled so far
 
         Returns:
             A new UID in the same format (0x + 112 hex chars = 56 bytes)
         """
-        # Hash the original UID with a suffix to derive the remainder UID
-        hash_input = f"{original_uid}:remainder".encode()
+        # Hash the original UID with fill amounts to derive unique remainder UID
+        # Including fill amounts prevents collision when same order is partially
+        # filled multiple times (e.g., by CowMatchStrategy then HybridCowStrategy)
+        hash_input = f"{original_uid}:remainder:{sell_filled}:{buy_filled}".encode()
         hash_bytes = hashlib.sha256(hash_input).digest()
 
         # UID is 56 bytes (112 hex chars), SHA-256 gives 32 bytes
         # Extend by hashing again with different suffix
-        hash_input2 = f"{original_uid}:remainder:ext".encode()
+        hash_input2 = f"{original_uid}:remainder:ext:{sell_filled}:{buy_filled}".encode()
         hash_bytes2 = hashlib.sha256(hash_input2).digest()
 
         # Combine first 32 bytes + first 24 bytes of second hash = 56 bytes
