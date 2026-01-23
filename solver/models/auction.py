@@ -210,7 +210,8 @@ class Liquidity(BaseModel):
     id: str
     kind: str
     # Tokens: list of addresses OR dict mapping address to balance info
-    tokens: list[Address] | dict[Address, TokenBalance]
+    # Note: For limit orders, tokens are specified via makerToken/takerToken instead
+    tokens: list[Address] | dict[Address, TokenBalance] | None = None
     # Optional fields for full format
     address: Address | None = None
     router: Address | None = None

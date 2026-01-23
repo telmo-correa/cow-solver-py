@@ -20,6 +20,7 @@ from solver.strategies.base import OrderFill, StrategyResult
 
 if TYPE_CHECKING:
     from solver.amm.balancer import BalancerStableAMM, BalancerWeightedAMM
+    from solver.amm.limit_order import LimitOrderAMM
     from solver.amm.uniswap_v3 import UniswapV3AMM
 
 logger = structlog.get_logger()
@@ -62,6 +63,7 @@ class AmmRoutingStrategy:
         v3_amm: UniswapV3AMM | None = None,
         weighted_amm: BalancerWeightedAMM | None = None,
         stable_amm: BalancerStableAMM | None = None,
+        limit_order_amm: LimitOrderAMM | None = None,
     ) -> None:
         """Initialize the AMM routing strategy.
 
@@ -75,12 +77,14 @@ class AmmRoutingStrategy:
             v3_amm: UniswapV3 AMM for V3 pool routing. If None, V3 pools are skipped.
             weighted_amm: Balancer weighted AMM. If None, weighted pools are skipped.
             stable_amm: Balancer stable AMM. If None, stable pools are skipped.
+            limit_order_amm: 0x limit order AMM. If None, limit orders are skipped.
         """
         self.amm = amm if amm is not None else uniswap_v2
         self._injected_router = router
         self.v3_amm = v3_amm
         self.weighted_amm = weighted_amm
         self.stable_amm = stable_amm
+        self.limit_order_amm = limit_order_amm
 
     def _get_router(self, pool_registry: PoolRegistry) -> SingleOrderRouter:
         """Get the router to use for routing orders.
@@ -101,6 +105,7 @@ class AmmRoutingStrategy:
             v3_amm=self.v3_amm,
             weighted_amm=self.weighted_amm,
             stable_amm=self.stable_amm,
+            limit_order_amm=self.limit_order_amm,
         )
 
     def _route_and_build(

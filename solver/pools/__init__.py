@@ -3,6 +3,7 @@
 Provides PoolRegistry for managing pools across all liquidity sources.
 """
 
+from .limit_order import LimitOrderPool
 from .registry import PoolRegistry, build_registry_from_liquidity
 from .types import (
     AnyPool,
@@ -20,4 +21,5 @@ __all__ = [
     "UniswapV3Pool",
     "BalancerWeightedPool",
     "BalancerStablePool",
+    "LimitOrderPool",
 ]

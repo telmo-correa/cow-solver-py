@@ -1,0 +1,60 @@
+{
+  "id": "2",
+  "tokens": {
+    "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2": {
+      "decimals": 18,
+      "symbol": "WETH",
+      "referencePrice": "1000000000000000000",
+      "availableBalance": "1000000000000000000",
+      "trusted": true
+    },
+    "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48": {
+      "decimals": 6,
+      "symbol": "USDC",
+      "referencePrice": "400000000000000",
+      "availableBalance": "10000000000",
+      "trusted": true
+    }
+  },
+  "orders": [
+    {
+      "uid": "0x0102030405060708091011121314151617181920212223242526272829303132333435363738394041424344454647484950515253545556",
+      "sellToken": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+      "buyToken": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+      "sellAmount": "1000000000000000000",
+      "fullSellAmount": "1000000000000000000",
+      "buyAmount": "1250000000",
+      "fullBuyAmount": "1250000000",
+      "feePolicies": [],
+      "validTo": 0,
+      "kind": "buy",
+      "owner": "0x5b1e2c2762667331bc91648052f646d1b0d35984",
+      "partiallyFillable": false,
+      "preInteractions": [],
+      "postInteractions": [],
+      "sellTokenSource": "erc20",
+      "buyTokenDestination": "erc20",
+      "class": "market",
+      "appData": "0x0000000000000000000000000000000000000000000000000000000000000000",
+      "signingScheme": "presign",
+      "signature": "0x"
+    }
+  ],
+  "liquidity": [
+    {
+      "kind": "limitOrder",
+      "id": "0",
+      "address": "0xdef1c0ded9bec7f1a1670819833240f027b25eff",
+      "hash": "0x0000000000000000000000000000000000000000000000000000000000000001",
+      "makerToken": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+      "takerToken": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+      "makerAmount": "2500000000",
+      "takerAmount": "1000000000000000000",
+      "takerTokenFeeAmount": "0",
+      "gasEstimate": "66358"
+    }
+  ],
+  "effectiveGasPrice": "15000000000",
+  "deadline": "2106-01-01T00:00:00.000Z",
+  "surplusCapturingJitOrderOwners": []
+}

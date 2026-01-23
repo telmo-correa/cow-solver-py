@@ -28,6 +28,7 @@ from solver.amm.balancer import (
     BalancerWeightedAMM,
     BalancerWeightedPool,
 )
+from solver.amm.limit_order import LimitOrderAMM
 from solver.amm.uniswap_v2 import (
     UniswapV2,
     UniswapV2Pool,
@@ -36,8 +37,13 @@ from solver.amm.uniswap_v2 import (
 from solver.constants import POOL_SWAP_GAS_COST
 from solver.models.auction import Order
 from solver.models.solution import Solution
-from solver.pools import AnyPool, PoolRegistry
-from solver.routing.handlers import BalancerHandler, UniswapV2Handler, UniswapV3Handler
+from solver.pools import AnyPool, LimitOrderPool, PoolRegistry
+from solver.routing.handlers import (
+    BalancerHandler,
+    LimitOrderHandler,
+    UniswapV2Handler,
+    UniswapV3Handler,
+)
 from solver.routing.multihop import MultihopRouter
 from solver.routing.registry import HandlerRegistry
 from solver.routing.solution import build_solution
@@ -50,10 +56,10 @@ logger = structlog.get_logger()
 
 
 class SingleOrderRouter:
-    """Routes single orders through AMM pools.
+    """Routes single orders through AMM pools and limit orders.
 
     This router handles one order at a time, finding the best pool
-    for the token pair across V2, V3, and Balancer liquidity.
+    for the token pair across V2, V3, Balancer, and 0x limit order liquidity.
 
     Args:
         amm: AMM implementation for V2 swap simulation and encoding.
@@ -64,6 +70,8 @@ class SingleOrderRouter:
                       If None, weighted pools are not used for routing.
         stable_amm: AMM implementation for Balancer stable pools.
                     If None, stable pools are not used for routing.
+        limit_order_amm: AMM implementation for 0x limit orders.
+                         If None, limit orders are not used for routing.
         pool_registry: Registry of available pools for routing.
                        If None, an empty registry is used.
         pool_finder: DEPRECATED - Use pool_registry instead.
@@ -76,6 +84,7 @@ class SingleOrderRouter:
         v3_amm: UniswapV3AMM | None = None,
         weighted_amm: BalancerWeightedAMM | None = None,
         stable_amm: BalancerStableAMM | None = None,
+        limit_order_amm: LimitOrderAMM | None = None,
         pool_registry: PoolRegistry | None = None,
         pool_finder: Callable[[str, str], UniswapV2Pool | None] | None = None,
     ) -> None:
@@ -86,6 +95,7 @@ class SingleOrderRouter:
             v3_amm: AMM implementation for V3. If None, V3 is disabled.
             weighted_amm: AMM implementation for Balancer weighted pools. If None, disabled.
             stable_amm: AMM implementation for Balancer stable pools. If None, disabled.
+            limit_order_amm: AMM implementation for 0x limit orders. If None, disabled.
             pool_registry: Pool registry for lookups. If None, uses empty registry.
             pool_finder: DEPRECATED - Legacy pool lookup function. If provided
                          without pool_registry, wraps it in a simple registry.
@@ -94,6 +104,7 @@ class SingleOrderRouter:
         self.v3_amm = v3_amm
         self.weighted_amm = weighted_amm
         self.stable_amm = stable_amm
+        self.limit_order_amm = limit_order_amm
         self._pool_finder: Callable[[str, str], UniswapV2Pool | None]
 
         # Handle pool_registry vs legacy pool_finder
@@ -113,6 +124,7 @@ class SingleOrderRouter:
         self._v2_handler = UniswapV2Handler(self.amm)
         self._v3_handler = UniswapV3Handler(v3_amm)
         self._balancer_handler = BalancerHandler(weighted_amm, stable_amm)
+        self._limit_order_handler = LimitOrderHandler(limit_order_amm)
 
         # Initialize handler registry for centralized dispatch
         self._handler_registry = self._build_handler_registry()
@@ -205,6 +217,23 @@ class SingleOrderRouter:
                     ao,
                 ),
                 type_name="balancer_stable",
+                gas_estimate=lambda p: p.gas_estimate,  # type: ignore[union-attr]
+            )
+
+        # Register 0x limit orders (if available)
+        if self.limit_order_amm is not None:
+            lo_amm = self.limit_order_amm  # Capture for lambda
+            registry.register(
+                LimitOrderPool,
+                handler=self._limit_order_handler,  # type: ignore[arg-type]
+                simulator=lambda p, ti, to, ai: lo_amm.simulate_swap(p, ti, to, ai),  # type: ignore[arg-type]
+                exact_output_simulator=lambda p, ti, to, ao: lo_amm.simulate_swap_exact_output(
+                    p,  # type: ignore[arg-type]
+                    ti,
+                    to,
+                    ao,
+                ),
+                type_name="limit_order",
                 gas_estimate=lambda p: p.gas_estimate,  # type: ignore[union-attr]
             )
 

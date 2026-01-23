@@ -10,6 +10,7 @@ This directory tracks progress across AI-assisted development sessions.
 | [Phase 2](phase-2-summary.md) | 10-15 | Complete | CoW Matching |
 | [Phase 3.1](phase-3.1-summary.md) | 16-23 | Complete | UniswapV3 Integration |
 | [Phase 3.2](phase-3.2-summary.md) | 25-34 | Complete | Balancer Integration + Code Quality |
+| [Phase 3.5](phase-3.5-summary.md) | 38-39 | Complete | 0x Limit Order Integration |
 
 ## Current Status
 
@@ -17,9 +18,11 @@ This directory tracks progress across AI-assisted development sessions.
 - **Phase 2:** Complete (CoW matching, partial fills)
 - **Phase 3.1:** Complete (UniswapV3 concentrated liquidity)
 - **Phase 3.2:** Complete (Balancer weighted + stable pools, SafeInt, benchmarks)
+- **Slice 3.5:** Complete (0x limit order integration)
 - **Architecture:** Refactored (handler pattern, V3 split, registry)
-- **Tests:** 662 passing, 14 skipped
-- **Liquidity:** V2, V3, Balancer weighted, Balancer stable
+- **Tests:** 702 passing, 14 skipped
+- **Liquidity:** V2, V3, Balancer weighted, Balancer stable, 0x limit orders
+- **Parity:** Complete liquidity parity with Rust baseline solver
 - **Next:** Curve pools or multi-order optimization
 
 ## Session Archive
@@ -65,6 +68,8 @@ Individual session logs are preserved in the `archive/` directory for reference.
 | [35](archive/session-35.md) | 2026-01-22 | Architecture Review and Refactoring (Phases 1-5) |
 | [36](archive/session-36.md) | 2026-01-22 | Architecture Improvements (Handlers, V3 Split, Registry) |
 | [37](archive/session-37.md) | 2026-01-22 | Test Coverage and Reorganization |
+| [38](archive/session-38.md) | 2026-01-22 | 0x Limit Order Integration |
+| [39](archive/session-39.md) | 2026-01-22 | Limit Order Benchmark Verification |
 
 ## Session Template
 

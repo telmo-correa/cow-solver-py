@@ -14,7 +14,7 @@ from solver.amm.uniswap_v2 import UniswapV2
 from solver.constants import POOL_SWAP_GAS_COST
 from solver.models.auction import Order
 from solver.models.types import normalize_address
-from solver.pools import AnyPool, PoolRegistry
+from solver.pools import AnyPool, LimitOrderPool, PoolRegistry
 from solver.routing.types import HopResult, RoutingResult
 
 if TYPE_CHECKING:
@@ -347,13 +347,17 @@ class MultihopRouter:
             result = self.stable_amm.simulate_swap(pool, token_in, token_out, amount_in)
             return (result.amount_out, pool.gas_estimate) if result else None
 
+        elif isinstance(pool, LimitOrderPool):
+            # Limit orders should be handled by handler registry, not legacy path
+            # If we get here, limit order AMM is not configured
+            return None
+
         else:
-            # V2 pool
-            v2_pool = pool  # type is narrowed by isinstance checks above
+            # V2 pool - type is narrowed by isinstance checks above
             try:
-                reserve_in, reserve_out = v2_pool.get_reserves(token_in)
+                reserve_in, reserve_out = pool.get_reserves(token_in)
                 amount_out = self.v2_amm.get_amount_out(
-                    amount_in, reserve_in, reserve_out, v2_pool.fee_multiplier
+                    amount_in, reserve_in, reserve_out, pool.fee_multiplier
                 )
                 return (amount_out, POOL_SWAP_GAS_COST)
             except (ValueError, ZeroDivisionError):
@@ -394,13 +398,17 @@ class MultihopRouter:
             )
             return (result.amount_in, pool.gas_estimate) if result else None
 
+        elif isinstance(pool, LimitOrderPool):
+            # Limit orders should be handled by handler registry, not legacy path
+            # If we get here, limit order AMM is not configured
+            return None
+
         else:
-            # V2 pool
-            v2_pool = pool  # type is narrowed by isinstance checks above
+            # V2 pool - type is narrowed by isinstance checks above
             try:
-                reserve_in, reserve_out = v2_pool.get_reserves(token_in)
+                reserve_in, reserve_out = pool.get_reserves(token_in)
                 amount_in = self.v2_amm.get_amount_in(
-                    amount_out, reserve_in, reserve_out, v2_pool.fee_multiplier
+                    amount_out, reserve_in, reserve_out, pool.fee_multiplier
                 )
                 return (amount_in, POOL_SWAP_GAS_COST)
             except (ValueError, ZeroDivisionError):

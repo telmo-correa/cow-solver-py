@@ -5,6 +5,7 @@ This module provides PoolRegistry for managing pools from multiple sources:
 - UniswapV3 (concentrated liquidity)
 - Balancer Weighted (weighted product)
 - Balancer Stable (StableSwap)
+- 0x Limit Orders (foreign limit orders)
 """
 
 from __future__ import annotations
@@ -16,6 +17,7 @@ from solver.amm.balancer import BalancerStablePool, BalancerWeightedPool
 from solver.amm.uniswap_v2 import UniswapV2Pool
 from solver.amm.uniswap_v3 import UniswapV3Pool
 from solver.models.types import normalize_address
+from solver.pools.limit_order import LimitOrderPool
 
 if TYPE_CHECKING:
     from solver.models.auction import Liquidity
@@ -31,7 +33,7 @@ class PoolRegistry:
     - Building token graphs for pathfinding
     - Finding multi-hop paths through available liquidity
 
-    Supports UniswapV2, UniswapV3, Balancer Weighted, and Balancer Stable pools.
+    Supports UniswapV2, UniswapV3, Balancer Weighted, Balancer Stable, and 0x Limit Orders.
     """
 
     def __init__(self, pools: list[UniswapV2Pool] | None = None) -> None:
@@ -46,9 +48,12 @@ class PoolRegistry:
         # Balancer pools indexed by canonical token pair (for N-token pools, create N*(N-1)/2 entries)
         self._weighted_pools: dict[tuple[str, str], list[BalancerWeightedPool]] = {}
         self._stable_pools: dict[tuple[str, str], list[BalancerStablePool]] = {}
+        # Limit orders indexed by (taker_token, maker_token) - unidirectional
+        self._limit_orders: dict[tuple[str, str], list[LimitOrderPool]] = {}
         # Track unique pool IDs for O(1) count and duplicate detection
         self._weighted_pool_ids: set[str] = set()
         self._stable_pool_ids: set[str] = set()
+        self._limit_order_ids: set[str] = set()
         self._graph: dict[str, set[str]] | None = None  # Cached graph
 
         if pools:
@@ -205,31 +210,80 @@ class PoolRegistry:
         pair = (min(token_a_norm, token_b_norm), max(token_a_norm, token_b_norm))
         return self._stable_pools.get(pair, [])
 
-    def get_pools_for_pair(self, token_a: str, token_b: str) -> list[AnyPool]:
-        """Get all pools (V2 + V3 + Balancer weighted + Balancer stable) for a token pair.
+    def add_limit_order(self, order: LimitOrderPool) -> None:
+        """Add a 0x limit order to the registry.
+
+        Limit orders are unidirectional: taker_token -> maker_token only.
+        Duplicate orders (same ID) are ignored.
 
         Args:
-            token_a: First token address (any case)
-            token_b: Second token address (any case)
+            order: The limit order to add
+        """
+        # Skip duplicate orders
+        if order.id in self._limit_order_ids:
+            return
+
+        self._limit_order_ids.add(order.id)
+
+        # Index by (taker_token, maker_token) - the only valid direction
+        taker_norm = normalize_address(order.taker_token)
+        maker_norm = normalize_address(order.maker_token)
+        key = (taker_norm, maker_norm)
+
+        if key not in self._limit_orders:
+            self._limit_orders[key] = []
+        self._limit_orders[key].append(order)
+        self._graph = None  # Invalidate cached graph
+
+    def get_limit_orders(self, token_in: str, token_out: str) -> list[LimitOrderPool]:
+        """Get all limit orders for a token pair (directional).
+
+        Unlike AMM pools, limit orders are unidirectional. This only returns
+        orders where token_in is the taker token and token_out is the maker token.
+
+        Args:
+            token_in: Input token address (taker token)
+            token_out: Output token address (maker token)
+
+        Returns:
+            List of LimitOrderPool objects for this direction (may be empty)
+        """
+        token_in_norm = normalize_address(token_in)
+        token_out_norm = normalize_address(token_out)
+        key = (token_in_norm, token_out_norm)
+        return self._limit_orders.get(key, [])
+
+    def get_pools_for_pair(self, token_a: str, token_b: str) -> list[AnyPool]:
+        """Get all pools (V2 + V3 + Balancer + limit orders) for a token pair.
+
+        For directional liquidity like limit orders, token_a is treated as
+        the input token and token_b as the output token.
+
+        Args:
+            token_a: First token address / input token (any case)
+            token_b: Second token address / output token (any case)
 
         Returns:
             List of all pools for this pair
         """
         pools: list[AnyPool] = []
 
-        # Add V2 pool if exists
+        # Add V2 pool if exists (bidirectional)
         v2_pool = self.get_pool(token_a, token_b)
         if v2_pool is not None:
             pools.append(v2_pool)
 
-        # Add all V3 pools
+        # Add all V3 pools (bidirectional)
         pools.extend(self.get_v3_pools(token_a, token_b))
 
-        # Add all Balancer weighted pools
+        # Add all Balancer weighted pools (bidirectional)
         pools.extend(self.get_weighted_pools(token_a, token_b))
 
-        # Add all Balancer stable pools
+        # Add all Balancer stable pools (bidirectional)
         pools.extend(self.get_stable_pools(token_a, token_b))
+
+        # Add all limit orders (unidirectional: token_a -> token_b only)
+        pools.extend(self.get_limit_orders(token_a, token_b))
 
         return pools
 
@@ -247,6 +301,11 @@ class PoolRegistry:
     def stable_pool_count(self) -> int:
         """Return the number of unique stable pools in the registry."""
         return len(self._stable_pool_ids)
+
+    @property
+    def limit_order_count(self) -> int:
+        """Return the number of unique limit orders in the registry."""
+        return len(self._limit_order_ids)
 
     def _build_graph(self) -> dict[str, set[str]]:
         """Build adjacency list of tokens connected by pools (all types)."""
@@ -294,6 +353,18 @@ class PoolRegistry:
 
             graph[token_a].add(token_b)
             graph[token_b].add(token_a)
+
+        # Add limit orders to graph (unidirectional: taker -> maker)
+        for (taker_token, maker_token), _ in self._limit_orders.items():
+            if taker_token not in graph:
+                graph[taker_token] = set()
+            if maker_token not in graph:
+                graph[maker_token] = set()
+
+            # Limit orders are unidirectional, but for path finding we add both
+            # directions to discover paths. The actual routing will check validity.
+            graph[taker_token].add(maker_token)
+            graph[maker_token].add(taker_token)
 
         return graph
 
@@ -390,7 +461,7 @@ class PoolRegistry:
 def build_registry_from_liquidity(liquidity_list: list[Liquidity]) -> PoolRegistry:
     """Build a PoolRegistry from auction liquidity sources.
 
-    Parses V2, V3, and Balancer (weighted/stable) pools.
+    Parses V2, V3, Balancer (weighted/stable), and 0x limit order pools.
 
     Args:
         liquidity_list: List of Liquidity objects from the auction
@@ -401,6 +472,7 @@ def build_registry_from_liquidity(liquidity_list: list[Liquidity]) -> PoolRegist
     from solver.amm.balancer import parse_stable_pool, parse_weighted_pool
     from solver.amm.uniswap_v2 import parse_liquidity_to_pool
     from solver.amm.uniswap_v3 import parse_v3_liquidity
+    from solver.pools.limit_order import parse_limit_order
 
     registry = PoolRegistry()
     for liq in liquidity_list:
@@ -426,5 +498,11 @@ def build_registry_from_liquidity(liquidity_list: list[Liquidity]) -> PoolRegist
         stable_pool = parse_stable_pool(liq)
         if stable_pool is not None:
             registry.add_stable_pool(stable_pool)
+            continue
+
+        # Try limit order
+        limit_order = parse_limit_order(liq)
+        if limit_order is not None:
+            registry.add_limit_order(limit_order)
 
     return registry

@@ -35,6 +35,10 @@ def _validate_token_address(name: str, address: str) -> str:
 # Per-swap gas cost for UniswapV2-style pools
 POOL_SWAP_GAS_COST = 60_000
 
+# Gas cost for 0x limit order fills (from Dune analytics)
+# Source: https://dune.com/queries/639669
+GAS_PER_ZEROEX_ORDER = 66_358
+
 # Settlement overhead components (from shared/src/price_estimation/gas.rs)
 # SETTLEMENT = 7365 (isSolver check)
 # TRADE = 35000 + 2*3000 + 3000 = 44000 (computeTradeExecutions + transfer overhead + interaction)

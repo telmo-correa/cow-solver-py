@@ -13,6 +13,7 @@ import structlog
 
 if TYPE_CHECKING:
     from solver.amm.balancer import BalancerStableAMM, BalancerWeightedAMM
+    from solver.amm.limit_order import LimitOrderAMM
     from solver.amm.uniswap_v3 import UniswapV3AMM
     from solver.strategies.base import SolutionStrategy
 
@@ -49,6 +50,7 @@ class Solver:
         v3_amm: UniswapV3AMM | None = None,
         weighted_amm: BalancerWeightedAMM | None = None,
         stable_amm: BalancerStableAMM | None = None,
+        limit_order_amm: LimitOrderAMM | None = None,
     ) -> None:
         """Initialize the solver with strategies.
 
@@ -62,6 +64,7 @@ class Solver:
             v3_amm: UniswapV3 AMM for V3 pool routing. If None, V3 pools are skipped.
             weighted_amm: Balancer weighted AMM. If None, weighted pools are skipped.
             stable_amm: Balancer stable AMM. If None, stable pools are skipped.
+            limit_order_amm: 0x limit order AMM. If None, limit orders are skipped.
         """
         if strategies is not None:
             self.strategies = strategies
@@ -71,6 +74,7 @@ class Solver:
             or v3_amm is not None
             or weighted_amm is not None
             or stable_amm is not None
+            or limit_order_amm is not None
         ):
             # Backwards compatibility: create strategies from legacy params
             from solver.strategies import AmmRoutingStrategy, CowMatchStrategy
@@ -83,6 +87,7 @@ class Solver:
                     v3_amm=v3_amm,
                     weighted_amm=weighted_amm,
                     stable_amm=stable_amm,
+                    limit_order_amm=limit_order_amm,
                 ),
             ]
         else:
@@ -183,13 +188,13 @@ class Solver:
 
 # Singleton solver instance with optional V3 support via environment
 def _create_default_solver() -> Solver:
-    """Create the default solver with Balancer support and optional V3.
+    """Create the default solver with Balancer, limit orders, and optional V3.
 
     V3 support is enabled if RPC_URL environment variable is set.
     This allows the solver to get quotes from UniswapV3 QuoterV2 contract.
 
-    Balancer support (weighted and stable pools) is always enabled since
-    the math is computed locally without RPC calls.
+    Balancer support (weighted and stable pools) and 0x limit order support
+    are always enabled since the math is computed locally without RPC calls.
 
     Returns:
         Configured Solver instance
@@ -197,10 +202,12 @@ def _create_default_solver() -> Solver:
     import os
 
     from solver.amm.balancer import BalancerStableAMM, BalancerWeightedAMM
+    from solver.amm.limit_order import LimitOrderAMM
 
-    # Balancer AMMs are always enabled (local math, no RPC)
+    # Local AMMs are always enabled (no RPC required)
     weighted_amm = BalancerWeightedAMM()
     stable_amm = BalancerStableAMM()
+    limit_order_amm = LimitOrderAMM()
 
     rpc_url = os.environ.get("RPC_URL")
     if rpc_url:
@@ -210,10 +217,19 @@ def _create_default_solver() -> Solver:
         logger.info("v3_support_enabled", rpc_url=rpc_url[:50] + "...")
         quoter = Web3UniswapV3Quoter(rpc_url)
         v3_amm = UniswapV3AMM(quoter=quoter)
-        return Solver(v3_amm=v3_amm, weighted_amm=weighted_amm, stable_amm=stable_amm)
+        return Solver(
+            v3_amm=v3_amm,
+            weighted_amm=weighted_amm,
+            stable_amm=stable_amm,
+            limit_order_amm=limit_order_amm,
+        )
     else:
         logger.info("v3_support_disabled", reason="RPC_URL not set")
-        return Solver(weighted_amm=weighted_amm, stable_amm=stable_amm)
+        return Solver(
+            weighted_amm=weighted_amm,
+            stable_amm=stable_amm,
+            limit_order_amm=limit_order_amm,
+        )
 
 
 solver = _create_default_solver()

@@ -8,9 +8,12 @@ from typing import TypeAlias
 from solver.amm.balancer import BalancerStablePool, BalancerWeightedPool
 from solver.amm.uniswap_v2 import UniswapV2Pool
 from solver.amm.uniswap_v3 import UniswapV3Pool
+from solver.pools.limit_order import LimitOrderPool
 
 # Union type for all pool types
-AnyPool: TypeAlias = UniswapV2Pool | UniswapV3Pool | BalancerWeightedPool | BalancerStablePool
+AnyPool: TypeAlias = (
+    UniswapV2Pool | UniswapV3Pool | BalancerWeightedPool | BalancerStablePool | LimitOrderPool
+)
 
 __all__ = [
     "AnyPool",
@@ -18,4 +21,5 @@ __all__ = [
     "UniswapV3Pool",
     "BalancerWeightedPool",
     "BalancerStablePool",
+    "LimitOrderPool",
 ]

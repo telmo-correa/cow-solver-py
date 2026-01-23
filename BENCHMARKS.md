@@ -20,7 +20,7 @@ The Rust "baseline" solver is part of the [CoW Protocol Services repository](htt
 | | UniswapV3 (concentrated) | ⚠️ | ⚠️ | Both require RPC config |
 | | Balancer V2 weighted | ✅ | ✅ | V0 and V3+ versions, exact match |
 | | Balancer/Curve stable | ✅ | ✅ | With amplification, exact match |
-| | 0x limit orders | ✅ | ❌ | As liquidity source |
+| | 0x limit orders | ✅ | ✅ | As liquidity source, exact match |
 | **Routing** | Direct swaps (A→B) | ✅ | ✅ | Single pool |
 | | Multi-hop (A→B→C) | ✅ | ✅ | Configurable max hops |
 | | Order splitting | ❌ | ❌ | Single path per order |
@@ -46,7 +46,7 @@ The Rust solver supports 5 liquidity types:
 | **Weighted Product** | Balancer V2 weighted pools (V0 and V3+) | ~88,892 |
 | **Stable Pools** | Curve-style with amplification | ~183,520 |
 | **Concentrated** | UniswapV3 (requires `uni-v3-node-url` config) | ~106,000 |
-| **Limit Orders** | 0x Protocol-style | Variable |
+| **Limit Orders** | 0x Protocol foreign orders | ~66,358 |
 
 ### Routing Configuration (Rust)
 
@@ -83,6 +83,7 @@ These test features supported by both Python and Rust solvers:
 - Single sell orders via AMM
 - Single buy orders via AMM
 - Multi-hop routing (A -> WETH -> B)
+- 0x limit order routing (sell and buy orders)
 
 **Use for**: Python vs Rust comparison, verifying parity
 
@@ -147,7 +148,7 @@ python scripts/run_benchmarks.py --python-url http://localhost:8000 \
 
 ### Shared Functionality (Python vs Rust)
 
-Includes V2, V3, and Balancer liquidity benchmarks (18 total test cases).
+Includes V2, V3, Balancer, and 0x limit order liquidity benchmarks (20 total test cases).
 
 ```
 ============================================================
@@ -157,11 +158,11 @@ Auctions directory: tests/fixtures/auctions/benchmark
 Python solver: http://localhost:8000 (with RPC_URL)
 Rust solver:   http://localhost:8080 (with baseline_v3.toml)
 
-Total auctions: 18
-Successful: 18
+Total auctions: 20
+Successful: 20
 
-Python found solutions: 18/18
-Rust found solutions:   17/18
+Python found solutions: 20/20
+Rust found solutions:   20/20
 
 Individual Results:
 ------------------------------------------------------------
@@ -209,22 +210,30 @@ Individual Results:
   stable_composable:
     Result [✓]: Solutions match (composable stable with BPT filtering)
 
+  # 0x Limit Order Tests
+  limit_order_sell:
+    Result [✓]: Solutions match (sell order through limit order)
+  limit_order_buy:
+    Result [✓]: Solutions match (buy order through limit order)
+
 Solution Comparison Summary:
-  Matching:     15/18
-  Improvements: 2/18 (Python better - partial fill exact calculation)
-  Regressions:  0/18
+  Matching:     17/20
+  Improvements: 2/20 (Python better - partial fill exact calculation)
+  Regressions:  0/20
   OK: All differences are improvements over Rust.
 ```
 
-**Summary**: Python matches Rust on all 18 test cases including:
+**Summary**: Python matches Rust on all 20 test cases including:
 - **Balancer weighted pools**: Both V0 and V3Plus versions produce exact same output as Rust
 - **Balancer stable pools**: Sell orders, buy orders, and composable stable pools all match exactly
+- **0x limit orders**: Both sell and buy orders through limit orders match exactly
 - Python **outperforms** Rust on 2 partial fill cases (exact calculation vs binary search)
 
 **Performance**:
 - V2 swaps: Python ~1.5x slower than Rust (pure computation)
 - V3 swaps: Python ~2.9x slower than Rust (both use RPC, different implementations)
 - Balancer swaps: Python ~2x slower than Rust (complex fixed-point math)
+- Limit orders: Python ~1.5x slower than Rust (simple linear math)
 
 ### Python-Only Features
 
@@ -415,6 +424,18 @@ Example fixture (see `tests/fixtures/auctions/benchmark/` for full examples):
       "address": "0xB4e16d0168e52d35CaCD2c6185b44281Ec28C9Dc",
       "router": "0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D",
       "gasEstimate": "110000"
+    },
+    {
+      "kind": "limitOrder",
+      "id": "1",
+      "address": "0xdef1c0ded9bec7f1a1670819833240f027b25eff",
+      "hash": "0x0000000000000000000000000000000000000000000000000000000000000001",
+      "makerToken": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+      "takerToken": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+      "makerAmount": "2500000000",
+      "takerAmount": "1000000000000000000",
+      "takerTokenFeeAmount": "0",
+      "gasEstimate": "66358"
     }
   ],
   "effectiveGasPrice": "15000000000",
