@@ -383,7 +383,8 @@ class SolutionValidator:
 
         elif py_executed == rust_executed:
             # Same fill - validate exact match on other fields
-            exact_errors = self._validate_exact_match(python_solution, rust_solution)
+            exact_errors, exact_notes = self._validate_exact_match(python_solution, rust_solution)
+            notes.extend(exact_notes)
             if exact_errors:
                 return ValidationResult(passed=False, errors=exact_errors, notes=notes)
             return ValidationResult(passed=True, notes=notes)
@@ -397,9 +398,15 @@ class SolutionValidator:
         self,
         python_solution: dict[str, Any],
         rust_solution: dict[str, Any],
-    ) -> list[str]:
-        """Validate exact field match when Python and Rust have same fill."""
+    ) -> tuple[list[str], list[str]]:
+        """Validate exact field match when Python and Rust have same fill.
+
+        Returns:
+            Tuple of (errors, notes). Errors are real problems; notes are
+            expected divergences (e.g., gas differences).
+        """
         errors = []
+        notes = []
 
         # Compare prices
         py_prices = self._normalize_prices(python_solution.get("prices", {}))
@@ -444,13 +451,15 @@ class SolutionValidator:
                         f"Interaction {i} outputAmount differs: Python={py_output}, Rust={rust_output}"
                     )
 
-        # Compare gas
+        # Gas comparison as informational note (not error).
+        # Python intentionally uses pool.gas_estimate from auction data,
+        # while Rust uses hardcoded constants. This is a known, intentional divergence.
         py_gas = python_solution.get("gas")
         rust_gas = rust_solution.get("gas")
         if py_gas != rust_gas:
-            errors.append(f"Gas differs: Python={py_gas}, Rust={rust_gas}")
+            notes.append(f"Gas differs (expected): Python={py_gas}, Rust={rust_gas}")
 
-        return errors
+        return errors, notes
 
     def _find_pool_by_id_and_tokens(self, pool_id: str, input_token: str, output_token: str) -> Any:
         """Find a pool by its ID and token pair."""
@@ -655,3 +664,61 @@ class TestParityDiagnostics:
 
         # This test always passes - it's for diagnostics only
         # Use test_fixture_parity for actual CI validation
+
+
+class TestGasEstimation:
+    """Tests that verify we use pool.gas_estimate from auction data.
+
+    Python intentionally diverges from Rust here:
+    - Rust uses hardcoded gas constants (60000 for V2, 100000 for weighted, etc.)
+    - Python uses the per-pool gas_estimate from the auction JSON
+
+    This is the correct behavior since the driver provides pool-specific estimates.
+    """
+
+    @pytest.fixture
+    def solver(self) -> Solver:
+        """Create a solver instance."""
+        return Solver()
+
+    def test_solution_gas_matches_pool_gas_estimate(self, solver: Solver):
+        """Solution gas should match pool's gas_estimate from auction."""
+        # Find a fixture with a V2 pool that has a non-default gas estimate
+        for test_name, input_file, _expected_file in get_fixture_pairs():
+            with open(input_file) as f:
+                auction_data = json.load(f)
+
+            auction = AuctionInstance.model_validate(auction_data)
+            if auction.order_count == 0:
+                continue
+
+            # Get pool gas estimates from auction liquidity
+            pool_gas_estimates: dict[str, int] = {}
+            for liq in auction.liquidity:
+                if hasattr(liq, "gas_estimate") and liq.gas_estimate:
+                    pool_gas_estimates[liq.address.lower()] = liq.gas_estimate
+
+            if not pool_gas_estimates:
+                continue
+
+            # Solve and check gas
+            response = solver.solve(auction)
+            if not response.solutions:
+                continue
+
+            for solution in response.solutions:
+                if solution.gas and solution.interactions:
+                    # Single-hop case: gas should match pool's estimate
+                    for interaction in solution.interactions:
+                        if hasattr(interaction, "exec") and interaction.exec:
+                            pool_addr = interaction.exec.allowance_target.lower()
+                            if pool_addr in pool_gas_estimates:
+                                expected_gas = pool_gas_estimates[pool_addr]
+                                # Note: total gas includes overhead, but base should match
+                                assert solution.gas >= expected_gas, (
+                                    f"{test_name}: Solution gas {solution.gas} should be >= "
+                                    f"pool gas estimate {expected_gas}"
+                                )
+                                return  # Found a valid test case
+
+        pytest.skip("No fixtures with pool gas estimates found")

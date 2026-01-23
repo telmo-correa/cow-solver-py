@@ -34,11 +34,6 @@ from solver.amm.uniswap_v2 import (
     UniswapV2Pool,
     uniswap_v2,
 )
-from solver.constants import (
-    BALANCER_STABLE_SWAP_GAS_COST,
-    BALANCER_WEIGHTED_SWAP_GAS_COST,
-    POOL_SWAP_GAS_COST,
-)
 from solver.models.auction import Order
 from solver.models.solution import Solution
 from solver.pools import AnyPool, LimitOrderPool, PoolRegistry
@@ -158,8 +153,6 @@ class SingleOrderRouter:
         registry = HandlerRegistry()
 
         # Register V2 (always available)
-        # TODO: Revert to p.gas_estimate once Rust is fixed to use fixture values.
-        # Rust uses hardcoded POOL_SWAP_GAS_COST (60000) ignoring the fixture's gasEstimate.
         registry.register(
             UniswapV2Pool,
             handler=self._v2_handler,  # type: ignore[arg-type]
@@ -170,15 +163,11 @@ class SingleOrderRouter:
                 ao,
             ),
             type_name="v2",
-            gas_estimate=lambda p: POOL_SWAP_GAS_COST,  # noqa: ARG005 - pool ignored for Rust parity
+            gas_estimate=lambda p: p.gas_estimate,
         )
 
         # Register V3 (if available)
-        # TODO: Revert to p.gas_estimate once Rust is fixed to use fixture values.
-        # Rust uses hardcoded V3_SWAP_GAS_COST (106000) ignoring the fixture's gasEstimate.
         if self.v3_amm is not None:
-            from solver.amm.uniswap_v3 import V3_SWAP_GAS_COST
-
             v3_amm = self.v3_amm  # Capture for lambda
             registry.register(
                 UniswapV3Pool,
@@ -190,12 +179,10 @@ class SingleOrderRouter:
                     ao,
                 ),
                 type_name="v3",
-                gas_estimate=lambda p: V3_SWAP_GAS_COST,  # noqa: ARG005 - pool ignored for Rust parity
+                gas_estimate=lambda p: p.gas_estimate,
             )
 
         # Register Balancer weighted (if available)
-        # TODO: Revert to p.gas_estimate once Rust is fixed to use fixture values.
-        # See comment in solver/routing/handlers/balancer.py for details.
         if self.weighted_amm is not None:
             weighted_amm = self.weighted_amm  # Capture for lambda
             registry.register(
@@ -212,12 +199,10 @@ class SingleOrderRouter:
                     ao,
                 ),
                 type_name="balancer_weighted",
-                gas_estimate=lambda p: BALANCER_WEIGHTED_SWAP_GAS_COST,  # noqa: ARG005 - pool ignored for Rust parity
+                gas_estimate=lambda p: p.gas_estimate,
             )
 
         # Register Balancer stable (if available)
-        # TODO: Revert to p.gas_estimate once Rust is fixed to use fixture values.
-        # See comment in solver/routing/handlers/balancer.py for details.
         if self.stable_amm is not None:
             stable_amm = self.stable_amm  # Capture for lambda
             registry.register(
@@ -231,7 +216,7 @@ class SingleOrderRouter:
                     ao,
                 ),
                 type_name="balancer_stable",
-                gas_estimate=lambda p: BALANCER_STABLE_SWAP_GAS_COST,  # noqa: ARG005 - pool ignored for Rust parity
+                gas_estimate=lambda p: p.gas_estimate,
             )
 
         # Register 0x limit orders (if available)

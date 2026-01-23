@@ -94,3 +94,36 @@ for fill in fills:
 
 - Continue Rust parity testing with remaining fixtures
 - Multi-order optimization (Phase 4)
+
+---
+
+## Addendum: Gas Estimation Refactoring
+
+### Decision: Use `pool.gas_estimate` Instead of Hardcoded Constants
+
+After code review, we identified that Rust uses hardcoded gas constants while the auction JSON provides per-pool `gas_estimate` values. We decided to **intentionally diverge from Rust** and use the superior per-pool values.
+
+### Approach 4: Separate Test Concerns
+
+Refactored parity tests into three concerns:
+
+| Test Type | What it validates | Compared against |
+|-----------|-------------------|------------------|
+| **Correctness** | Amounts, limit prices, AMM math | Invariants (not Rust) |
+| **Gas estimation** | Uses `pool.gas_estimate` | Expected behavior |
+| **Rust comparison** | Informational diff | Rust (notes, not errors) |
+
+### Files Modified
+
+```
+solver/routing/router.py           # Use p.gas_estimate in handler registry
+solver/routing/multihop.py         # Use pool.gas_estimate in legacy simulation
+solver/routing/handlers/balancer.py # Use pool.gas_estimate for Balancer pools
+tests/integration/test_rust_parity.py # Gas differences as notes, not errors
+```
+
+### Result
+
+- Gas differences now appear as informational notes, not test failures
+- Correctness validation still strict (amounts, prices, routing)
+- All 749 tests pass

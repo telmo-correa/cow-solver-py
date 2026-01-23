@@ -12,23 +12,11 @@ from solver.amm.balancer import (
     BalancerWeightedAMM,
     BalancerWeightedPool,
 )
-from solver.constants import (
-    BALANCER_STABLE_SWAP_GAS_COST,
-    BALANCER_WEIGHTED_SWAP_GAS_COST,
-)
 from solver.models.auction import Order
 from solver.routing.handlers.base import BaseHandler
 from solver.routing.types import RoutingResult
 
 logger = structlog.get_logger()
-
-# TODO: Revert to using pool.gas_estimate instead of hardcoded constants.
-# The Rust baseline solver ignores the gasEstimate from the auction JSON and uses
-# hardcoded constants (WEIGHTED=100000, STABLE=183520). This is likely a bug since
-# the driver provides per-pool gas estimates for a reason. For now we match Rust's
-# behavior for parity testing. Once parity is achieved, revert to pool.gas_estimate
-# and update test fixtures to expect the correct (non-hardcoded) gas values.
-# See: cow-services/crates/shared/src/sources/balancer_v2/swap/mod.rs:26-28
 
 
 class BalancerHandler(BaseHandler):
@@ -124,7 +112,7 @@ class BalancerHandler(BaseHandler):
                 )
 
             return self._build_success_result(
-                order, pool, sell_amount, result.amount_out, BALANCER_WEIGHTED_SWAP_GAS_COST
+                order, pool, sell_amount, result.amount_out, pool.gas_estimate
             )
         else:
             result = amm.simulate_swap_exact_output(
@@ -154,7 +142,7 @@ class BalancerHandler(BaseHandler):
                 pool,
                 result.amount_in,
                 buy_amount,
-                BALANCER_WEIGHTED_SWAP_GAS_COST,
+                pool.gas_estimate,
                 actual_amount_out=result.amount_out,
             )
 
@@ -193,7 +181,7 @@ class BalancerHandler(BaseHandler):
                 )
 
             return self._build_success_result(
-                order, pool, sell_amount, result.amount_out, BALANCER_STABLE_SWAP_GAS_COST
+                order, pool, sell_amount, result.amount_out, pool.gas_estimate
             )
         else:
             result = amm.simulate_swap_exact_output(
@@ -223,7 +211,7 @@ class BalancerHandler(BaseHandler):
                 pool,
                 result.amount_in,
                 buy_amount,
-                BALANCER_STABLE_SWAP_GAS_COST,
+                pool.gas_estimate,
                 actual_amount_out=result.amount_out,
             )
 
@@ -373,17 +361,12 @@ class BalancerHandler(BaseHandler):
             fill_ratio=fill_ratio,
         )
 
-        gas_cost = (
-            BALANCER_WEIGHTED_SWAP_GAS_COST
-            if pool_type == "weighted"
-            else BALANCER_STABLE_SWAP_GAS_COST
-        )
         return self._build_success_result(
             order,
             pool,
             final_in,
             final_out,
-            gas_cost,
+            pool.gas_estimate,
             actual_amount_out=actual_out,
         )
 

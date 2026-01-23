@@ -11,11 +11,6 @@ from solver.amm.balancer import (
     BalancerWeightedPool,
 )
 from solver.amm.uniswap_v2 import UniswapV2
-from solver.constants import (
-    BALANCER_STABLE_SWAP_GAS_COST,
-    BALANCER_WEIGHTED_SWAP_GAS_COST,
-    POOL_SWAP_GAS_COST,
-)
 from solver.models.auction import Order
 from solver.models.types import normalize_address
 from solver.pools import AnyPool, LimitOrderPool, PoolRegistry
@@ -367,16 +362,13 @@ class MultihopRouter:
             if self.weighted_amm is None:
                 return None
             result = self.weighted_amm.simulate_swap(pool, token_in, token_out, amount_in)
-            # TODO: Revert to pool.gas_estimate once Rust is fixed.
-            # See comment in solver/routing/handlers/balancer.py for details.
-            return (result.amount_out, BALANCER_WEIGHTED_SWAP_GAS_COST) if result else None
+            return (result.amount_out, pool.gas_estimate) if result else None
 
         elif isinstance(pool, BalancerStablePool):
             if self.stable_amm is None:
                 return None
             result = self.stable_amm.simulate_swap(pool, token_in, token_out, amount_in)
-            # TODO: Revert to pool.gas_estimate once Rust is fixed.
-            return (result.amount_out, BALANCER_STABLE_SWAP_GAS_COST) if result else None
+            return (result.amount_out, pool.gas_estimate) if result else None
 
         elif isinstance(pool, LimitOrderPool):
             # Limit orders should be handled by handler registry, not legacy path
@@ -390,7 +382,7 @@ class MultihopRouter:
                 amount_out = self.v2_amm.get_amount_out(
                     amount_in, reserve_in, reserve_out, pool.fee_multiplier
                 )
-                return (amount_out, POOL_SWAP_GAS_COST)
+                return (amount_out, pool.gas_estimate)
             except (ValueError, ZeroDivisionError):
                 return None
 
@@ -419,8 +411,7 @@ class MultihopRouter:
             result = self.weighted_amm.simulate_swap_exact_output(
                 pool, token_in, token_out, amount_out
             )
-            # TODO: Revert to pool.gas_estimate once Rust is fixed.
-            return (result.amount_in, BALANCER_WEIGHTED_SWAP_GAS_COST) if result else None
+            return (result.amount_in, pool.gas_estimate) if result else None
 
         elif isinstance(pool, BalancerStablePool):
             if self.stable_amm is None:
@@ -428,8 +419,7 @@ class MultihopRouter:
             result = self.stable_amm.simulate_swap_exact_output(
                 pool, token_in, token_out, amount_out
             )
-            # TODO: Revert to pool.gas_estimate once Rust is fixed.
-            return (result.amount_in, BALANCER_STABLE_SWAP_GAS_COST) if result else None
+            return (result.amount_in, pool.gas_estimate) if result else None
 
         elif isinstance(pool, LimitOrderPool):
             # Limit orders should be handled by handler registry, not legacy path
@@ -443,7 +433,7 @@ class MultihopRouter:
                 amount_in = self.v2_amm.get_amount_in(
                     amount_out, reserve_in, reserve_out, pool.fee_multiplier
                 )
-                return (amount_in, POOL_SWAP_GAS_COST)
+                return (amount_in, pool.gas_estimate)
             except (ValueError, ZeroDivisionError):
                 return None
 
