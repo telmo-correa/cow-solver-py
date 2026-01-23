@@ -15,6 +15,12 @@ from solver.strategies.base import (
     StrategyResult,
 )
 from solver.strategies.cow_match import CowMatchStrategy
+from solver.strategies.double_auction import (
+    DoubleAuctionMatch,
+    DoubleAuctionResult,
+    calculate_surplus,
+    run_double_auction,
+)
 
 __all__ = [
     "SolutionStrategy",
@@ -23,4 +29,9 @@ __all__ = [
     "PriceWorsened",
     "CowMatchStrategy",
     "AmmRoutingStrategy",
+    # Double auction (Phase 4)
+    "DoubleAuctionMatch",
+    "DoubleAuctionResult",
+    "run_double_auction",
+    "calculate_surplus",
 ]

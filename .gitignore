@@ -69,3 +69,4 @@ scripts/servers.sh
 # macOS
 .DS_Store
 .local-notes
+data/

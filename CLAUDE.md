@@ -6,7 +6,7 @@ This file provides context for AI assistants working on this project. Read this 
 
 **What:** A Python implementation of a CoW Protocol solver, built as a learning project to explore AI-assisted development and benchmark Python vs Rust performance.
 
-**Status:** Phase 1-3 complete. Full liquidity parity with Rust baseline (V2, V3, Balancer weighted/stable, 0x limit orders). 799 tests passing.
+**Status:** Phase 1-3 + Slice 4.1 complete. Full liquidity parity with Rust baseline (V2, V3, Balancer weighted/stable, 0x limit orders). 728 tests passing.
 
 ## What is CoW Protocol?
 

@@ -12,6 +12,7 @@ This directory tracks progress across AI-assisted development sessions.
 | [Phase 3.2](phase-3.2-summary.md) | 25-34 | Complete | Balancer Integration + Code Quality |
 | [Phase 3.5](phase-3.5-summary.md) | 38-39 | Complete | 0x Limit Order Integration |
 | [Pre-Phase 4](pre-phase4-architecture.md) | 42 | Complete | Architecture Refactoring |
+| [Slice 4.1](session-43-slice4.1-analysis.md) | 43 | Complete | Problem Formulation & Analysis |
 
 ## Current Status
 
@@ -21,10 +22,11 @@ This directory tracks progress across AI-assisted development sessions.
 - **Phase 3.2:** Complete (Balancer weighted + stable pools, SafeInt, benchmarks)
 - **Slice 3.5:** Complete (0x limit order integration)
 - **Pre-Phase 4:** Complete (PathFinder, OrderGroup, handler deduplication)
-- **Tests:** 799 passing, 14 skipped
+- **Slice 4.1:** Complete (empirical analysis, double auction prototype)
+- **Tests:** 728 passing
 - **Liquidity:** V2, V3, Balancer weighted, Balancer stable, 0x limit orders
 - **Parity:** Complete liquidity parity with Rust baseline solver
-- **Next:** Phase 4 - Unified Optimization (N-order CoW, split routing)
+- **Next:** Slice 4.2 - Multi-order CoW Strategy
 
 ## Session Archive
 
