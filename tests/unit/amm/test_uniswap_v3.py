@@ -16,7 +16,7 @@ from solver.amm.uniswap_v3 import (
 )
 from solver.models.auction import Liquidity
 
-FIXTURES_DIR = Path(__file__).parent.parent / "fixtures" / "liquidity"
+FIXTURES_DIR = Path(__file__).parent.parent.parent / "fixtures" / "liquidity"
 
 
 def load_liquidity_fixture(name: str) -> Liquidity:

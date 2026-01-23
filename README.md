@@ -18,7 +18,7 @@ This project implements a solver for [CoW Protocol](https://cow.fi/) batch aucti
 - **Phase 1 Complete** — Single order routing via UniswapV2 (direct + multi-hop)
 - **Phase 2 Complete** — CoW matching (2-order peer-to-peer, partial fills)
 - **Phase 3 Complete** — Liquidity expansion (V3, Balancer weighted, Balancer stable)
-- **651 tests passing** — Full coverage with Rust baseline parity
+- **662 tests passing** — Full coverage with Rust baseline parity
 
 See [PLAN.md](PLAN.md) for the detailed implementation roadmap.
 

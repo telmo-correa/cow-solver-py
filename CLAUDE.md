@@ -95,9 +95,13 @@ cow-solver-py/
 │
 └── tests/
     ├── conftest.py        # Fixtures + mock classes for DI testing
-    ├── unit/              # Unit tests (split by module)
+    ├── unit/              # Unit tests (organized by module)
+    │   ├── amm/           # AMM tests (V2, V3, Balancer)
+    │   ├── routing/       # Router tests
+    │   ├── strategies/    # Strategy tests (CoW matching, rules)
+    │   └── math/          # Math utility tests (fixed-point, SafeInt)
     ├── integration/       # Integration tests
-    └── fixtures/auctions/ # JSON test data
+    └── fixtures/          # JSON test data (auctions, liquidity)
         ├── single_order/  # Single order fixtures
         ├── cow_pairs/     # CoW pair fixtures
         ├── benchmark/     # Shared benchmark fixtures (Python vs Rust)
@@ -139,7 +143,7 @@ cow-solver-py/
 - ✅ **SafeInt arithmetic** (overflow/underflow protection)
 - ✅ **Architecture refactoring** (handler pattern, registry dispatch, module split)
 
-**Total: 651 passing tests** (unit + integration)
+**Total: 662 passing tests** (unit + integration)
 
 ### Architecture Patterns
 
