@@ -1,7 +1,7 @@
 """Unit tests for the order router."""
 
 from solver.amm.base import SwapResult
-from solver.amm.uniswap_v2 import PoolRegistry, UniswapV2Pool
+from solver.amm.uniswap_v2 import UniswapV2Pool
 from solver.amm.uniswap_v3 import (
     MockUniswapV3Quoter,
     QuoteKey,
@@ -9,6 +9,7 @@ from solver.amm.uniswap_v3 import (
     UniswapV3Pool,
 )
 from solver.models.auction import Order, OrderClass, OrderKind
+from solver.pools import PoolRegistry
 from solver.routing.router import SingleOrderRouter
 from solver.solver import Solver
 

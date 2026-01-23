@@ -8,14 +8,13 @@ from typing import TYPE_CHECKING
 import structlog
 
 from solver.amm.uniswap_v2 import (
-    PoolRegistry,
     UniswapV2,
     UniswapV2Pool,
-    build_registry_from_liquidity,
     uniswap_v2,
 )
 from solver.models.auction import AuctionInstance, Order
 from solver.models.solution import Interaction, Solution
+from solver.pools import PoolRegistry, build_registry_from_liquidity
 from solver.routing.router import RoutingResult, SingleOrderRouter
 from solver.strategies.base import OrderFill, StrategyResult
 

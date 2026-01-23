@@ -1942,7 +1942,7 @@ class TestPoolRegistryBalancer:
 
     def test_add_and_get_weighted_pool(self) -> None:
         """Add and retrieve weighted pool."""
-        from solver.amm.uniswap_v2 import PoolRegistry
+        from solver.pools import PoolRegistry
 
         registry = PoolRegistry()
         pool = BalancerWeightedPool(
@@ -1981,7 +1981,7 @@ class TestPoolRegistryBalancer:
 
     def test_add_and_get_stable_pool(self) -> None:
         """Add and retrieve stable pool."""
-        from solver.amm.uniswap_v2 import PoolRegistry
+        from solver.pools import PoolRegistry
 
         registry = PoolRegistry()
         pool = BalancerStablePool(
@@ -2014,7 +2014,7 @@ class TestPoolRegistryBalancer:
 
     def test_weighted_pool_multi_token_indexing(self) -> None:
         """3-token weighted pool indexed by all pairs."""
-        from solver.amm.uniswap_v2 import PoolRegistry
+        from solver.pools import PoolRegistry
 
         registry = PoolRegistry()
         pool = BalancerWeightedPool(
@@ -2046,7 +2046,7 @@ class TestPoolRegistryBalancer:
 
     def test_get_pools_for_pair_includes_balancer(self) -> None:
         """get_pools_for_pair returns all pool types."""
-        from solver.amm.uniswap_v2 import PoolRegistry, UniswapV2Pool
+        from solver.pools import PoolRegistry, UniswapV2Pool
 
         registry = PoolRegistry()
 
@@ -2086,7 +2086,7 @@ class TestPoolRegistryBalancer:
 
     def test_pool_counts(self) -> None:
         """Pool count properties work correctly."""
-        from solver.amm.uniswap_v2 import PoolRegistry
+        from solver.pools import PoolRegistry
 
         registry = PoolRegistry()
 
@@ -2130,7 +2130,7 @@ class TestPoolRegistryBalancer:
 
     def test_duplicate_weighted_pool_ignored(self) -> None:
         """Adding the same weighted pool twice is a no-op."""
-        from solver.amm.uniswap_v2 import PoolRegistry
+        from solver.pools import PoolRegistry
 
         registry = PoolRegistry()
 
@@ -2164,7 +2164,7 @@ class TestPoolRegistryBalancer:
 
     def test_duplicate_stable_pool_ignored(self) -> None:
         """Adding the same stable pool twice is a no-op."""
-        from solver.amm.uniswap_v2 import PoolRegistry
+        from solver.pools import PoolRegistry
 
         registry = PoolRegistry()
 
@@ -2213,7 +2213,7 @@ class TestBuildRegistryWithBalancer:
 
     def test_parse_weighted_pool_from_liquidity(self) -> None:
         """build_registry_from_liquidity parses weighted pools."""
-        from solver.amm.uniswap_v2 import build_registry_from_liquidity
+        from solver.pools import build_registry_from_liquidity
 
         liquidity_list = [
             Liquidity(
@@ -2240,7 +2240,7 @@ class TestBuildRegistryWithBalancer:
 
     def test_parse_stable_pool_from_liquidity(self) -> None:
         """build_registry_from_liquidity parses stable pools."""
-        from solver.amm.uniswap_v2 import build_registry_from_liquidity
+        from solver.pools import build_registry_from_liquidity
 
         liquidity_list = [
             Liquidity(
@@ -2267,7 +2267,7 @@ class TestBuildRegistryWithBalancer:
 
     def test_mixed_pool_types(self) -> None:
         """build_registry_from_liquidity handles mixed pool types."""
-        from solver.amm.uniswap_v2 import build_registry_from_liquidity
+        from solver.pools import build_registry_from_liquidity
 
         liquidity_list = [
             # V2 pool

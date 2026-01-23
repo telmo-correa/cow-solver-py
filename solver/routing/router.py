@@ -24,7 +24,6 @@ from typing import TYPE_CHECKING, Any
 import structlog
 
 from solver.amm.uniswap_v2 import (
-    PoolRegistry,
     UniswapV2,
     UniswapV2Pool,
     uniswap_v2,
@@ -39,6 +38,7 @@ from solver.models.solution import (
     TradeKind,
 )
 from solver.models.types import normalize_address
+from solver.pools import PoolRegistry
 
 if TYPE_CHECKING:
     from solver.amm.balancer import (
