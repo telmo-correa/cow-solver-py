@@ -5,14 +5,20 @@ Uses SafeInt for arithmetic operations to prevent:
 - uint256 overflow (validated before returning fee)
 """
 
-from typing import Protocol
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Protocol
 
 import structlog
 
 from solver.fees.config import DEFAULT_FEE_CONFIG, FeeConfig
+from solver.fees.price_estimation import get_token_info
 from solver.fees.result import FeeError, FeeResult
-from solver.models.auction import AuctionInstance, Order, OrderClass, Token
+from solver.models.auction import AuctionInstance, Order, OrderClass
 from solver.safe_int import S, Uint256Overflow
+
+if TYPE_CHECKING:
+    from solver.fees.price_estimation import PriceEstimator
 
 logger = structlog.get_logger()
 
@@ -73,17 +79,28 @@ class DefaultFeeCalculator:
 
     Market orders return no fee (protocol handles them).
 
+    When reference prices are missing, can use a PriceEstimator to estimate
+    prices via pool routing (matching Rust baseline behavior).
+
     Attributes:
         config: Fee configuration settings
+        price_estimator: Optional estimator for when reference prices are missing
     """
 
-    def __init__(self, config: FeeConfig | None = None):
-        """Initialize with optional configuration.
+    def __init__(
+        self,
+        config: FeeConfig | None = None,
+        price_estimator: PriceEstimator | None = None,
+    ):
+        """Initialize with optional configuration and price estimator.
 
         Args:
             config: Fee configuration. Uses DEFAULT_FEE_CONFIG if not provided.
+            price_estimator: Optional price estimator for missing reference prices.
+                            If provided, enables pool-based price estimation.
         """
         self.config = config or DEFAULT_FEE_CONFIG
+        self._price_estimator = price_estimator
 
     def calculate_solver_fee(
         self,
@@ -135,11 +152,11 @@ class DefaultFeeCalculator:
             )
             return FeeResult.zero_fee()
 
-        # Get reference price for sell token (case-insensitive lookup)
+        # Get reference price for sell token
         sell_token = order.sell_token.lower()
-        token_info = self._get_token_info(auction, sell_token)
+        reference_price, price_source = self._get_reference_price(sell_token, auction)
 
-        if token_info is None or token_info.reference_price is None:
+        if reference_price is None:
             detail = f"No reference price for token {sell_token[-8:]}"
             logger.warning(
                 "fee_calculation_missing_reference_price",
@@ -150,18 +167,15 @@ class DefaultFeeCalculator:
                 return FeeResult.with_error(FeeError.MISSING_REFERENCE_PRICE, detail)
             return FeeResult.zero_fee()
 
-        reference_price = int(token_info.reference_price)
         if reference_price == 0:
+            detail = f"Reference price is zero for {sell_token[-8:]}"
             logger.warning(
                 "fee_calculation_zero_reference_price",
                 order_uid=order.uid[:18] + "...",
                 sell_token=sell_token[-8:],
             )
             if self.config.reject_on_missing_reference_price:
-                return FeeResult.with_error(
-                    FeeError.ZERO_REFERENCE_PRICE,
-                    f"Reference price is zero for {sell_token[-8:]}",
-                )
+                return FeeResult.with_error(FeeError.ZERO_REFERENCE_PRICE, detail)
             return FeeResult.zero_fee()
 
         # Calculate fee using SafeInt: gas_cost * 1e18 / reference_price
@@ -246,32 +260,57 @@ class DefaultFeeCalculator:
         )
         return FeeResult.with_fee(executed_amount)
 
-    @staticmethod
-    def _get_token_info(auction: AuctionInstance, token_address: str) -> Token | None:
-        """Get token info with case-insensitive address lookup.
+    def _get_reference_price(
+        self, token_address: str, auction: AuctionInstance
+    ) -> tuple[int | None, str]:
+        """Get reference price for a token.
 
-        Token addresses may have different case in orders vs tokens dict.
-        This method normalizes the lookup to handle both cases.
+        Priority:
+        1. Use reference price from auction if available
+        2. If price_estimator is set, use it to estimate price
+        3. Return None if no price available
 
         Args:
-            auction: The auction instance
             token_address: Token address (should be lowercase)
+            auction: The auction instance
 
         Returns:
-            Token info if found, None otherwise
+            Tuple of (price, source) where:
+            - price: Reference price, 0 if explicitly zero, None if not available
+            - source: Where the price came from ('reference', 'pool', 'none')
         """
-        # Try direct lookup first (most common case)
-        token_info = auction.tokens.get(token_address)
-        if token_info is not None:
-            return token_info
+        # Try direct lookup first
+        token_info = get_token_info(auction, token_address)
+        if token_info is not None and token_info.reference_price is not None:
+            price = int(token_info.reference_price)
+            # Return 0 explicitly if set to 0 (different from missing)
+            return price, "reference"
 
-        # Try case-insensitive lookup
-        token_lower = token_address.lower()
-        for addr, info in auction.tokens.items():
-            if addr.lower() == token_lower:
-                return info
+        # Try price estimator if available
+        if self._price_estimator is not None:
+            from solver.fees.price_estimation import U256_MAX
 
-        return None
+            estimate = self._price_estimator.estimate_price(token_address, auction)
+            if estimate.source != "none":
+                if estimate.price > 0 and estimate.price < U256_MAX:
+                    logger.debug(
+                        "fee_calculation_using_estimated_price",
+                        token=token_address[-8:],
+                        price=estimate.price,
+                        source=estimate.source,
+                    )
+                    return estimate.price, estimate.source
+                elif estimate.price == U256_MAX:
+                    # U256_MAX means "no route found, use fee=0"
+                    # Return a very high price so fee calculation gives ~0
+                    logger.debug(
+                        "fee_calculation_no_route_defaulting_zero",
+                        token=token_address[-8:],
+                        source=estimate.source,
+                    )
+                    return U256_MAX, estimate.source
+
+        return None, "none"
 
 
 # Default calculator instance

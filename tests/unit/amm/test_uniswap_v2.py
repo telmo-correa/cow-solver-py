@@ -718,3 +718,163 @@ class TestParseNonConstantProduct:
 
         pool = parse_liquidity_to_pool(liquidity)
         assert pool is None  # Should return None for non-2-token pools
+
+
+class TestGasEstimate:
+    """Tests for gas estimate handling in V2 pools."""
+
+    def test_pool_default_gas_estimate(self):
+        """Test that UniswapV2Pool has default gas_estimate from constant."""
+        from solver.constants import POOL_SWAP_GAS_COST
+
+        pool = UniswapV2Pool(
+            address="0xPoolAddress",
+            token0="0xTokenA",
+            token1="0xTokenB",
+            reserve0=100 * 10**18,
+            reserve1=200 * 10**18,
+        )
+
+        # Default gas estimate should be POOL_SWAP_GAS_COST
+        assert pool.gas_estimate == POOL_SWAP_GAS_COST
+        assert pool.gas_estimate == 60_000
+
+    def test_pool_custom_gas_estimate(self):
+        """Test that UniswapV2Pool can have custom gas_estimate."""
+        pool = UniswapV2Pool(
+            address="0xPoolAddress",
+            token0="0xTokenA",
+            token1="0xTokenB",
+            reserve0=100 * 10**18,
+            reserve1=200 * 10**18,
+            gas_estimate=110_000,
+        )
+
+        assert pool.gas_estimate == 110_000
+
+    def test_simulate_swap_returns_pool_gas_estimate(self):
+        """Test that simulate_swap returns pool's gas_estimate, not constant."""
+        pool = UniswapV2Pool(
+            address="0xPoolAddress",
+            token0="0xTokenA",
+            token1="0xTokenB",
+            reserve0=100 * 10**18,
+            reserve1=200 * 10**18,
+            gas_estimate=88_892,  # Custom gas estimate from auction
+        )
+
+        result = uniswap_v2.simulate_swap(
+            pool=pool,
+            token_in="0xTokenA",
+            amount_in=1 * 10**18,
+        )
+
+        # Gas estimate in result should match pool's gas_estimate
+        assert result.gas_estimate == 88_892
+
+    def test_simulate_swap_exact_output_returns_pool_gas_estimate(self):
+        """Test that simulate_swap_exact_output returns pool's gas_estimate."""
+        pool = UniswapV2Pool(
+            address="0xPoolAddress",
+            token0="0xTokenA",
+            token1="0xTokenB",
+            reserve0=100 * 10**18,
+            reserve1=200 * 10**18,
+            gas_estimate=110_000,
+        )
+
+        result = uniswap_v2.simulate_swap_exact_output(
+            pool=pool,
+            token_in="0xTokenA",
+            amount_out=1 * 10**18,
+        )
+
+        assert result.gas_estimate == 110_000
+
+
+class TestGasEstimateParsing:
+    """Tests for gas estimate parsing in parse_liquidity_to_pool."""
+
+    def test_parse_gas_estimate_from_liquidity(self):
+        """Test parsing gasEstimate from liquidity data."""
+        from solver.amm.uniswap_v2 import parse_liquidity_to_pool
+        from solver.models.auction import Liquidity
+
+        liquidity = Liquidity(
+            id="test-pool",
+            kind="constantProduct",
+            tokens={
+                "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2": {"balance": "1000000000000000000"},
+                "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48": {"balance": "2500000000"},
+            },
+            address="0x1234567890123456789012345678901234567890",
+            fee="0.003",
+            gas_estimate="110000",  # Use alias
+        )
+
+        pool = parse_liquidity_to_pool(liquidity)
+        assert pool is not None
+        assert pool.gas_estimate == 110_000
+
+    def test_parse_gas_estimate_missing_uses_default(self):
+        """Test that missing gasEstimate uses default constant."""
+        from solver.amm.uniswap_v2 import parse_liquidity_to_pool
+        from solver.constants import POOL_SWAP_GAS_COST
+        from solver.models.auction import Liquidity
+
+        liquidity = Liquidity(
+            id="test-pool",
+            kind="constantProduct",
+            tokens={
+                "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2": {"balance": "1000000000000000000"},
+                "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48": {"balance": "2500000000"},
+            },
+            address="0x1234567890123456789012345678901234567890",
+            # No gas_estimate field
+        )
+
+        pool = parse_liquidity_to_pool(liquidity)
+        assert pool is not None
+        assert pool.gas_estimate == POOL_SWAP_GAS_COST
+
+    def test_parse_gas_estimate_invalid_uses_default(self):
+        """Test that invalid gasEstimate falls back to default."""
+        from solver.amm.uniswap_v2 import parse_liquidity_to_pool
+        from solver.constants import POOL_SWAP_GAS_COST
+        from solver.models.auction import Liquidity
+
+        liquidity = Liquidity(
+            id="test-pool",
+            kind="constantProduct",
+            tokens={
+                "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2": {"balance": "1000000000000000000"},
+                "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48": {"balance": "2500000000"},
+            },
+            address="0x1234567890123456789012345678901234567890",
+            gas_estimate="not-a-number",  # Invalid
+        )
+
+        pool = parse_liquidity_to_pool(liquidity)
+        assert pool is not None
+        assert pool.gas_estimate == POOL_SWAP_GAS_COST
+
+    def test_parse_gas_estimate_realistic_value(self):
+        """Test parsing realistic gas estimate from Rust solver (88892)."""
+        from solver.amm.uniswap_v2 import parse_liquidity_to_pool
+        from solver.models.auction import Liquidity
+
+        # This is the value the Rust solver typically provides
+        liquidity = Liquidity(
+            id="test-pool",
+            kind="constantProduct",
+            tokens={
+                "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2": {"balance": "1000000000000000000"},
+                "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48": {"balance": "2500000000"},
+            },
+            address="0x1234567890123456789012345678901234567890",
+            gas_estimate="88892",
+        )
+
+        pool = parse_liquidity_to_pool(liquidity)
+        assert pool is not None
+        assert pool.gas_estimate == 88_892

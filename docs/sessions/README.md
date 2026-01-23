@@ -70,6 +70,7 @@ Individual session logs are preserved in the `archive/` directory for reference.
 | [37](archive/session-37.md) | 2026-01-22 | Test Coverage and Reorganization |
 | [38](archive/session-38.md) | 2026-01-22 | 0x Limit Order Integration |
 | [39](archive/session-39.md) | 2026-01-22 | Limit Order Benchmark Verification |
+| [40](archive/session-40.md) | 2026-01-23 | V2 Gas Estimate Parity and Price Estimation |
 
 ## Session Template
 

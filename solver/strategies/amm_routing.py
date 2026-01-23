@@ -12,6 +12,7 @@ from solver.amm.uniswap_v2 import (
     UniswapV2Pool,
     uniswap_v2,
 )
+from solver.fees import DefaultFeeCalculator, PoolBasedPriceEstimator
 from solver.models.auction import AuctionInstance, Order
 from solver.models.solution import Interaction, Solution
 from solver.pools import PoolRegistry, build_registry_from_liquidity
@@ -107,6 +108,21 @@ class AmmRoutingStrategy:
             stable_amm=self.stable_amm,
             limit_order_amm=self.limit_order_amm,
         )
+
+    def _create_fee_calculator(self, router: SingleOrderRouter) -> DefaultFeeCalculator:
+        """Create a fee calculator with pool-based price estimation.
+
+        This enables fee calculation for limit orders when reference prices
+        are missing, by estimating prices through pool routing to native token.
+
+        Args:
+            router: Router for simulating price estimation swaps
+
+        Returns:
+            Fee calculator with price estimator configured
+        """
+        price_estimator = PoolBasedPriceEstimator(router=router)
+        return DefaultFeeCalculator(price_estimator=price_estimator)
 
     def _route_and_build(
         self, order: Order, pool_registry: PoolRegistry
@@ -215,12 +231,17 @@ class AmmRoutingStrategy:
                     remainder_buy=remainder.buy_amount,
                 )
 
+        # Create fee calculator with pool-based price estimation
+        router = self._get_router(pool_registry)
+        fee_calculator = self._create_fee_calculator(router)
+
         return StrategyResult(
             fills=[result.fill],
             interactions=list(result.solution.interactions),
             prices=result.solution.prices,
             gas=result.solution.gas or 0,
             remainder_orders=remainder_orders,
+            fee_calculator=fee_calculator,
         )
 
     def _update_reserves_after_swap(
@@ -368,10 +389,15 @@ class AmmRoutingStrategy:
             failed_order_uids=failed_order_uids if failed_order_uids else None,
         )
 
+        # Create fee calculator with pool-based price estimation
+        router = self._get_router(pool_registry)
+        fee_calculator = self._create_fee_calculator(router)
+
         return StrategyResult(
             fills=all_fills,
             interactions=all_interactions,
             prices=all_prices,
             gas=total_gas,
             remainder_orders=all_remainders,
+            fee_calculator=fee_calculator,
         )

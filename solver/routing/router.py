@@ -34,7 +34,6 @@ from solver.amm.uniswap_v2 import (
     UniswapV2Pool,
     uniswap_v2,
 )
-from solver.constants import POOL_SWAP_GAS_COST
 from solver.models.auction import Order
 from solver.models.solution import Solution
 from solver.pools import AnyPool, LimitOrderPool, PoolRegistry
@@ -164,7 +163,7 @@ class SingleOrderRouter:
                 ao,
             ),
             type_name="v2",
-            gas_estimate=lambda _: POOL_SWAP_GAS_COST,
+            gas_estimate=lambda p: p.gas_estimate,
         )
 
         # Register V3 (if available)
@@ -180,7 +179,7 @@ class SingleOrderRouter:
                     ao,
                 ),
                 type_name="v3",
-                gas_estimate=lambda p: p.gas_estimate,  # type: ignore[union-attr]
+                gas_estimate=lambda p: p.gas_estimate,
             )
 
         # Register Balancer weighted (if available)
@@ -200,7 +199,7 @@ class SingleOrderRouter:
                     ao,
                 ),
                 type_name="balancer_weighted",
-                gas_estimate=lambda p: p.gas_estimate,  # type: ignore[union-attr]
+                gas_estimate=lambda p: p.gas_estimate,
             )
 
         # Register Balancer stable (if available)
@@ -217,7 +216,7 @@ class SingleOrderRouter:
                     ao,
                 ),
                 type_name="balancer_stable",
-                gas_estimate=lambda p: p.gas_estimate,  # type: ignore[union-attr]
+                gas_estimate=lambda p: p.gas_estimate,
             )
 
         # Register 0x limit orders (if available)
@@ -234,7 +233,7 @@ class SingleOrderRouter:
                     ao,
                 ),
                 type_name="limit_order",
-                gas_estimate=lambda p: p.gas_estimate,  # type: ignore[union-attr]
+                gas_estimate=lambda p: p.gas_estimate,
             )
 
         return registry

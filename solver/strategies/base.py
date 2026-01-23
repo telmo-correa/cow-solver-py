@@ -180,6 +180,8 @@ class StrategyResult:
         prices: Clearing prices for tokens involved in the fills
         gas: Gas estimate for the interactions
         remainder_orders: Synthetic orders representing unfilled portions
+        fee_calculator: Optional custom fee calculator for this result.
+                       Used for pool-based price estimation when reference prices are missing.
     """
 
     fills: list[OrderFill] = field(default_factory=list)
@@ -187,6 +189,7 @@ class StrategyResult:
     prices: dict[str, str] = field(default_factory=dict)
     gas: int = 0
     remainder_orders: list[Order] = field(default_factory=list)
+    fee_calculator: FeeCalculator | None = None
 
     @property
     def is_complete(self) -> bool:
@@ -216,11 +219,13 @@ class StrategyResult:
             solution_id: ID to assign to the solution
             auction: The auction instance (needed for fee calculation on limit orders)
             fee_calculator: Optional custom fee calculator. Uses default if not provided.
+                           If not provided, uses self.fee_calculator if set.
 
         Returns:
             A Solution object ready for the SolverResponse
         """
-        calculator = fee_calculator or DEFAULT_FEE_CALCULATOR
+        # Priority: explicit parameter > stored in result > default
+        calculator = fee_calculator or self.fee_calculator or DEFAULT_FEE_CALCULATOR
         trades = []
 
         for fill in self.fills:
@@ -375,12 +380,21 @@ class StrategyResult:
         # Remainder orders come from the last result
         remainder_orders = results[-1].remainder_orders if results else []
 
+        # Fee calculator: use the last result's calculator (if any)
+        # This ensures pool-based price estimation is available for final solution
+        fee_calc = None
+        for result in reversed(results):
+            if result.fee_calculator is not None:
+                fee_calc = result.fee_calculator
+                break
+
         return StrategyResult(
             fills=list(fills_by_uid.values()),
             interactions=combined_interactions,
             prices=combined_prices,
             gas=total_gas,
             remainder_orders=remainder_orders,
+            fee_calculator=fee_calc,
         )
 
     @staticmethod

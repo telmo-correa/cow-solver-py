@@ -36,6 +36,8 @@ class UniswapV2Pool:
     fee_bps: int = 30
     # Liquidity ID from the auction (for LiquidityInteraction)
     liquidity_id: str | None = None
+    # Gas estimate from auction data (default from POOL_SWAP_GAS_COST for backwards compat)
+    gas_estimate: int = POOL_SWAP_GAS_COST
 
     @property
     def fee_multiplier(self) -> int:
@@ -303,7 +305,7 @@ class UniswapV2(AMM):
             pool_address=pool.address,
             token_in=token_in,
             token_out=token_out,
-            gas_estimate=POOL_SWAP_GAS_COST,
+            gas_estimate=pool.gas_estimate,
         )
 
     def simulate_swap_exact_output(
@@ -332,7 +334,7 @@ class UniswapV2(AMM):
             pool_address=pool.address,
             token_in=token_in,
             token_out=token_out,
-            gas_estimate=POOL_SWAP_GAS_COST,
+            gas_estimate=pool.gas_estimate,
         )
 
     def pool_max_fill_sell_order(
@@ -569,6 +571,19 @@ def parse_liquidity_to_pool(liquidity: Liquidity) -> UniswapV2Pool | None:
                 using_default="0.003 (30 bps)",
             )
 
+    # Parse gas estimate (default to POOL_SWAP_GAS_COST if not provided)
+    gas_estimate = POOL_SWAP_GAS_COST
+    if liquidity.gas_estimate:
+        try:
+            gas_estimate = int(liquidity.gas_estimate)
+        except (ValueError, TypeError):
+            logger.warning(
+                "gas_estimate_parse_failed",
+                pool_id=liquidity.id,
+                raw_gas_estimate=liquidity.gas_estimate,
+                using_default=POOL_SWAP_GAS_COST,
+            )
+
     return UniswapV2Pool(
         address=normalize_address(liquidity.address),
         token0=token0,
@@ -577,6 +592,7 @@ def parse_liquidity_to_pool(liquidity: Liquidity) -> UniswapV2Pool | None:
         reserve1=balance1,
         fee_bps=fee_bps,
         liquidity_id=liquidity.id,
+        gas_estimate=gas_estimate,
     )
 
 

@@ -4,6 +4,7 @@ This module provides centralized fee handling including:
 - Solver fee calculation for limit orders
 - Fee validation (overflow checking)
 - Configurable behavior for edge cases
+- Native token price estimation via pool routing
 
 Usage:
     from solver.fees import FeeCalculator, FeeResult, FeeConfig
@@ -15,6 +16,12 @@ Usage:
         fee = result.fee
     else:
         handle_error(result.error)
+
+For pool-based price estimation:
+    from solver.fees import PoolBasedPriceEstimator, DefaultFeeCalculator
+
+    estimator = PoolBasedPriceEstimator(router=router, registry=registry)
+    calculator = DefaultFeeCalculator(price_estimator=estimator)
 """
 
 from solver.fees.calculator import (
@@ -23,6 +30,18 @@ from solver.fees.calculator import (
     FeeCalculator,
 )
 from solver.fees.config import DEFAULT_FEE_CONFIG, FeeConfig
+from solver.fees.price_estimation import (
+    DEFAULT_ESTIMATION_AMOUNT,
+    DEFAULT_NATIVE_TOKEN,
+    DEFAULT_NATIVE_TOKENS,
+    U256_MAX,
+    WETH_MAINNET,
+    WXDAI_GNOSIS,
+    PoolBasedPriceEstimator,
+    PriceEstimate,
+    PriceEstimator,
+    get_token_info,
+)
 from solver.fees.result import FeeError, FeeResult
 
 __all__ = [
@@ -36,4 +55,15 @@ __all__ = [
     # Result
     "FeeResult",
     "FeeError",
+    # Price estimation
+    "PriceEstimator",
+    "PriceEstimate",
+    "PoolBasedPriceEstimator",
+    "get_token_info",
+    "DEFAULT_NATIVE_TOKEN",
+    "DEFAULT_NATIVE_TOKENS",
+    "DEFAULT_ESTIMATION_AMOUNT",
+    "U256_MAX",
+    "WETH_MAINNET",
+    "WXDAI_GNOSIS",
 ]
