@@ -38,7 +38,7 @@ from solver.models.solution import (
     TradeKind,
 )
 from solver.models.types import normalize_address
-from solver.pools import PoolRegistry
+from solver.pools import AnyPool, PoolRegistry
 
 if TYPE_CHECKING:
     from solver.amm.balancer import (
@@ -49,9 +49,6 @@ if TYPE_CHECKING:
     )
     from solver.amm.uniswap_v3 import UniswapV3AMM, UniswapV3Pool
 
-# Type alias for any pool type
-AnyPool = "UniswapV2Pool | UniswapV3Pool | BalancerWeightedPool | BalancerStablePool"
-
 logger = structlog.get_logger()
 
 
@@ -59,7 +56,7 @@ logger = structlog.get_logger()
 class HopResult:
     """Result of a single hop in a multi-hop route."""
 
-    pool: UniswapV2Pool | UniswapV3Pool | BalancerWeightedPool | BalancerStablePool
+    pool: AnyPool
     input_token: str
     output_token: str
     amount_in: int
@@ -73,16 +70,12 @@ class RoutingResult:
     order: Order
     amount_in: int
     amount_out: int
-    pool: (
-        UniswapV2Pool | UniswapV3Pool | BalancerWeightedPool | BalancerStablePool | None
-    )  # None when no pool found
+    pool: AnyPool | None  # None when no pool found
     success: bool
     error: str | None = None
     # Multi-hop routing fields
     path: list[str] | None = None  # Token path for multi-hop swaps
-    pools: (
-        list[UniswapV2Pool | UniswapV3Pool | BalancerWeightedPool | BalancerStablePool] | None
-    ) = None  # Pools along the path
+    pools: list[AnyPool] | None = None  # Pools along the path
     hops: list[HopResult] | None = None  # Detailed results for each hop
     gas_estimate: int = POOL_SWAP_GAS_COST  # Default single-hop gas (60k per swap)
 
@@ -168,6 +161,25 @@ class SingleOrderRouter:
             success=False,
             error=error,
         )
+
+    def _get_balancer_amm_for_pool(
+        self, pool: AnyPool
+    ) -> tuple[BalancerWeightedAMM | BalancerStableAMM | None, str]:
+        """Get the Balancer AMM that handles this pool type.
+
+        Args:
+            pool: The pool to dispatch
+
+        Returns:
+            Tuple of (AMM instance or None, pool type name)
+        """
+        from solver.amm.balancer import BalancerStablePool, BalancerWeightedPool
+
+        if isinstance(pool, BalancerWeightedPool):
+            return self.weighted_amm, "weighted"
+        elif isinstance(pool, BalancerStablePool):
+            return self.stable_amm, "stable"
+        return None, "unknown"
 
     def _partial_fill_result(
         self,
@@ -642,6 +654,9 @@ class SingleOrderRouter:
     ) -> RoutingResult:
         """Route an order through a Balancer pool (weighted or stable).
 
+        This consolidated method handles both weighted and stable pools using
+        the dispatch method to select the appropriate AMM.
+
         Args:
             order: The order to route
             pool: The Balancer pool to use (weighted or stable)
@@ -651,40 +666,25 @@ class SingleOrderRouter:
         Returns:
             RoutingResult with the routing outcome
         """
-        from solver.amm.balancer import BalancerWeightedPool
-
-        # Dispatch to type-specific handler
-        if isinstance(pool, BalancerWeightedPool):
-            return self._route_through_weighted_pool(order, pool, sell_amount, buy_amount)
-        else:
-            return self._route_through_stable_pool(order, pool, sell_amount, buy_amount)
-
-    def _route_through_weighted_pool(
-        self,
-        order: Order,
-        pool: BalancerWeightedPool,
-        sell_amount: int,
-        buy_amount: int,
-    ) -> RoutingResult:
-        """Route an order through a Balancer weighted pool."""
-        if self.weighted_amm is None:
-            return self._error_result(order, "Balancer weighted: AMM not configured")
+        # Get AMM for this pool type
+        amm, pool_type = self._get_balancer_amm_for_pool(pool)
+        if amm is None:
+            return self._error_result(order, f"Balancer {pool_type}: AMM not configured")
 
         if order.is_sell_order:
-            result = self.weighted_amm.simulate_swap(
-                pool, order.sell_token, order.buy_token, sell_amount
-            )
+            # Pool type is guaranteed to match AMM by _get_balancer_amm_for_pool
+            result = amm.simulate_swap(pool, order.sell_token, order.buy_token, sell_amount)  # type: ignore[arg-type]
             if result is None:
                 if order.partially_fillable:
                     return self._try_partial_balancer_fill(
-                        order, pool, self.weighted_amm, "weighted", sell_amount, buy_amount
+                        order, pool, amm, pool_type, sell_amount, buy_amount
                     )
-                return self._error_result(order, "Balancer weighted: quote failed")
+                return self._error_result(order, f"Balancer {pool_type}: quote failed")
 
             if result.amount_out < buy_amount:
                 if order.partially_fillable:
                     return self._try_partial_balancer_fill(
-                        order, pool, self.weighted_amm, "weighted", sell_amount, buy_amount
+                        order, pool, amm, pool_type, sell_amount, buy_amount
                     )
                 return RoutingResult(
                     order=order,
@@ -697,84 +697,24 @@ class SingleOrderRouter:
 
             return self._build_balancer_result(order, pool, sell_amount, result.amount_out)
         else:
-            result = self.weighted_amm.simulate_swap_exact_output(
-                pool, order.sell_token, order.buy_token, buy_amount
+            # Pool type is guaranteed to match AMM by _get_balancer_amm_for_pool
+            result = amm.simulate_swap_exact_output(
+                pool,  # type: ignore[arg-type]
+                order.sell_token,
+                order.buy_token,
+                buy_amount,
             )
             if result is None:
                 if order.partially_fillable:
                     return self._try_partial_balancer_fill(
-                        order, pool, self.weighted_amm, "weighted", sell_amount, buy_amount
+                        order, pool, amm, pool_type, sell_amount, buy_amount
                     )
-                return self._error_result(order, "Balancer weighted: quote failed")
+                return self._error_result(order, f"Balancer {pool_type}: quote failed")
 
             if result.amount_in > sell_amount:
                 if order.partially_fillable:
                     return self._try_partial_balancer_fill(
-                        order, pool, self.weighted_amm, "weighted", sell_amount, buy_amount
-                    )
-                return RoutingResult(
-                    order=order,
-                    amount_in=result.amount_in,
-                    amount_out=buy_amount,
-                    pool=pool,
-                    success=False,
-                    error=f"Required input {result.amount_in} exceeds maximum {sell_amount}",
-                )
-
-            return self._build_balancer_result(order, pool, result.amount_in, buy_amount)
-
-    def _route_through_stable_pool(
-        self,
-        order: Order,
-        pool: BalancerStablePool,
-        sell_amount: int,
-        buy_amount: int,
-    ) -> RoutingResult:
-        """Route an order through a Balancer stable pool."""
-        if self.stable_amm is None:
-            return self._error_result(order, "Balancer stable: AMM not configured")
-
-        if order.is_sell_order:
-            result = self.stable_amm.simulate_swap(
-                pool, order.sell_token, order.buy_token, sell_amount
-            )
-            if result is None:
-                if order.partially_fillable:
-                    return self._try_partial_balancer_fill(
-                        order, pool, self.stable_amm, "stable", sell_amount, buy_amount
-                    )
-                return self._error_result(order, "Balancer stable: quote failed")
-
-            if result.amount_out < buy_amount:
-                if order.partially_fillable:
-                    return self._try_partial_balancer_fill(
-                        order, pool, self.stable_amm, "stable", sell_amount, buy_amount
-                    )
-                return RoutingResult(
-                    order=order,
-                    amount_in=sell_amount,
-                    amount_out=result.amount_out,
-                    pool=pool,
-                    success=False,
-                    error=f"Output {result.amount_out} below minimum {buy_amount}",
-                )
-
-            return self._build_balancer_result(order, pool, sell_amount, result.amount_out)
-        else:
-            result = self.stable_amm.simulate_swap_exact_output(
-                pool, order.sell_token, order.buy_token, buy_amount
-            )
-            if result is None:
-                if order.partially_fillable:
-                    return self._try_partial_balancer_fill(
-                        order, pool, self.stable_amm, "stable", sell_amount, buy_amount
-                    )
-                return self._error_result(order, "Balancer stable: quote failed")
-
-            if result.amount_in > sell_amount:
-                if order.partially_fillable:
-                    return self._try_partial_balancer_fill(
-                        order, pool, self.stable_amm, "stable", sell_amount, buy_amount
+                        order, pool, amm, pool_type, sell_amount, buy_amount
                     )
                 return RoutingResult(
                     order=order,
