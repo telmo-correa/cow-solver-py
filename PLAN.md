@@ -267,38 +267,85 @@ The Rust baseline solver supports 5 liquidity types. All implemented:
 > - Gas costs in the objective function
 >
 > **Research:** See `docs/research/flash-loans.md` for flash loan provider analysis and design decisions.
+>
+> **Key Insight from 4.1:** Most CoW pairs have **crossing prices** (ask > bid), meaning
+> pure peer-to-peer matching rarely works. The value comes from using AMM prices as
+> reference points to unlock more matches. See `docs/sessions/session-43-slice4.1-analysis.md`.
 
-### Slice 4.1: Problem Formulation
+### Slice 4.1: Problem Formulation ✅ COMPLETE
 **Goal:** Define the optimization problem precisely
 
-- [ ] Formalize as constraint optimization (variables, constraints, objective)
-- [ ] Identify which constraints are linear vs non-linear
-- [ ] Analyze problem structure (decomposition opportunities)
-- [ ] Document complexity and tractability
-- [ ] Decide on solver approach (custom algorithm vs LP/MIP vs heuristic)
+- [x] Formalize as constraint optimization (variables, constraints, objective)
+- [x] Analyze problem structure (decomposition opportunities)
+- [x] Empirical analysis: 20 real mainnet auctions (~5,600 orders each)
+- [x] Prototype double auction algorithm for single-pair matching
+- [x] Test on historical data to understand matching potential
 
-### Slice 4.2: Multi-Order CoW Detection
-**Goal:** Find CoW opportunities across N orders (moved from Phase 2)
+**Key Findings:**
+| Metric | Value |
+|--------|-------|
+| CoW-eligible orders | 36.5% |
+| Pairs with 10+ orders | 858 (ideal for double auction) |
+| Ring trade potential | 100% of auctions |
+| Pure CoW matches | Rare (most prices cross) |
 
-- [ ] Token pair decomposition (independent subproblems)
-- [ ] Double auction clearing for optimal pairwise matching
-- [ ] Handle fill-or-kill constraints
-- [ ] Test: 5+ order auctions with CoW potential
-- [ ] Benchmark: measure surplus vs 2-order matching
+**Deliverables:**
+- `solver/strategies/double_auction.py` - O(n log n) clearing algorithm
+- `scripts/analyze_auction_structure.py` - Historical auction analysis
+- `docs/design/phase4-slice4.1-problem-formulation.md` - Formal problem definition
 
-### Slice 4.3: Unified Solver
-**Goal:** Joint optimization across CoW + all AMM sources + split routing
+### Slice 4.2: Hybrid CoW+AMM Strategy ⬅️ IN PROGRESS
+**Goal:** Use AMM prices as reference to unlock CoW matches
 
-- [ ] Implement chosen optimization approach
-- [ ] Handle non-linear AMM price curves
-- [ ] **Split routing:** find optimal splits across venues (from Slice 3.4)
-- [ ] Compare against sequential composition baseline
-- [ ] Test: auctions where joint optimization beats sequential
-- [ ] Test: large orders that benefit from splitting across venues
-- [ ] Benchmark: measure surplus improvement and latency
+> **Revised Approach:** Pure double auction has limited value because prices cross.
+> By using AMM as a "virtual participant" at current market price, we can match
+> orders that would otherwise need AMM routing — capturing the gas savings while
+> ensuring fair execution.
 
-### Slice 4.4: Ring Trade Detection (Optional)
+**4.2a: AMM Price Integration**
+- [ ] Add `get_best_price(token_a, token_b)` method to router
+- [ ] Query V2/V3/Balancer for reference price
+- [ ] Handle no-liquidity cases gracefully
+- [ ] Test: price queries for common pairs
+
+**4.2b: Hybrid Double Auction**
+- [ ] Extend `run_double_auction()` to accept AMM reference price
+- [ ] AMM acts as unlimited bid/ask at market price
+- [ ] Match orders against each other AND against AMM price
+- [ ] Route unmatched remainders through AMM
+- [ ] Test: compare hybrid vs pure-AMM routing
+
+**4.2c: Strategy Integration**
+- [ ] Integrate hybrid auction into `CowMatchStrategy`
+- [ ] Process top N pairs by order count
+- [ ] Fall back to AMM routing for single-direction pairs
+- [ ] Benchmark: measure surplus improvement on historical auctions
+
+**Exit Criteria:** Hybrid strategy outperforms pure-AMM routing on at least 20% of CoW-eligible auctions.
+
+### Slice 4.3: Evaluation & Next Direction
+**Goal:** Data-driven decision on ring trades vs split routing vs unified solver
+
+After 4.2, we'll have real numbers on hybrid CoW+AMM value. Based on results:
+
+**If hybrid CoW adds significant value (>5% surplus improvement):**
+- Proceed to ring trades (100% of auctions have potential)
+- Ring trades extend the CoW concept across token cycles
+
+**If hybrid CoW adds marginal value (<5%):**
+- Pivot to split routing (clear slippage reduction for large orders)
+- Or focus on performance optimization (Phase 5)
+
+**Tasks:**
+- [ ] Run hybrid strategy on 50+ historical auctions
+- [ ] Measure surplus improvement vs pure-AMM baseline
+- [ ] Document findings and recommend next phase
+- [ ] Update PLAN.md with chosen direction
+
+### Slice 4.4: Ring Trade Detection (Conditional)
 **Goal:** Find cyclic trading opportunities (A→B→C→A)
+
+> **Prerequisite:** Only pursue if Slice 4.3 shows CoW mechanisms add value.
 
 - [ ] Build token graph from orders
 - [ ] Find short cycles (3-4 tokens max)
@@ -306,7 +353,18 @@ The Rust baseline solver supports 5 liquidity types. All implemented:
 - [ ] Test: auctions with ring trade potential
 - [ ] Benchmark: measure frequency and value of ring trades
 
-### Slice 4.5: Flash Loan Integration
+### Slice 4.5: Split Routing (Conditional)
+**Goal:** Split large orders across multiple venues for better execution
+
+> **Prerequisite:** Pursue if large orders dominate value or ring trades underperform.
+
+- [ ] Quote multiple venues for same order
+- [ ] Convex optimization for split ratios
+- [ ] Gas cost vs slippage tradeoff
+- [ ] Test: large orders (>10% of pool liquidity)
+- [ ] Benchmark: slippage reduction vs single-venue
+
+### Slice 4.6: Flash Loan Integration (Future)
 **Goal:** Use flash loans to enable better user fills (not solver profit)
 
 > **Design Doc:** See `docs/research/flash-loans.md` for full research and design decisions.

@@ -16,10 +16,13 @@ from solver.strategies.base import (
 )
 from solver.strategies.cow_match import CowMatchStrategy
 from solver.strategies.double_auction import (
+    AMMRoute,
     DoubleAuctionMatch,
     DoubleAuctionResult,
+    HybridAuctionResult,
     calculate_surplus,
     run_double_auction,
+    run_hybrid_auction,
 )
 
 __all__ = [
@@ -32,6 +35,9 @@ __all__ = [
     # Double auction (Phase 4)
     "DoubleAuctionMatch",
     "DoubleAuctionResult",
+    "AMMRoute",
+    "HybridAuctionResult",
     "run_double_auction",
+    "run_hybrid_auction",
     "calculate_surplus",
 ]

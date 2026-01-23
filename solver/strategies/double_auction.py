@@ -371,10 +371,247 @@ def calculate_surplus(result: DoubleAuctionResult) -> int:
     return total_surplus
 
 
+@dataclass
+class AMMRoute:
+    """An order that should be routed through AMM.
+
+    Attributes:
+        order: The order to route
+        amount: Amount to route (may be partial)
+        is_selling_a: True if selling token A (matches OrderGroup convention)
+    """
+
+    order: Order
+    amount: int  # Amount of the sell token
+    is_selling_a: bool
+
+
+@dataclass
+class HybridAuctionResult:
+    """Result of hybrid CoW+AMM auction.
+
+    Combines direct CoW matches with AMM routing decisions.
+
+    Attributes:
+        cow_matches: Orders matched directly via CoW
+        amm_routes: Orders that should route through AMM
+        clearing_price: Price used for CoW matches (B per A)
+        total_cow_a: Total token A matched via CoW
+        total_cow_b: Total token B matched via CoW
+    """
+
+    cow_matches: list[DoubleAuctionMatch]
+    amm_routes: list[AMMRoute]
+    clearing_price: Decimal | None
+    total_cow_a: int
+    total_cow_b: int
+
+
+def run_hybrid_auction(
+    group: OrderGroup,
+    amm_price: Decimal | None = None,
+    respect_fill_or_kill: bool = True,
+) -> HybridAuctionResult:
+    """Run hybrid CoW+AMM auction on an order group.
+
+    This extends the pure double auction by using the AMM reference price
+    to determine which orders can be matched directly (CoW) vs which
+    should route through AMM.
+
+    The algorithm:
+    1. If no AMM price, run pure double auction
+    2. With AMM price:
+       - Sort asks ascending, bids descending by limit price
+       - Match orders where: ask_limit <= AMM price <= bid_limit
+       - Use AMM price as clearing price (fair reference)
+       - Route remaining orders to AMM
+
+    The key insight is that orders with overlapping limit prices
+    relative to the AMM price can be matched directly, capturing
+    the gas savings of CoW while ensuring fair execution.
+
+    Args:
+        group: OrderGroup with orders in both directions
+        amm_price: Reference price from AMM (B per A). If None,
+                   falls back to pure double auction behavior.
+        respect_fill_or_kill: If True, skip non-partially-fillable orders
+                              that would be only partially filled
+
+    Returns:
+        HybridAuctionResult with CoW matches and AMM routes
+    """
+    # Handle empty groups
+    if not group.sellers_of_a and not group.sellers_of_b:
+        return HybridAuctionResult(
+            cow_matches=[],
+            amm_routes=[],
+            clearing_price=None,
+            total_cow_a=0,
+            total_cow_b=0,
+        )
+
+    # If no AMM price, use pure double auction
+    if amm_price is None:
+        pure_result = run_double_auction(group, respect_fill_or_kill)
+        amm_routes = []
+
+        # Convert unmatched orders to AMM routes
+        for order, remaining in pure_result.unmatched_sellers:
+            if remaining > 0:
+                amm_routes.append(AMMRoute(order=order, amount=remaining, is_selling_a=True))
+        for order, remaining in pure_result.unmatched_buyers:
+            if remaining > 0:
+                amm_routes.append(AMMRoute(order=order, amount=remaining, is_selling_a=False))
+
+        return HybridAuctionResult(
+            cow_matches=pure_result.matches,
+            amm_routes=amm_routes,
+            clearing_price=pure_result.clearing_price,
+            total_cow_a=pure_result.total_a_matched,
+            total_cow_b=pure_result.total_b_matched,
+        )
+
+    # With AMM price: match orders that can clear at AMM price
+    # Sort asks ascending (cheapest sellers first)
+    asks_raw = [
+        (order, get_limit_price(order, is_selling_a=True), order.sell_amount_int)
+        for order in group.sellers_of_a
+    ]
+    asks = [(o, p, a) for o, p, a in asks_raw if p is not None]
+    asks.sort(key=lambda x: x[1])
+
+    # Sort bids descending (highest bidders first)
+    bids_raw = [
+        (order, get_limit_price(order, is_selling_a=False), order.sell_amount_int)
+        for order in group.sellers_of_b
+    ]
+    bids = [(o, p, a) for o, p, a in bids_raw if p is not None]
+    bids.sort(key=lambda x: x[1], reverse=True)
+
+    # Track remaining amounts
+    ask_remaining = {order.uid: amount for order, _, amount in asks}
+    bid_remaining = {order.uid: amount for order, _, amount in bids}
+
+    matches: list[DoubleAuctionMatch] = []
+    total_a_matched = 0
+    total_b_matched = 0
+
+    # Filter to orders that CAN trade at AMM price:
+    # - Asks with limit <= AMM price (willing to sell at or below AMM)
+    # - Bids with limit >= AMM price (willing to buy at or above AMM)
+    matchable_asks = [(o, p, a) for o, p, a in asks if p <= amm_price]
+    matchable_bids = [(o, p, a) for o, p, a in bids if p >= amm_price]
+
+    # Match orders at AMM price
+    ask_idx = 0
+    bid_idx = 0
+
+    while ask_idx < len(matchable_asks) and bid_idx < len(matchable_bids):
+        ask_order, _, _ = matchable_asks[ask_idx]
+        bid_order, _, _ = matchable_bids[bid_idx]
+
+        ask_remaining_amount = ask_remaining[ask_order.uid]
+        bid_remaining_amount = bid_remaining[bid_order.uid]
+
+        if ask_remaining_amount <= 0:
+            ask_idx += 1
+            continue
+        if bid_remaining_amount <= 0:
+            bid_idx += 1
+            continue
+
+        # At AMM price, bid can buy this much A with remaining B
+        bid_can_buy_a = int(Decimal(bid_remaining_amount) / amm_price)
+
+        # Match amount
+        match_a = min(ask_remaining_amount, bid_can_buy_a)
+
+        if match_a <= 0:
+            bid_idx += 1
+            continue
+
+        # Check fill-or-kill constraints
+        if respect_fill_or_kill:
+            if match_a < ask_remaining_amount and not ask_order.partially_fillable:
+                # Ask can't be partially filled, skip to next bid
+                bid_idx += 1
+                continue
+            bid_fill_amount = int(Decimal(match_a) * amm_price)
+            if bid_fill_amount < bid_remaining_amount and not bid_order.partially_fillable:
+                # Bid can't be partially filled, skip to next ask
+                ask_idx += 1
+                continue
+
+        # Calculate B amount at AMM price
+        match_b = int(Decimal(match_a) * amm_price)
+
+        if match_b <= 0:
+            bid_idx += 1
+            continue
+
+        # Record match
+        match = DoubleAuctionMatch(
+            seller=ask_order,
+            buyer=bid_order,
+            amount_a=match_a,
+            amount_b=match_b,
+            clearing_price=amm_price,
+        )
+        matches.append(match)
+
+        # Update remaining
+        ask_remaining[ask_order.uid] -= match_a
+        bid_remaining[bid_order.uid] -= match_b
+        total_a_matched += match_a
+        total_b_matched += match_b
+
+        # Advance indices
+        if ask_remaining[ask_order.uid] <= 0:
+            ask_idx += 1
+        if bid_remaining[bid_order.uid] <= 0:
+            bid_idx += 1
+
+    # Collect orders for AMM routing
+    amm_routes = []
+
+    # Unmatched asks -> route to AMM
+    for order, _, _ in asks:
+        remaining = ask_remaining[order.uid]
+        if remaining > 0:
+            amm_routes.append(AMMRoute(order=order, amount=remaining, is_selling_a=True))
+
+    # Unmatched bids -> route to AMM
+    for order, _, _ in bids:
+        remaining = bid_remaining[order.uid]
+        if remaining > 0:
+            amm_routes.append(AMMRoute(order=order, amount=remaining, is_selling_a=False))
+
+    logger.info(
+        "hybrid_auction_complete",
+        token_pair=f"{group.token_a[-8:]}/{group.token_b[-8:]}",
+        amm_price=float(amm_price),
+        cow_matches=len(matches),
+        total_cow_a=total_a_matched,
+        total_cow_b=total_b_matched,
+        amm_routes=len(amm_routes),
+    )
+
+    return HybridAuctionResult(
+        cow_matches=matches,
+        amm_routes=amm_routes,
+        clearing_price=amm_price if matches else None,
+        total_cow_a=total_a_matched,
+        total_cow_b=total_b_matched,
+    )
+
+
 __all__ = [
     "DoubleAuctionMatch",
     "DoubleAuctionResult",
+    "AMMRoute",
+    "HybridAuctionResult",
     "get_limit_price",
     "run_double_auction",
+    "run_hybrid_auction",
     "calculate_surplus",
 ]

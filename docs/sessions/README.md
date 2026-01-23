@@ -13,6 +13,7 @@ This directory tracks progress across AI-assisted development sessions.
 | [Phase 3.5](phase-3.5-summary.md) | 38-39 | Complete | 0x Limit Order Integration |
 | [Pre-Phase 4](pre-phase4-architecture.md) | 42 | Complete | Architecture Refactoring |
 | [Slice 4.1](session-43-slice4.1-analysis.md) | 43 | Complete | Problem Formulation & Analysis |
+| [Slice 4.2a](session-44-slice4.2a-amm-price.md) | 44 | Complete | AMM Price Integration |
 
 ## Current Status
 
@@ -23,10 +24,11 @@ This directory tracks progress across AI-assisted development sessions.
 - **Slice 3.5:** Complete (0x limit order integration)
 - **Pre-Phase 4:** Complete (PathFinder, OrderGroup, handler deduplication)
 - **Slice 4.1:** Complete (empirical analysis, double auction prototype)
-- **Tests:** 728 passing
+- **Slice 4.2a:** Complete (AMM price queries, hybrid auction algorithm)
+- **Tests:** 827 passing
 - **Liquidity:** V2, V3, Balancer weighted, Balancer stable, 0x limit orders
 - **Parity:** Complete liquidity parity with Rust baseline solver
-- **Next:** Slice 4.2 - Multi-order CoW Strategy
+- **Next:** Slice 4.2b - Hybrid Strategy Integration
 
 ## Session Archive
 
@@ -76,6 +78,8 @@ Individual session logs are preserved in the `archive/` directory for reference.
 | [40](archive/session-40.md) | 2026-01-23 | V2 Gas Estimate Parity and Price Estimation |
 | [41](archive/session-41.md) | 2026-01-23 | Solver Fee Feature and Code Review Fixes |
 | [42](pre-phase4-architecture.md) | 2026-01-23 | Pre-Phase 4 Architecture Refactoring |
+| [43](session-43-slice4.1-analysis.md) | 2026-01-23 | Slice 4.1 - Problem Formulation & Analysis |
+| [44](session-44-slice4.2a-amm-price.md) | 2026-01-23 | Slice 4.2a - AMM Price Integration |
 
 ## Session Template
 

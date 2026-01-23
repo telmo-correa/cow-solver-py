@@ -51,7 +51,7 @@ class TestGetLimitPrice:
     def test_seller_of_a_limit_price(self) -> None:
         """Seller of A: limit = buy_amount / sell_amount (B per A)."""
         order = make_order(
-            name="seller",
+            _name="seller",
             sell_token=TOKEN_A,
             buy_token=TOKEN_B,
             sell_amount=100,
@@ -63,7 +63,7 @@ class TestGetLimitPrice:
     def test_seller_of_b_limit_price(self) -> None:
         """Seller of B: limit = sell_amount / buy_amount (B per A)."""
         order = make_order(
-            name="buyer",
+            _name="buyer",
             sell_token=TOKEN_B,
             buy_token=TOKEN_A,
             sell_amount=300,  # Willing to pay 300 B

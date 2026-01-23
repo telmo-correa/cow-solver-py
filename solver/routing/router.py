@@ -18,6 +18,7 @@ that still satisfies the order's limit price.
 from __future__ import annotations
 
 from collections.abc import Callable
+from decimal import Decimal
 from typing import TYPE_CHECKING
 
 import structlog
@@ -330,6 +331,70 @@ class SingleOrderRouter:
             )
 
         return best_result
+
+    def get_reference_price(
+        self,
+        token_in: str,
+        token_out: str,
+        probe_amount: int | None = None,
+    ) -> Decimal | None:
+        """Get the reference market price for a token pair.
+
+        Queries all available pools for the pair and returns the best price
+        (highest output per input). This price can be used as a reference
+        for CoW matching - orders that cross this price can potentially
+        match directly instead of routing through AMMs.
+
+        The price is calculated by simulating a small swap to get the
+        marginal exchange rate at current liquidity levels.
+
+        Args:
+            token_in: Token being sold (numerator token)
+            token_out: Token being bought (denominator token)
+            probe_amount: Amount to use for price discovery. If None,
+                         uses 1e15 (0.001 with 18 decimals) as a small
+                         probe that minimizes price impact.
+
+        Returns:
+            Price as Decimal (token_out per token_in), or None if no
+            liquidity exists for the pair.
+
+        Example:
+            >>> price = router.get_reference_price(WETH, USDC)
+            >>> # price = Decimal("2500.00") means 1 WETH = 2500 USDC
+        """
+        # Default probe amount: 0.001 tokens (with 18 decimals)
+        # Small enough to minimize price impact, large enough to avoid dust issues
+        if probe_amount is None:
+            probe_amount = 10**15
+
+        # Get all pools for this pair
+        pools = self._registry.get_pools_for_pair(token_in, token_out)
+
+        if not pools:
+            return None
+
+        best_price: Decimal | None = None
+
+        for pool in pools:
+            # Skip pools without registered handlers
+            if not self._handler_registry.is_registered(pool):
+                continue
+
+            # Simulate a small swap to get the exchange rate
+            result = self._handler_registry.simulate_swap(pool, token_in, token_out, probe_amount)
+
+            if result is None or result.amount_out <= 0:
+                continue
+
+            # Calculate price: output / input
+            price = Decimal(result.amount_out) / Decimal(result.amount_in)
+
+            # Keep the best price (highest output per input)
+            if best_price is None or price > best_price:
+                best_price = price
+
+        return best_price
 
     def _estimate_path(
         self,
