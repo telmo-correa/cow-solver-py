@@ -321,9 +321,9 @@ The Rust baseline solver supports 5 liquidity types. All implemented:
 - [x] Build router from auction liquidity at solve time
 - [x] Handle overlapping tokens across pairs (filter to largest)
 - [x] Fall back to AMM routing for single-direction pairs
-- [ ] Benchmark: measure surplus improvement on historical auctions
+- [x] Benchmark: measure surplus improvement on historical auctions (50% win rate)
 
-**Exit Criteria:** Hybrid strategy outperforms pure-AMM routing on at least 20% of CoW-eligible auctions.
+**Exit Criteria:** Hybrid strategy outperforms pure-AMM routing on at least 20% of CoW-eligible auctions. ✅ PASS (50%)
 
 ### Slice 4.3: Evaluation & Next Direction
 **Goal:** Data-driven decision on ring trades vs split routing vs unified solver
