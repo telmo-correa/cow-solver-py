@@ -60,8 +60,45 @@ tests/unit/amm/test_uniswap_v2.py # Added gas estimate tests (8 tests)
 - Auction data provides pool-specific gas estimates that vary significantly (60k vs 90-110k)
 - Hardcoded constants should be avoided when auction data provides the real values
 
+## Parity Test Results
+
+Created `tests/integration/test_rust_parity.py` which runs 17 Rust baseline test fixtures.
+
+**Results: 5 passed, 12 failed**
+
+### Passing (5)
+- bal_liquidity_composable_stable_v4
+- direct_swap
+- internalization_insufficient_balance
+- internalization_trusted_token
+- internalization_untrusted_sell_token
+
+### Bugs Identified
+
+1. **Multi-solution bug**: Python combines independent orders into single solution.
+   - Rust returns separate solutions for each order, letting the driver choose.
+   - Python incorrectly batches all orders into one solution.
+   - Affects: `bal_liquidity_stable` (2 trades in 1 solution vs 2 solutions with 1 trade each)
+
+2. **Router quote comparison bug**: Python uses direct path without comparing multi-hop quotes.
+   - In `buy_order_rounding_balancer_weighted`, Rust finds better 2-hop path while Python uses suboptimal direct path.
+   - Causes 6476037% price difference.
+
+3. **Partial fill fee bug**: Python ignores limit order fee when calculating max partial fill.
+   - Rust: `output / (input + fee) >= limit_price`
+   - Python: `output / input >= limit_price`
+   - Causes 30% difference in `partial_fill` test.
+
+4. **Gas overhead discrepancy**: Python missing ~11,000 per-trade gas overhead.
+   - Rust: 206,391 = 88,892 (pool) + 106,391 (overhead) + 11,108 (trade)
+   - Python: 195,283 = 88,892 (pool) + 106,391 (overhead)
+
+### Small Rounding Differences (Acceptable)
+- `buy_order_rounding_uniswap`: 0.000000% output diff (428 wei)
+- `buy_order_rounding_same_path`: 3 wei difference
+- `buy_order_rounding_balancer_stable`: 1 wei difference
+
 ## Next Session
 
-- Run full benchmark suite against Rust solver
-- Investigate any remaining discrepancies in benchmark results
-- Verify gas estimate fix resolves fee differences
+- Fix the 4 identified bugs for true Rust parity
+- Most critical: multi-solution bug and partial fill fee bug
