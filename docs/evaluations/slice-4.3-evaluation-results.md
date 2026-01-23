@@ -27,4 +27,4 @@ Hybrid CoW adds marginal value. Focus on split routing for large orders or perfo
 
 **Revised Recommendation:** Proceed to Ring Trades (Slice 4.4)
 
-Follow-up analysis (`scripts/analyze_ring_potential.py`) showed ring trades could match **5.41%** of orders (3.9x better than direct CoW's 1.4%). See `docs/slice-4.3-ring-analysis.md` for details.
+Follow-up analysis (`scripts/analyze_ring_potential.py`) showed ring trades could match **5.41%** of orders (3.9x better than direct CoW's 1.4%). See [slice-4.3-ring-analysis.md](slice-4.3-ring-analysis.md) for details.
