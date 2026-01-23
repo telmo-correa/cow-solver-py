@@ -1,4 +1,31 @@
-"""Base classes for AMM implementations."""
+"""Base classes for AMM implementations.
+
+Method Naming Conventions
+-------------------------
+
+AMM implementations follow two patterns:
+
+1. **Low-level math methods** (`get_amount_out`, `get_amount_in`):
+   - Take primitive parameters (amounts, reserves)
+   - Return primitive values (amounts)
+   - Defined in `AMM` abstract base class
+   - Used for direct mathematical calculations
+
+2. **High-level simulation methods** (`simulate_swap`, `simulate_swap_exact_output`):
+   - Take pool objects and token addresses
+   - Return `SwapResult` objects or None
+   - Defined in `SwapCalculator` protocol
+   - Used by router for pool-agnostic routing
+
+3. **Partial fill methods** (`max_fill_sell_order`, `max_fill_buy_order`):
+   - Calculate maximum fill that satisfies limit price
+   - Defined in `SwapCalculator` protocol
+   - Used for partially fillable orders
+
+UniswapV2 implements both AMM (low-level) and SwapCalculator (high-level).
+V3 and Balancer AMMs only implement SwapCalculator (they don't have local
+reserve state for low-level math).
+"""
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass

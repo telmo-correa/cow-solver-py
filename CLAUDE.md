@@ -56,7 +56,14 @@ cow-solver-py/
 │   │   ├── matching_rules.py # Data-driven matching rules
 │   │   └── amm_routing.py # AMM routing strategy
 │   ├── routing/           # Order routing
-│   │   └── router.py      # SingleOrderRouter, Solver (with DI)
+│   │   ├── router.py      # SingleOrderRouter facade (with DI)
+│   │   ├── types.py       # HopResult, RoutingResult dataclasses
+│   │   ├── handlers/      # Pool-specific routing handlers
+│   │   │   ├── v2.py      # UniswapV2Handler
+│   │   │   ├── v3.py      # UniswapV3Handler
+│   │   │   └── balancer.py # BalancerHandler (singledispatch)
+│   │   ├── multihop.py    # Multi-hop routing through multiple pools
+│   │   └── solution.py    # Solution building from routing results
 │   └── constants.py       # Centralized constants (addresses, etc.)
 │
 ├── benchmarks/            # Performance comparison
@@ -161,12 +168,26 @@ See `PLAN.md` for full details.
 | `solver/strategies/matching_rules.py` | Data-driven matching rules (constraint tables) |
 | `solver/strategies/cow_match.py` | CoW matching (perfect + partial) |
 | `solver/strategies/amm_routing.py` | AMM routing strategy |
-| `solver/routing/router.py` | Order routing, Solver (composes strategies) |
+| `solver/routing/router.py` | SingleOrderRouter facade (delegates to handlers) |
+| `solver/routing/handlers/` | Pool-specific routing (V2, V3, Balancer) |
 | `solver/constants.py` | Centralized addresses and constants |
 | `tests/conftest.py` | Mock fixtures for DI testing (MockAMM, MockV3Quoter) |
 | `benchmarks/harness.py` | Run both solvers and compare |
 | `PLAN.md` | Detailed slice breakdown |
 | `BENCHMARKS.md` | How to run benchmarks |
+
+### AMM Method Naming Convention
+
+AMM implementations follow two patterns (see `solver/amm/base.py` for details):
+
+| Method Pattern | Description | Example |
+|---------------|-------------|---------|
+| `get_amount_out/in` | Low-level math (primitives in, primitives out) | `amm.get_amount_out(amount_in, reserve_in, reserve_out)` |
+| `simulate_swap*` | High-level simulation (pool + tokens in, SwapResult out) | `amm.simulate_swap(pool, token_in, amount_in)` |
+| `max_fill_*` | Partial fill calculation (limit price satisfaction) | `amm.max_fill_sell_order(pool, token_in, ...)` |
+
+- **UniswapV2** implements both AMM (low-level) and SwapCalculator (high-level)
+- **V3 and Balancer** only implement SwapCalculator (no local reserve state)
 
 ## Dependency Injection for Testing
 
