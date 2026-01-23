@@ -216,13 +216,13 @@ Each slice delivers end-to-end functionality for a specific auction type, with t
 - [x] Test: auctions with multiple liquidity options
 - [x] Benchmark: exact match with Rust baseline
 
-### Slice 3.4: Split Routing (Optional)
+### Slice 3.4: Split Routing — DEFERRED TO PHASE 4
 **Goal:** Split orders across multiple venues for better execution
 
-- [ ] Identify when splitting improves execution
-- [ ] Calculate optimal split ratios
-- [ ] Test: large orders that benefit from splitting
-- [ ] Benchmark: this approaches unified optimization territory
+Split routing requires solving for optimal split ratios across price impact curves,
+which is fundamentally an optimization problem. Deferred to Phase 4 (Unified Optimization)
+where it will be handled as a natural output of the joint optimizer rather than a
+standalone heuristic.
 
 ### Slice 3.5: 0x Limit Orders ✅ COMPLETE
 **Goal:** Add foreign limit order support to achieve full Rust liquidity parity
@@ -260,6 +260,7 @@ The Rust baseline solver supports 5 liquidity types. All implemented:
 > optimizer that considers:
 > - Multi-order CoW matching (N orders, not just pairs)
 > - Multiple AMM sources with different price curves
+> - **Split routing** (orders across multiple venues, deferred from Slice 3.4)
 > - Ring trades (A→B→C→A cycles)
 > - Partial fills across mechanisms
 > - Gas costs in the objective function
@@ -283,12 +284,14 @@ The Rust baseline solver supports 5 liquidity types. All implemented:
 - [ ] Benchmark: measure surplus vs 2-order matching
 
 ### Slice 4.3: Unified Solver
-**Goal:** Joint optimization across CoW + all AMM sources
+**Goal:** Joint optimization across CoW + all AMM sources + split routing
 
 - [ ] Implement chosen optimization approach
 - [ ] Handle non-linear AMM price curves
+- [ ] **Split routing:** find optimal splits across venues (from Slice 3.4)
 - [ ] Compare against sequential composition baseline
 - [ ] Test: auctions where joint optimization beats sequential
+- [ ] Test: large orders that benefit from splitting across venues
 - [ ] Benchmark: measure surplus improvement and latency
 
 ### Slice 4.4: Ring Trade Detection (Optional)
