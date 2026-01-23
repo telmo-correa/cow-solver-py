@@ -227,8 +227,6 @@ Each slice delivers end-to-end functionality for a specific auction type, with t
 ### Slice 3.5: 0x Limit Orders ✅ COMPLETE
 **Goal:** Add foreign limit order support to achieve full Rust liquidity parity
 
-> **Design Doc:** See `docs/design/limit-orders.md` for implementation details.
-
 The Rust baseline solver supports 5 liquidity types. All implemented:
 
 | Liquidity Type | Description | Status |

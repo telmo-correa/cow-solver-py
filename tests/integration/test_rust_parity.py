@@ -1,8 +1,7 @@
 """Tests for Python/Rust solver parity using extracted Rust test fixtures.
 
 These fixtures are extracted from the Rust baseline solver's test cases.
-Validation follows the two-phase approach documented in:
-    docs/design/rust-parity-validation.md
+Validation follows a two-phase approach:
 
 Phase 1: Validate correctness invariants (fees, amounts, limit prices)
 Phase 2: Compare to Rust, allowing Python to be "better" (more fill)
@@ -60,8 +59,6 @@ class SolutionValidator:
     Implements two-phase validation:
     1. Correctness invariants (independent of Rust)
     2. Rust comparison (allows Python to be better)
-
-    See docs/design/rust-parity-validation.md for details.
     """
 
     def __init__(self, auction: AuctionInstance) -> None:
@@ -676,14 +673,15 @@ class TestGasEstimation:
     This is the correct behavior since the driver provides pool-specific estimates.
     """
 
-    @pytest.fixture
-    def solver(self) -> Solver:
-        """Create a solver instance."""
-        return Solver()
-
     def test_solution_gas_matches_pool_gas_estimate(self, solver: Solver):
-        """Solution gas should match pool's gas_estimate from auction."""
-        # Find a fixture with a V2 pool that has a non-default gas estimate
+        """Solution gas should match pool's gas_estimate from auction.
+
+        Tests ALL fixtures that have pool gas estimates, not just the first one.
+        Fails if no valid fixtures are found (CI safety).
+        """
+        fixtures_tested = 0
+        fixtures_with_gas = 0
+
         for test_name, input_file, _expected_file in get_fixture_pairs():
             with open(input_file) as f:
                 auction_data = json.load(f)
@@ -692,14 +690,16 @@ class TestGasEstimation:
             if auction.order_count == 0:
                 continue
 
-            # Get pool gas estimates from auction liquidity
-            pool_gas_estimates: dict[str, int] = {}
+            # Build mapping from liquidity ID to gas_estimate
+            liquidity_gas_estimates: dict[str, int] = {}
             for liq in auction.liquidity:
                 if hasattr(liq, "gas_estimate") and liq.gas_estimate:
-                    pool_gas_estimates[liq.address.lower()] = liq.gas_estimate
+                    liquidity_gas_estimates[str(liq.id)] = int(liq.gas_estimate)
 
-            if not pool_gas_estimates:
+            if not liquidity_gas_estimates:
                 continue
+
+            fixtures_with_gas += 1
 
             # Solve and check gas
             response = solver.solve(auction)
@@ -708,17 +708,26 @@ class TestGasEstimation:
 
             for solution in response.solutions:
                 if solution.gas and solution.interactions:
-                    # Single-hop case: gas should match pool's estimate
+                    # Check liquidity interactions - these have an 'id' referencing auction liquidity
                     for interaction in solution.interactions:
-                        if hasattr(interaction, "exec") and interaction.exec:
-                            pool_addr = interaction.exec.allowance_target.lower()
-                            if pool_addr in pool_gas_estimates:
-                                expected_gas = pool_gas_estimates[pool_addr]
-                                # Note: total gas includes overhead, but base should match
+                        # LiquidityInteraction has 'id' field
+                        if hasattr(interaction, "id"):
+                            liq_id = str(interaction.id)
+                            if liq_id in liquidity_gas_estimates:
+                                expected_gas = liquidity_gas_estimates[liq_id]
+                                # Solution gas should be at least the pool's estimate
                                 assert solution.gas >= expected_gas, (
                                     f"{test_name}: Solution gas {solution.gas} should be >= "
-                                    f"pool gas estimate {expected_gas}"
+                                    f"pool gas estimate {expected_gas} (liquidity id={liq_id})"
                                 )
-                                return  # Found a valid test case
+                                fixtures_tested += 1
 
-        pytest.skip("No fixtures with pool gas estimates found")
+        # Fail if no fixtures were tested (CI safety - ensures test is meaningful)
+        assert fixtures_with_gas > 0, (
+            "No fixtures with pool gas estimates found. "
+            "This test requires benchmark_rust fixtures with gas_estimate in liquidity."
+        )
+        assert fixtures_tested > 0, (
+            f"Found {fixtures_with_gas} fixtures with gas estimates but none produced "
+            "solutions with liquidity interactions. Check fixture data."
+        )
