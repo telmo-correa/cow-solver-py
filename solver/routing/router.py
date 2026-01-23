@@ -144,9 +144,9 @@ class SingleOrderRouter:
         Returns:
             HandlerRegistry with handlers for all available pool types
 
-        Note: The lambdas use type: ignore because the registry maps specific pool
-        types to handlers, but the Callable type requires AnyPool. At runtime,
-        the registry only calls the simulator with the correct pool type.
+        Note: The registry maps specific pool types to handlers. The Protocol-based
+        simulator types accept AnyPool, and the registry ensures type-correct
+        dispatch at runtime based on pool type.
         """
         from solver.amm.uniswap_v3 import UniswapV3Pool
 
@@ -156,9 +156,9 @@ class SingleOrderRouter:
         registry.register(
             UniswapV2Pool,
             handler=self._v2_handler,  # type: ignore[arg-type]
-            simulator=lambda p, ti, _to, ai: self.amm.simulate_swap(p, ti, ai),  # type: ignore[arg-type]
+            simulator=lambda p, ti, _to, ai: self.amm.simulate_swap(p, ti, ai),
             exact_output_simulator=lambda p, ti, _to, ao: self.amm.simulate_swap_exact_output(
-                p,  # type: ignore[arg-type]
+                p,
                 ti,
                 ao,
             ),
@@ -172,9 +172,9 @@ class SingleOrderRouter:
             registry.register(
                 UniswapV3Pool,
                 handler=self._v3_handler,  # type: ignore[arg-type]
-                simulator=lambda p, ti, _to, ai: v3_amm.simulate_swap(p, ti, ai),  # type: ignore[arg-type]
+                simulator=lambda p, ti, _to, ai: v3_amm.simulate_swap(p, ti, ai),
                 exact_output_simulator=lambda p, ti, _to, ao: v3_amm.simulate_swap_exact_output(
-                    p,  # type: ignore[arg-type]
+                    p,
                     ti,
                     ao,
                 ),
@@ -188,12 +188,12 @@ class SingleOrderRouter:
             registry.register(
                 BalancerWeightedPool,
                 handler=self._balancer_handler,  # type: ignore[arg-type]
-                simulator=lambda p, ti, to, ai: weighted_amm.simulate_swap(p, ti, to, ai),  # type: ignore[arg-type]
+                simulator=lambda p, ti, to, ai: weighted_amm.simulate_swap(p, ti, to, ai),
                 exact_output_simulator=lambda p,
                 ti,
                 to,
                 ao: weighted_amm.simulate_swap_exact_output(
-                    p,  # type: ignore[arg-type]
+                    p,
                     ti,
                     to,
                     ao,
@@ -208,9 +208,9 @@ class SingleOrderRouter:
             registry.register(
                 BalancerStablePool,
                 handler=self._balancer_handler,  # type: ignore[arg-type]
-                simulator=lambda p, ti, to, ai: stable_amm.simulate_swap(p, ti, to, ai),  # type: ignore[arg-type]
+                simulator=lambda p, ti, to, ai: stable_amm.simulate_swap(p, ti, to, ai),
                 exact_output_simulator=lambda p, ti, to, ao: stable_amm.simulate_swap_exact_output(
-                    p,  # type: ignore[arg-type]
+                    p,
                     ti,
                     to,
                     ao,
@@ -225,9 +225,9 @@ class SingleOrderRouter:
             registry.register(
                 LimitOrderPool,
                 handler=self._limit_order_handler,  # type: ignore[arg-type]
-                simulator=lambda p, ti, to, ai: lo_amm.simulate_swap(p, ti, to, ai),  # type: ignore[arg-type]
+                simulator=lambda p, ti, to, ai: lo_amm.simulate_swap(p, ti, to, ai),
                 exact_output_simulator=lambda p, ti, to, ao: lo_amm.simulate_swap_exact_output(
-                    p,  # type: ignore[arg-type]
+                    p,
                     ti,
                     to,
                     ao,

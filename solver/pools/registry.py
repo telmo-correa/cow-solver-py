@@ -6,11 +6,13 @@ This module provides PoolRegistry for managing pools from multiple sources:
 - Balancer Weighted (weighted product)
 - Balancer Stable (StableSwap)
 - 0x Limit Orders (foreign limit orders)
+
+Pathfinding operations are delegated to PathFinder (solver.routing.pathfinding)
+which provides efficient graph-based route discovery.
 """
 
 from __future__ import annotations
 
-from collections import deque
 from typing import TYPE_CHECKING
 
 from solver.amm.balancer import BalancerStablePool, BalancerWeightedPool
@@ -21,6 +23,7 @@ from solver.pools.limit_order import LimitOrderPool
 
 if TYPE_CHECKING:
     from solver.models.auction import Liquidity
+    from solver.routing.pathfinding import PathFinder
 
 from .types import AnyPool
 
@@ -28,19 +31,18 @@ from .types import AnyPool
 class PoolRegistry:
     """Registry of liquidity pools for routing.
 
-    This class manages a collection of pools and provides methods for:
-    - Looking up pools by token pair
-    - Building token graphs for pathfinding
-    - Finding multi-hop paths through available liquidity
+    This class manages pool storage and lookup. For pathfinding operations,
+    use the `pathfinder` property which provides efficient graph-based routing.
 
     Supports UniswapV2, UniswapV3, Balancer Weighted, Balancer Stable, and 0x Limit Orders.
     """
 
-    def __init__(self, pools: list[UniswapV2Pool] | None = None) -> None:
+    def __init__(self, pools: list[AnyPool] | None = None) -> None:
         """Initialize the registry with optional pools.
 
         Args:
-            pools: Initial list of V2 pools. If None, starts empty.
+            pools: Initial pools of any supported type. Dispatches to appropriate
+                   add method based on pool type. If None, starts empty.
         """
         self._pools: dict[frozenset[str], UniswapV2Pool] = {}
         # V3 pools keyed by (token0, token1, fee) for multiple fee tiers per pair
@@ -54,11 +56,54 @@ class PoolRegistry:
         self._weighted_pool_ids: set[str] = set()
         self._stable_pool_ids: set[str] = set()
         self._limit_order_ids: set[str] = set()
-        self._graph: dict[str, set[str]] | None = None  # Cached graph
+        # Lazy-initialized PathFinder for graph operations
+        self._pathfinder: PathFinder | None = None
 
         if pools:
             for pool in pools:
-                self.add_pool(pool)
+                self.add_any_pool(pool)
+
+    @property
+    def pathfinder(self) -> PathFinder:
+        """Get the PathFinder for this registry (lazy initialization).
+
+        The PathFinder provides efficient graph-based pathfinding operations.
+        It is automatically invalidated when pools are added.
+        """
+        if self._pathfinder is None:
+            from solver.routing.pathfinding import PathFinder
+
+            self._pathfinder = PathFinder(self)
+        return self._pathfinder
+
+    def _invalidate_pathfinder(self) -> None:
+        """Invalidate the cached pathfinder after pool changes."""
+        if self._pathfinder is not None:
+            self._pathfinder.invalidate()
+
+    def add_any_pool(self, pool: AnyPool) -> None:
+        """Add a pool of any supported type to the registry.
+
+        Dispatches to the appropriate add method based on pool type.
+
+        Args:
+            pool: Pool to add (V2, V3, Balancer weighted/stable, or limit order)
+
+        Raises:
+            TypeError: If pool type is not supported
+        """
+        if isinstance(pool, UniswapV2Pool):
+            self.add_pool(pool)
+        elif isinstance(pool, UniswapV3Pool):
+            self.add_v3_pool(pool)
+        elif isinstance(pool, BalancerWeightedPool):
+            self.add_weighted_pool(pool)
+        elif isinstance(pool, BalancerStablePool):
+            self.add_stable_pool(pool)
+        elif isinstance(pool, LimitOrderPool):
+            self.add_limit_order(pool)
+        else:
+            raise TypeError(f"Unknown pool type: {type(pool)}")
 
     def add_pool(self, pool: UniswapV2Pool) -> None:
         """Add a V2 pool to the registry.
@@ -71,7 +116,7 @@ class PoolRegistry:
         token1_norm = normalize_address(pool.token1)
         pair_key = frozenset([token0_norm, token1_norm])
         self._pools[pair_key] = pool
-        self._graph = None  # Invalidate cached graph
+        self._invalidate_pathfinder()
 
     def get_pool(self, token_a: str, token_b: str) -> UniswapV2Pool | None:
         """Get a V2 pool for a token pair (order independent).
@@ -102,7 +147,7 @@ class PoolRegistry:
             token0_norm, token1_norm = token1_norm, token0_norm
         key = (token0_norm, token1_norm, pool.fee)
         self._v3_pools[key] = pool
-        self._graph = None  # Invalidate cached graph
+        self._invalidate_pathfinder()
 
     def get_v3_pools(self, token_a: str, token_b: str) -> list[UniswapV3Pool]:
         """Get all V3 pools for a token pair (all fee tiers).
@@ -151,7 +196,7 @@ class PoolRegistry:
                 if pair not in self._weighted_pools:
                     self._weighted_pools[pair] = []
                 self._weighted_pools[pair].append(pool)
-        self._graph = None  # Invalidate cached graph
+        self._invalidate_pathfinder()
 
     def add_stable_pool(self, pool: BalancerStablePool) -> None:
         """Add a Balancer stable pool to the registry.
@@ -178,7 +223,7 @@ class PoolRegistry:
                 if pair not in self._stable_pools:
                     self._stable_pools[pair] = []
                 self._stable_pools[pair].append(pool)
-        self._graph = None  # Invalidate cached graph
+        self._invalidate_pathfinder()
 
     def get_weighted_pools(self, token_a: str, token_b: str) -> list[BalancerWeightedPool]:
         """Get all weighted pools for a token pair.
@@ -233,7 +278,7 @@ class PoolRegistry:
         if key not in self._limit_orders:
             self._limit_orders[key] = []
         self._limit_orders[key].append(order)
-        self._graph = None  # Invalidate cached graph
+        self._invalidate_pathfinder()
 
     def get_limit_orders(self, token_in: str, token_out: str) -> list[LimitOrderPool]:
         """Get all limit orders for a token pair (directional).
@@ -307,82 +352,17 @@ class PoolRegistry:
         """Return the number of unique limit orders in the registry."""
         return len(self._limit_order_ids)
 
-    def _build_graph(self) -> dict[str, set[str]]:
-        """Build adjacency list of tokens connected by pools (all types)."""
-        graph: dict[str, set[str]] = {}
-
-        # Add V2 pools to graph
-        for token_pair in self._pools:
-            tokens = list(token_pair)
-            token_a, token_b = tokens[0], tokens[1]
-
-            if token_a not in graph:
-                graph[token_a] = set()
-            if token_b not in graph:
-                graph[token_b] = set()
-
-            graph[token_a].add(token_b)
-            graph[token_b].add(token_a)
-
-        # Add V3 pools to graph
-        for token_a, token_b, _fee in self._v3_pools:
-            if token_a not in graph:
-                graph[token_a] = set()
-            if token_b not in graph:
-                graph[token_b] = set()
-
-            graph[token_a].add(token_b)
-            graph[token_b].add(token_a)
-
-        # Add weighted pools to graph
-        for (token_a, token_b), _ in self._weighted_pools.items():
-            if token_a not in graph:
-                graph[token_a] = set()
-            if token_b not in graph:
-                graph[token_b] = set()
-
-            graph[token_a].add(token_b)
-            graph[token_b].add(token_a)
-
-        # Add stable pools to graph
-        for (token_a, token_b), _ in self._stable_pools.items():
-            if token_a not in graph:
-                graph[token_a] = set()
-            if token_b not in graph:
-                graph[token_b] = set()
-
-            graph[token_a].add(token_b)
-            graph[token_b].add(token_a)
-
-        # Add limit orders to graph (unidirectional: taker -> maker)
-        for (taker_token, maker_token), _ in self._limit_orders.items():
-            if taker_token not in graph:
-                graph[taker_token] = set()
-            if maker_token not in graph:
-                graph[maker_token] = set()
-
-            # Limit orders are unidirectional, but for path finding we add both
-            # directions to discover paths. The actual routing will check validity.
-            graph[taker_token].add(maker_token)
-            graph[maker_token].add(taker_token)
-
-        return graph
+    # Pathfinding methods (delegate to PathFinder)
 
     def get_all_candidate_paths(
         self,
         token_in: str,
         token_out: str,
-        max_hops: int = 2,
+        max_hops: int = 3,
     ) -> list[list[str]]:
         """Generate all candidate paths from token_in to token_out.
 
-        Similar to Rust's baseline solver path_candidates function.
-        Generates all possible paths including:
-        - Direct path: [token_in, token_out]
-        - 1-hop paths: [token_in, intermediary, token_out]
-        - 2-hop paths: [token_in, int1, int2, token_out] (if max_hops >= 2)
-
-        Only includes paths where pools actually exist for each hop.
+        Delegates to PathFinder.find_all_paths().
 
         Args:
             token_in: Starting token address
@@ -391,59 +371,18 @@ class PoolRegistry:
 
         Returns:
             List of paths, where each path is a list of token addresses.
-            Empty list if no paths found.
         """
-        token_in_norm = normalize_address(token_in)
-        token_out_norm = normalize_address(token_out)
-
-        if token_in_norm == token_out_norm:
-            return []
-
-        # Use cached graph or rebuild
-        if self._graph is None:
-            self._graph = self._build_graph()
-        graph = self._graph
-
-        if token_in_norm not in graph or token_out_norm not in graph:
-            return []
-
-        candidates: list[list[str]] = []
-
-        # Use BFS to find ALL paths up to max_hops
-        # Each queue entry is (path_so_far, visited_set)
-        queue: deque[tuple[list[str], set[str]]] = deque()
-        queue.append(([token_in_norm], {token_in_norm}))
-
-        while queue:
-            path, visited = queue.popleft()
-
-            # Check if we've exceeded max hops
-            # path has len nodes, so len-1 hops. We want at most max_hops.
-            if len(path) > max_hops + 1:
-                continue
-
-            current = path[-1]
-
-            for neighbor in graph.get(current, set()):
-                if neighbor == token_out_norm:
-                    # Found a valid path to destination
-                    candidates.append(path + [neighbor])
-                elif neighbor not in visited and len(path) < max_hops + 1:
-                    # Continue exploring through this neighbor
-                    new_visited = visited | {neighbor}
-                    queue.append((path + [neighbor], new_visited))
-
-        return candidates
+        return self.pathfinder.find_all_paths(token_in, token_out, max_hops)
 
     def find_path(
         self,
         token_in: str,
         token_out: str,
-        max_hops: int = 2,
+        max_hops: int = 3,
     ) -> list[str] | None:
         """Find a path from token_in to token_out through available pools.
 
-        Uses BFS to find the shortest path (by number of hops).
+        Delegates to PathFinder.find_shortest_path().
 
         Args:
             token_in: Starting token address
@@ -453,37 +392,7 @@ class PoolRegistry:
         Returns:
             List of token addresses representing the path, or None if no path found.
         """
-        token_in_norm = normalize_address(token_in)
-        token_out_norm = normalize_address(token_out)
-
-        if token_in_norm == token_out_norm:
-            return [token_in_norm]
-
-        # Use cached graph or rebuild
-        if self._graph is None:
-            self._graph = self._build_graph()
-        graph = self._graph
-
-        if token_in_norm not in graph or token_out_norm not in graph:
-            return None
-
-        queue: deque[list[str]] = deque([[token_in_norm]])
-        visited = {token_in_norm}
-
-        while queue:
-            path = queue.popleft()
-            if len(path) > max_hops + 1:
-                continue
-
-            current = path[-1]
-            for neighbor in graph.get(current, set()):
-                if neighbor == token_out_norm:
-                    return path + [neighbor]
-                if neighbor not in visited:
-                    visited.add(neighbor)
-                    queue.append(path + [neighbor])
-
-        return None
+        return self.pathfinder.find_shortest_path(token_in, token_out, max_hops)
 
     def get_all_pools_on_path(self, path: list[str]) -> list[AnyPool]:
         """Get all pools needed to execute a multi-hop swap path.

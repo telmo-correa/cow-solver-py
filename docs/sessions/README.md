@@ -11,6 +11,7 @@ This directory tracks progress across AI-assisted development sessions.
 | [Phase 3.1](phase-3.1-summary.md) | 16-23 | Complete | UniswapV3 Integration |
 | [Phase 3.2](phase-3.2-summary.md) | 25-34 | Complete | Balancer Integration + Code Quality |
 | [Phase 3.5](phase-3.5-summary.md) | 38-39 | Complete | 0x Limit Order Integration |
+| [Pre-Phase 4](pre-phase4-architecture.md) | 42 | Complete | Architecture Refactoring |
 
 ## Current Status
 
@@ -19,11 +20,11 @@ This directory tracks progress across AI-assisted development sessions.
 - **Phase 3.1:** Complete (UniswapV3 concentrated liquidity)
 - **Phase 3.2:** Complete (Balancer weighted + stable pools, SafeInt, benchmarks)
 - **Slice 3.5:** Complete (0x limit order integration)
-- **Architecture:** Refactored (handler pattern, V3 split, registry)
-- **Tests:** 749 passing, 14 skipped
+- **Pre-Phase 4:** Complete (PathFinder, OrderGroup, handler deduplication)
+- **Tests:** 799 passing, 14 skipped
 - **Liquidity:** V2, V3, Balancer weighted, Balancer stable, 0x limit orders
 - **Parity:** Complete liquidity parity with Rust baseline solver
-- **Next:** Curve pools or multi-order optimization
+- **Next:** Phase 4 - Unified Optimization (N-order CoW, split routing)
 
 ## Session Archive
 
@@ -72,6 +73,7 @@ Individual session logs are preserved in the `archive/` directory for reference.
 | [39](archive/session-39.md) | 2026-01-22 | Limit Order Benchmark Verification |
 | [40](archive/session-40.md) | 2026-01-23 | V2 Gas Estimate Parity and Price Estimation |
 | [41](archive/session-41.md) | 2026-01-23 | Solver Fee Feature and Code Review Fixes |
+| [42](pre-phase4-architecture.md) | 2026-01-23 | Pre-Phase 4 Architecture Refactoring |
 
 ## Session Template
 

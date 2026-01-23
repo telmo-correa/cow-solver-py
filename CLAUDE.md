@@ -6,7 +6,7 @@ This file provides context for AI assistants working on this project. Read this 
 
 **What:** A Python implementation of a CoW Protocol solver, built as a learning project to explore AI-assisted development and benchmark Python vs Rust performance.
 
-**Status:** Phase 1-3 complete. Full liquidity parity with Rust baseline (V2, V3, Balancer weighted/stable, 0x limit orders). 750 tests passing.
+**Status:** Phase 1-3 complete. Full liquidity parity with Rust baseline (V2, V3, Balancer weighted/stable, 0x limit orders). 799 tests passing.
 
 ## What is CoW Protocol?
 
@@ -28,7 +28,10 @@ Solvers expose `POST /{environment}/{network}`:
 ```
 solver/                # Main package
 ├── api/               # FastAPI app (main.py, endpoints.py)
-├── models/            # Pydantic schemas (auction.py, solution.py)
+├── models/            # Pydantic schemas
+│   ├── auction.py     # AuctionInstance, Order, Token
+│   ├── solution.py    # Solution, Trade, Interaction
+│   └── order_groups.py # OrderGroup for batch optimization
 ├── amm/               # AMM math
 │   ├── uniswap_v2.py  # V2 constant product
 │   ├── uniswap_v3/    # V3 concentrated liquidity (6 modules)
@@ -39,6 +42,7 @@ solver/                # Main package
 ├── routing/           # Order routing
 │   ├── router.py      # SingleOrderRouter facade
 │   ├── registry.py    # HandlerRegistry for dispatch
+│   ├── pathfinding.py # TokenGraph and PathFinder
 │   ├── handlers/      # Pool-specific handlers (v2, v3, balancer, limit_order)
 │   └── multihop.py    # Multi-hop routing
 ├── math/              # Fixed-point arithmetic, SafeInt
@@ -76,12 +80,15 @@ docs/sessions/         # Session handoff logs
 | `solver/api/endpoints.py` | POST /solve endpoint |
 | `solver/models/auction.py` | AuctionInstance, Order, Token |
 | `solver/models/solution.py` | Solution, Trade, Interaction |
+| `solver/models/order_groups.py` | OrderGroup for batch optimization |
 | `solver/amm/uniswap_v2.py` | V2 AMM math and encoding |
 | `solver/amm/uniswap_v3/` | V3 package (quoter, encoding, etc.) |
 | `solver/amm/balancer/` | Balancer package (weighted, stable) |
 | `solver/amm/limit_order.py` | 0x limit order AMM |
+| `solver/pools/registry.py` | PoolRegistry (storage + PathFinder delegation) |
 | `solver/routing/router.py` | SingleOrderRouter (delegates to handlers) |
 | `solver/routing/registry.py` | HandlerRegistry for pool dispatch |
+| `solver/routing/pathfinding.py` | TokenGraph and PathFinder for route discovery |
 | `solver/strategies/cow_match.py` | CoW matching strategy |
 | `solver/strategies/amm_routing.py` | AMM routing strategy |
 | `tests/conftest.py` | Mock fixtures (MockAMM, MockRouter, etc.) |
