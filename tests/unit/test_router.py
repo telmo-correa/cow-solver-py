@@ -1762,3 +1762,710 @@ class TestMixedMultiHopRouting:
         assert result.amount_out == 1000000000000000000000  # Exact buy amount
         assert result.amount_in > 0
         assert result.amount_in <= 10000000000000000000
+
+
+class TestV3MixedMultiHopRouting:
+    """Tests for multi-hop routing that includes UniswapV3 pools."""
+
+    # Token addresses for tests
+    WETH = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
+    USDC = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
+    DAI = "0x6B175474E89094C44Da98b954EedeAC495271d0F"
+    WBTC = "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599"
+
+    def _make_v2_pool(
+        self, token0: str, token1: str, reserve0: int, reserve1: int
+    ) -> UniswapV2Pool:
+        """Create a V2 pool for testing."""
+        if token0.lower() > token1.lower():
+            token0, token1 = token1, token0
+            reserve0, reserve1 = reserve1, reserve0
+        return UniswapV2Pool(
+            address=f"0x{token0[-6:]}{token1[-6:]}1111111111111111111111",
+            token0=token0.lower(),
+            token1=token1.lower(),
+            reserve0=reserve0,
+            reserve1=reserve1,
+            fee_bps=30,
+            liquidity_id=f"v2-{token0[-4:]}-{token1[-4:]}",
+        )
+
+    def _make_v3_pool(self, token0: str, token1: str, fee: int = 3000) -> UniswapV3Pool:
+        """Create a V3 pool for testing."""
+        if token0.lower() > token1.lower():
+            token0, token1 = token1, token0
+        return UniswapV3Pool(
+            address=f"0x{token0[-6:]}{token1[-6:]}3333333333333333333333",
+            token0=token0.lower(),
+            token1=token1.lower(),
+            fee=fee,
+            sqrt_price_x96=0,
+            liquidity=0,
+            tick=0,
+            liquidity_id=f"v3-{token0[-4:]}-{token1[-4:]}",
+            gas_estimate=150_000,
+        )
+
+    def _make_weighted_pool(self, token0: str, token1: str, balance0: int, balance1: int):
+        """Create a Balancer weighted pool for testing."""
+        from decimal import Decimal
+
+        from solver.amm.balancer import BalancerWeightedPool, WeightedTokenReserve
+
+        return BalancerWeightedPool(
+            id=f"weighted-{token0[-4:]}-{token1[-4:]}",
+            address=f"0x{token0[-6:]}{token1[-6:]}2222222222222222222222",
+            pool_id="0x" + "33" * 32,
+            reserves=(
+                WeightedTokenReserve(
+                    token=token0.lower(),
+                    balance=balance0,
+                    weight=Decimal("0.5"),
+                    scaling_factor=1,
+                ),
+                WeightedTokenReserve(
+                    token=token1.lower(),
+                    balance=balance1,
+                    weight=Decimal("0.5"),
+                    scaling_factor=1,
+                ),
+            ),
+            fee=Decimal("0.003"),
+            version="v3Plus",
+            gas_estimate=120_000,
+        )
+
+    def _make_stable_pool(self, token0: str, token1: str, balance0: int, balance1: int):
+        """Create a Balancer stable pool for testing."""
+        from decimal import Decimal
+
+        from solver.amm.balancer import BalancerStablePool, StableTokenReserve
+
+        return BalancerStablePool(
+            id=f"stable-{token0[-4:]}-{token1[-4:]}",
+            address=f"0x{token0[-6:]}{token1[-6:]}4444444444444444444444",
+            pool_id="0x" + "55" * 32,
+            reserves=(
+                StableTokenReserve(
+                    token=token0.lower(),
+                    balance=balance0,
+                    scaling_factor=1,
+                ),
+                StableTokenReserve(
+                    token=token1.lower(),
+                    balance=balance1,
+                    scaling_factor=1,
+                ),
+            ),
+            fee=Decimal("0.0001"),
+            amplification_parameter=Decimal("5000"),
+            gas_estimate=100_000,
+        )
+
+    def _make_v3_quoter(self, rate: float) -> MockUniswapV3Quoter:
+        """Create a mock V3 quoter with a fixed rate."""
+        return MockUniswapV3Quoter(default_rate=rate)
+
+    def test_multihop_v2_then_v3(self):
+        """Multi-hop route: V2 pool for hop 1, V3 pool for hop 2."""
+        # Path: WETH -> DAI (V2) -> USDC (V3)
+        v2_pool = self._make_v2_pool(
+            self.WETH,
+            self.DAI,
+            100_000_000_000_000_000_000_000,  # 100K WETH
+            200_000_000_000_000_000_000_000_000,  # 200M DAI
+        )
+        v3_pool = self._make_v3_pool(self.DAI, self.USDC)
+
+        # V3 quoter: 1 DAI = 1 USDC (scaled for decimals)
+        quoter = self._make_v3_quoter(1e6 / 1e18)  # DAI (18) -> USDC (6)
+        v3_amm = UniswapV3AMM(quoter=quoter)
+
+        registry = PoolRegistry()
+        registry.add_pool(v2_pool)
+        registry.add_v3_pool(v3_pool)
+
+        router = SingleOrderRouter(pool_registry=registry, v3_amm=v3_amm)
+
+        order = make_order(
+            sell_token=self.WETH,
+            buy_token=self.USDC,
+            sell_amount="1000000000000000000",  # 1 WETH
+            buy_amount="1",
+        )
+        result = router.route_order(order)
+
+        assert result.success is True
+        assert result.hops is not None
+        assert len(result.hops) == 2
+        # First hop through V2
+        assert isinstance(result.hops[0].pool, UniswapV2Pool)
+        # Second hop through V3
+        assert isinstance(result.hops[1].pool, UniswapV3Pool)
+        assert result.amount_out > 0
+
+    def test_multihop_v3_then_v2(self):
+        """Multi-hop route: V3 pool for hop 1, V2 pool for hop 2."""
+        # Path: WETH -> DAI (V3) -> USDC (V2)
+        v3_pool = self._make_v3_pool(self.WETH, self.DAI)
+        v2_pool = self._make_v2_pool(
+            self.DAI,
+            self.USDC,
+            100_000_000_000_000_000_000_000_000,  # 100M DAI
+            100_000_000_000_000,  # 100M USDC (6 decimals)
+        )
+
+        # V3 quoter: 1 WETH = 2000 DAI
+        quoter = self._make_v3_quoter(2000e18 / 1e18)  # WETH -> DAI
+        v3_amm = UniswapV3AMM(quoter=quoter)
+
+        registry = PoolRegistry()
+        registry.add_pool(v2_pool)
+        registry.add_v3_pool(v3_pool)
+
+        router = SingleOrderRouter(pool_registry=registry, v3_amm=v3_amm)
+
+        order = make_order(
+            sell_token=self.WETH,
+            buy_token=self.USDC,
+            sell_amount="1000000000000000000",  # 1 WETH
+            buy_amount="1",
+        )
+        result = router.route_order(order)
+
+        assert result.success is True
+        assert result.hops is not None
+        assert len(result.hops) == 2
+        # First hop through V3
+        assert isinstance(result.hops[0].pool, UniswapV3Pool)
+        # Second hop through V2
+        assert isinstance(result.hops[1].pool, UniswapV2Pool)
+        assert result.amount_out > 0
+
+    def test_multihop_v3_then_weighted(self):
+        """Multi-hop route: V3 pool for hop 1, weighted pool for hop 2."""
+        from solver.amm.balancer import BalancerWeightedAMM, BalancerWeightedPool
+
+        # Path: WETH -> DAI (V3) -> USDC (weighted)
+        v3_pool = self._make_v3_pool(self.WETH, self.DAI)
+        weighted_pool = self._make_weighted_pool(
+            self.DAI,
+            self.USDC,
+            100_000_000_000_000_000_000_000_000,  # 100M DAI
+            100_000_000_000_000,  # 100M USDC (6 decimals)
+        )
+
+        # V3 quoter: 1 WETH = 2000 DAI
+        quoter = self._make_v3_quoter(2000e18 / 1e18)
+        v3_amm = UniswapV3AMM(quoter=quoter)
+        weighted_amm = BalancerWeightedAMM()
+
+        registry = PoolRegistry()
+        registry.add_v3_pool(v3_pool)
+        registry.add_weighted_pool(weighted_pool)
+
+        router = SingleOrderRouter(pool_registry=registry, v3_amm=v3_amm, weighted_amm=weighted_amm)
+
+        order = make_order(
+            sell_token=self.WETH,
+            buy_token=self.USDC,
+            sell_amount="1000000000000000000",  # 1 WETH
+            buy_amount="1",
+        )
+        result = router.route_order(order)
+
+        assert result.success is True
+        assert result.hops is not None
+        assert len(result.hops) == 2
+        # First hop through V3
+        assert isinstance(result.hops[0].pool, UniswapV3Pool)
+        # Second hop through weighted
+        assert isinstance(result.hops[1].pool, BalancerWeightedPool)
+        assert result.amount_out > 0
+
+    def test_multihop_v3_then_stable(self):
+        """Multi-hop route: V3 pool for hop 1, stable pool for hop 2."""
+        from solver.amm.balancer import BalancerStableAMM, BalancerStablePool
+
+        # Path: WETH -> DAI (V3) -> USDC (stable)
+        v3_pool = self._make_v3_pool(self.WETH, self.DAI)
+        stable_pool = self._make_stable_pool(
+            self.DAI,
+            self.USDC,
+            100_000_000_000_000_000_000_000_000,  # 100M DAI
+            100_000_000_000_000_000_000_000_000,  # 100M USDC (18 decimals for stable)
+        )
+
+        # V3 quoter: 1 WETH = 2000 DAI
+        quoter = self._make_v3_quoter(2000e18 / 1e18)
+        v3_amm = UniswapV3AMM(quoter=quoter)
+        stable_amm = BalancerStableAMM()
+
+        registry = PoolRegistry()
+        registry.add_v3_pool(v3_pool)
+        registry.add_stable_pool(stable_pool)
+
+        router = SingleOrderRouter(pool_registry=registry, v3_amm=v3_amm, stable_amm=stable_amm)
+
+        order = make_order(
+            sell_token=self.WETH,
+            buy_token=self.USDC,
+            sell_amount="1000000000000000000",  # 1 WETH
+            buy_amount="1",
+        )
+        result = router.route_order(order)
+
+        assert result.success is True
+        assert result.hops is not None
+        assert len(result.hops) == 2
+        # First hop through V3
+        assert isinstance(result.hops[0].pool, UniswapV3Pool)
+        # Second hop through stable
+        assert isinstance(result.hops[1].pool, BalancerStablePool)
+        assert result.amount_out > 0
+
+    def test_multihop_weighted_then_v3(self):
+        """Multi-hop route: weighted pool for hop 1, V3 pool for hop 2."""
+        from solver.amm.balancer import BalancerWeightedAMM, BalancerWeightedPool
+
+        # Path: WETH -> DAI (weighted) -> USDC (V3)
+        weighted_pool = self._make_weighted_pool(
+            self.WETH,
+            self.DAI,
+            50_000_000_000_000_000_000_000,  # 50K WETH
+            100_000_000_000_000_000_000_000_000,  # 100M DAI
+        )
+        v3_pool = self._make_v3_pool(self.DAI, self.USDC)
+
+        # V3 quoter: 1 DAI = 1 USDC
+        quoter = self._make_v3_quoter(1e6 / 1e18)
+        v3_amm = UniswapV3AMM(quoter=quoter)
+        weighted_amm = BalancerWeightedAMM()
+
+        registry = PoolRegistry()
+        registry.add_v3_pool(v3_pool)
+        registry.add_weighted_pool(weighted_pool)
+
+        router = SingleOrderRouter(pool_registry=registry, v3_amm=v3_amm, weighted_amm=weighted_amm)
+
+        order = make_order(
+            sell_token=self.WETH,
+            buy_token=self.USDC,
+            sell_amount="1000000000000000000",  # 1 WETH
+            buy_amount="1",
+        )
+        result = router.route_order(order)
+
+        assert result.success is True
+        assert result.hops is not None
+        assert len(result.hops) == 2
+        # First hop through weighted
+        assert isinstance(result.hops[0].pool, BalancerWeightedPool)
+        # Second hop through V3
+        assert isinstance(result.hops[1].pool, UniswapV3Pool)
+        assert result.amount_out > 0
+
+    def test_multihop_stable_then_v3(self):
+        """Multi-hop route: stable pool for hop 1, V3 pool for hop 2."""
+        from solver.amm.balancer import BalancerStableAMM, BalancerStablePool
+
+        # Path: DAI -> USDC (stable) -> WETH (V3)
+        stable_pool = self._make_stable_pool(
+            self.DAI,
+            self.USDC,
+            100_000_000_000_000_000_000_000_000,  # 100M DAI
+            100_000_000_000_000_000_000_000_000,  # 100M USDC
+        )
+        v3_pool = self._make_v3_pool(self.USDC, self.WETH)
+
+        # V3 quoter: 1 USDC (6 dec) = 0.0004 WETH (18 dec) i.e. 2500 USDC/WETH
+        quoter = self._make_v3_quoter(0.0004e18 / 1e6)
+        v3_amm = UniswapV3AMM(quoter=quoter)
+        stable_amm = BalancerStableAMM()
+
+        registry = PoolRegistry()
+        registry.add_v3_pool(v3_pool)
+        registry.add_stable_pool(stable_pool)
+
+        router = SingleOrderRouter(pool_registry=registry, v3_amm=v3_amm, stable_amm=stable_amm)
+
+        order = make_order(
+            sell_token=self.DAI,
+            buy_token=self.WETH,
+            sell_amount="1000000000000000000000",  # 1000 DAI
+            buy_amount="1",
+        )
+        result = router.route_order(order)
+
+        assert result.success is True
+        assert result.hops is not None
+        assert len(result.hops) == 2
+        # First hop through stable
+        assert isinstance(result.hops[0].pool, BalancerStablePool)
+        # Second hop through V3
+        assert isinstance(result.hops[1].pool, UniswapV3Pool)
+        assert result.amount_out > 0
+
+    def test_multihop_selects_v3_over_v2_for_better_quote(self):
+        """Router selects V3 over V2 for a hop when V3 gives better quote."""
+        from solver.amm.balancer import BalancerWeightedAMM
+
+        # Path: WETH -> DAI -> USDC
+        # For WETH -> DAI hop, both V2 and V3 available, V3 is better
+        v2_pool_hop1 = self._make_v2_pool(
+            self.WETH,
+            self.DAI,
+            1_000_000_000_000_000_000_000,  # 1K WETH
+            2_000_000_000_000_000_000_000_000,  # 2M DAI (rate: 2000 DAI/WETH)
+        )
+        v3_pool_hop1 = self._make_v3_pool(self.WETH, self.DAI)
+        # V3 gives 2500 DAI/WETH (better than V2's ~2000)
+        quoter = self._make_v3_quoter(2500e18 / 1e18)
+        v3_amm = UniswapV3AMM(quoter=quoter)
+
+        # Second hop: only weighted pool
+        weighted_pool = self._make_weighted_pool(
+            self.DAI,
+            self.USDC,
+            100_000_000_000_000_000_000_000_000,  # 100M DAI
+            100_000_000_000_000,  # 100M USDC
+        )
+        weighted_amm = BalancerWeightedAMM()
+
+        registry = PoolRegistry()
+        registry.add_pool(v2_pool_hop1)
+        registry.add_v3_pool(v3_pool_hop1)
+        registry.add_weighted_pool(weighted_pool)
+
+        router = SingleOrderRouter(pool_registry=registry, v3_amm=v3_amm, weighted_amm=weighted_amm)
+
+        order = make_order(
+            sell_token=self.WETH,
+            buy_token=self.USDC,
+            sell_amount="1000000000000000000",  # 1 WETH
+            buy_amount="1",
+        )
+        result = router.route_order(order)
+
+        assert result.success is True
+        assert result.hops is not None
+        assert len(result.hops) == 2
+        # First hop should select V3 (better quote: 2500 vs ~1994 after fees)
+        assert isinstance(result.hops[0].pool, UniswapV3Pool)
+
+
+class TestAllPoolTypesSelection:
+    """Tests for best-pool selection when all 4 pool types are available."""
+
+    WETH = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
+    USDC = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
+
+    def _make_v2_pool(self, reserve_weth: int, reserve_usdc: int) -> UniswapV2Pool:
+        """Create a WETH/USDC V2 pool."""
+        return UniswapV2Pool(
+            address="0x1111111111111111111111111111111111111111",
+            token0=self.USDC.lower(),  # USDC < WETH lexicographically
+            token1=self.WETH.lower(),
+            reserve0=reserve_usdc,
+            reserve1=reserve_weth,
+            fee_bps=30,
+            liquidity_id="v2-weth-usdc",
+        )
+
+    def _make_v3_pool(self) -> UniswapV3Pool:
+        """Create a WETH/USDC V3 pool."""
+        return UniswapV3Pool(
+            address="0x2222222222222222222222222222222222222222",
+            token0=self.USDC.lower(),
+            token1=self.WETH.lower(),
+            fee=3000,
+            sqrt_price_x96=0,
+            liquidity=0,
+            tick=0,
+            liquidity_id="v3-weth-usdc",
+            gas_estimate=150_000,
+        )
+
+    def _make_weighted_pool(self, balance_weth: int, balance_usdc: int):
+        """Create a WETH/USDC weighted pool.
+
+        Args:
+            balance_weth: WETH balance in 18 decimals (native)
+            balance_usdc: USDC balance in 6 decimals (native)
+        """
+        from decimal import Decimal
+
+        from solver.amm.balancer import BalancerWeightedPool, WeightedTokenReserve
+
+        return BalancerWeightedPool(
+            id="weighted-weth-usdc",
+            address="0x3333333333333333333333333333333333333333",
+            pool_id="0x" + "44" * 32,
+            reserves=(
+                WeightedTokenReserve(
+                    token=self.WETH.lower(),
+                    balance=balance_weth,
+                    weight=Decimal("0.5"),
+                    scaling_factor=1,  # 18 decimals, no scaling needed
+                ),
+                WeightedTokenReserve(
+                    token=self.USDC.lower(),
+                    balance=balance_usdc,
+                    weight=Decimal("0.5"),
+                    scaling_factor=10**12,  # 6 decimals -> 18 decimals
+                ),
+            ),
+            fee=Decimal("0.003"),
+            version="v3Plus",
+            gas_estimate=120_000,
+        )
+
+    def _make_stable_pool(self, balance_weth: int, balance_usdc: int):
+        """Create a WETH/USDC stable pool.
+
+        Note: WETH/USDC is unrealistic for a stable pool, but this tests
+        the router's ability to compare across all pool types correctly.
+
+        Args:
+            balance_weth: WETH balance in 18 decimals (native)
+            balance_usdc: USDC balance in 6 decimals (native)
+        """
+        from decimal import Decimal
+
+        from solver.amm.balancer import BalancerStablePool, StableTokenReserve
+
+        return BalancerStablePool(
+            id="stable-weth-usdc",
+            address="0x4444444444444444444444444444444444444444",
+            pool_id="0x" + "55" * 32,
+            reserves=(
+                StableTokenReserve(
+                    token=self.WETH.lower(),
+                    balance=balance_weth,
+                    scaling_factor=1,  # 18 decimals, no scaling needed
+                ),
+                StableTokenReserve(
+                    token=self.USDC.lower(),
+                    balance=balance_usdc,
+                    scaling_factor=10**12,  # 6 decimals -> 18 decimals
+                ),
+            ),
+            fee=Decimal("0.0001"),
+            amplification_parameter=Decimal("5000"),
+            gas_estimate=100_000,
+        )
+
+    def test_selects_best_among_all_four_pool_types(self):
+        """Router selects the pool with best quote across V2, V3, weighted, stable."""
+        from solver.amm.balancer import (
+            BalancerStableAMM,
+            BalancerWeightedAMM,
+            BalancerWeightedPool,
+        )
+
+        # V2: 1 WETH = 2000 USDC (reserve ratio)
+        v2_pool = self._make_v2_pool(
+            reserve_weth=100_000_000_000_000_000_000_000,  # 100K WETH (18 dec)
+            reserve_usdc=200_000_000_000_000,  # 200M USDC (6 dec)
+        )
+        # V3: 1 WETH = 2200 USDC (mock)
+        v3_pool = self._make_v3_pool()
+        quoter = MockUniswapV3Quoter(default_rate=2200e6 / 1e18)
+        v3_amm = UniswapV3AMM(quoter=quoter)
+
+        # Weighted: 1 WETH = 2500 USDC (best rate)
+        weighted_pool = self._make_weighted_pool(
+            balance_weth=100_000_000_000_000_000_000_000,  # 100K WETH (18 dec)
+            balance_usdc=250_000_000_000_000,  # 250M USDC (6 dec)
+        )
+        weighted_amm = BalancerWeightedAMM()
+
+        # Stable: 1 WETH = 1 USDC (stable pools give ~1:1, poor for volatile pairs)
+        # With proper scaling, this gives ~1 USDC per WETH (very poor rate)
+        stable_pool = self._make_stable_pool(
+            balance_weth=100_000_000_000_000_000_000_000,  # 100K WETH (18 dec)
+            balance_usdc=100_000_000_000,  # 100K USDC (6 dec)
+        )
+        stable_amm = BalancerStableAMM()
+
+        registry = PoolRegistry()
+        registry.add_pool(v2_pool)
+        registry.add_v3_pool(v3_pool)
+        registry.add_weighted_pool(weighted_pool)
+        registry.add_stable_pool(stable_pool)
+
+        router = SingleOrderRouter(
+            pool_registry=registry,
+            v3_amm=v3_amm,
+            weighted_amm=weighted_amm,
+            stable_amm=stable_amm,
+        )
+
+        order = make_order(
+            sell_token=self.WETH,
+            buy_token=self.USDC,
+            sell_amount="1000000000000000000",  # 1 WETH
+            buy_amount="1",
+        )
+        result = router.route_order(order)
+
+        assert result.success is True
+        # Should select weighted pool (best rate: ~2500 USDC after fees)
+        # V2 gives ~1994 USDC, V3 gives 2200 USDC, stable gives ~1 USDC
+        assert isinstance(result.pool, BalancerWeightedPool)
+
+    def test_selects_v3_when_best_among_all_four(self):
+        """Router selects V3 when it has the best quote among all 4 pool types."""
+        from solver.amm.balancer import BalancerStableAMM, BalancerWeightedAMM
+
+        # V2: 1 WETH = 2000 USDC
+        v2_pool = self._make_v2_pool(
+            reserve_weth=100_000_000_000_000_000_000_000,  # 100K WETH (18 dec)
+            reserve_usdc=200_000_000_000_000,  # 200M USDC (6 dec)
+        )
+        # V3: 1 WETH = 3000 USDC (best)
+        v3_pool = self._make_v3_pool()
+        quoter = MockUniswapV3Quoter(default_rate=3000e6 / 1e18)
+        v3_amm = UniswapV3AMM(quoter=quoter)
+
+        # Weighted: 1 WETH = 2500 USDC
+        weighted_pool = self._make_weighted_pool(
+            balance_weth=100_000_000_000_000_000_000_000,  # 100K WETH (18 dec)
+            balance_usdc=250_000_000_000_000,  # 250M USDC (6 dec)
+        )
+        weighted_amm = BalancerWeightedAMM()
+
+        # Stable: poor rate for volatile pair
+        stable_pool = self._make_stable_pool(
+            balance_weth=100_000_000_000_000_000_000_000,  # 100K WETH (18 dec)
+            balance_usdc=100_000_000_000,  # 100K USDC (6 dec)
+        )
+        stable_amm = BalancerStableAMM()
+
+        registry = PoolRegistry()
+        registry.add_pool(v2_pool)
+        registry.add_v3_pool(v3_pool)
+        registry.add_weighted_pool(weighted_pool)
+        registry.add_stable_pool(stable_pool)
+
+        router = SingleOrderRouter(
+            pool_registry=registry,
+            v3_amm=v3_amm,
+            weighted_amm=weighted_amm,
+            stable_amm=stable_amm,
+        )
+
+        order = make_order(
+            sell_token=self.WETH,
+            buy_token=self.USDC,
+            sell_amount="1000000000000000000",
+            buy_amount="1",
+        )
+        result = router.route_order(order)
+
+        assert result.success is True
+        # Should select V3 pool (best rate: 3000 USDC)
+        assert isinstance(result.pool, UniswapV3Pool)
+
+    def test_v3_vs_weighted_direct_comparison(self):
+        """Direct comparison between V3 and weighted pool for same pair."""
+        from solver.amm.balancer import BalancerWeightedAMM, BalancerWeightedPool
+
+        # V3: 1 WETH = 2000 USDC
+        v3_pool = self._make_v3_pool()
+        quoter = MockUniswapV3Quoter(default_rate=2000e6 / 1e18)
+        v3_amm = UniswapV3AMM(quoter=quoter)
+
+        # Weighted: 1 WETH = 2500 USDC (better)
+        weighted_pool = self._make_weighted_pool(
+            balance_weth=100_000_000_000_000_000_000_000,
+            balance_usdc=250_000_000_000_000,
+        )
+        weighted_amm = BalancerWeightedAMM()
+
+        registry = PoolRegistry()
+        registry.add_v3_pool(v3_pool)
+        registry.add_weighted_pool(weighted_pool)
+
+        router = SingleOrderRouter(pool_registry=registry, v3_amm=v3_amm, weighted_amm=weighted_amm)
+
+        order = make_order(
+            sell_token=self.WETH,
+            buy_token=self.USDC,
+            sell_amount="1000000000000000000",
+            buy_amount="1",
+        )
+        result = router.route_order(order)
+
+        assert result.success is True
+        # Weighted should win
+        assert isinstance(result.pool, BalancerWeightedPool)
+
+    def test_v3_vs_stable_direct_comparison(self):
+        """Direct comparison between V3 and stable pool for same pair."""
+        from solver.amm.balancer import BalancerStableAMM, BalancerStablePool
+
+        # For stablecoins: DAI/USDC
+        dai = "0x6B175474E89094C44Da98b954EedeAC495271d0F"
+        usdc = self.USDC
+
+        # V3: slightly worse rate for stablecoins
+        v3_pool = UniswapV3Pool(
+            address="0x5555555555555555555555555555555555555555",
+            token0=dai.lower(),
+            token1=usdc.lower(),
+            fee=100,  # 0.01% fee tier
+            sqrt_price_x96=0,
+            liquidity=0,
+            tick=0,
+            liquidity_id="v3-dai-usdc",
+            gas_estimate=150_000,
+        )
+        # V3 gives 0.998 USDC per DAI
+        quoter = MockUniswapV3Quoter(default_rate=0.998e6 / 1e18)
+        v3_amm = UniswapV3AMM(quoter=quoter)
+
+        # Stable: near 1:1 (better for stablecoins)
+        from decimal import Decimal
+
+        from solver.amm.balancer import StableTokenReserve
+
+        stable_pool = BalancerStablePool(
+            id="stable-dai-usdc",
+            address="0x6666666666666666666666666666666666666666",
+            pool_id="0x" + "77" * 32,
+            reserves=(
+                StableTokenReserve(
+                    token=dai.lower(),
+                    balance=100_000_000_000_000_000_000_000_000,  # 100M DAI
+                    scaling_factor=1,
+                ),
+                StableTokenReserve(
+                    token=usdc.lower(),
+                    balance=100_000_000_000_000_000_000_000_000,  # 100M USDC (18 dec)
+                    scaling_factor=1,
+                ),
+            ),
+            fee=Decimal("0.0001"),
+            amplification_parameter=Decimal("5000"),
+            gas_estimate=100_000,
+        )
+        stable_amm = BalancerStableAMM()
+
+        registry = PoolRegistry()
+        registry.add_v3_pool(v3_pool)
+        registry.add_stable_pool(stable_pool)
+
+        router = SingleOrderRouter(pool_registry=registry, v3_amm=v3_amm, stable_amm=stable_amm)
+
+        order = make_order(
+            sell_token=dai,
+            buy_token=usdc,
+            sell_amount="1000000000000000000000",  # 1000 DAI
+            buy_amount="1",
+        )
+        result = router.route_order(order)
+
+        assert result.success is True
+        # Stable should win for stablecoin pair
+        assert isinstance(result.pool, BalancerStablePool)
