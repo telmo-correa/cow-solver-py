@@ -261,9 +261,12 @@ The Rust baseline solver supports 5 liquidity types. All implemented:
 > - Multi-order CoW matching (N orders, not just pairs)
 > - Multiple AMM sources with different price curves
 > - **Split routing** (orders across multiple venues, deferred from Slice 3.4)
+> - **Flash loans** (temporary capital for arbitrage, splits, ring trades)
 > - Ring trades (A→B→C→A cycles)
 > - Partial fills across mechanisms
 > - Gas costs in the objective function
+>
+> **Research:** See `docs/research/flash-loans.md` for flash loan provider analysis and design decisions.
 
 ### Slice 4.1: Problem Formulation
 **Goal:** Define the optimization problem precisely
@@ -302,6 +305,34 @@ The Rust baseline solver supports 5 liquidity types. All implemented:
 - [ ] Calculate ring trade feasibility and surplus
 - [ ] Test: auctions with ring trade potential
 - [ ] Benchmark: measure frequency and value of ring trades
+
+### Slice 4.5: Flash Loan Integration
+**Goal:** Use flash loans to enable better user fills (not solver profit)
+
+> **Design Doc:** See `docs/research/flash-loans.md` for full research and design decisions.
+
+Flash loans provide temporary capital within a single transaction, enabling:
+- Split routing across venues (bootstrap capital for parallel execution)
+- Ring trade execution (capital to start the cycle)
+- Arbitrage as better fills (price improvements passed to users)
+
+**Key design decisions:**
+- Surplus goes to users, not solver (per CIP-11)
+- Model providers separately (Balancer 0% fee, Aave 0.05%, different gas costs)
+- CoW Protocol already has infrastructure (`FlashLoanRouter` from CIP-66)
+
+**Tasks:**
+- [ ] Implement `FlashLoanProvider` protocol with concrete implementations
+- [ ] Add flash loan variables to optimization problem
+- [ ] Constraint: borrowed = repaid + fee
+- [ ] Provider selection: minimize (fee + gas) subject to liquidity
+- [ ] Test: settlements that require flash loan capital
+- [ ] Benchmark: measure user surplus improvement vs non-flash solutions
+
+**Provider priority heuristic:**
+1. Balancer (0% fee, ~24k gas) - if liquidity sufficient
+2. Maker (0% fee, unlimited DAI) - if DAI needed
+3. Aave (0.05% fee, ~70k gas) - fallback for large amounts
 
 **Exit Criteria:** Solver finds globally optimal (or near-optimal) solutions across all mechanisms.
 
