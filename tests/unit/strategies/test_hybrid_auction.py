@@ -232,3 +232,76 @@ class TestHybridAuctionMultipleOrders:
         # Total CoW volume should be limited by bid capacity (200 B / 2.5 = 80 A max)
         total_cow_a = sum(m.amount_a for m in result.cow_matches)
         assert total_cow_a <= 100  # ask1 + ask2 capacity
+
+
+class TestHybridAuctionValidation:
+    """Tests for input validation and edge cases."""
+
+    def test_zero_amm_price_falls_back_to_pure_auction(self) -> None:
+        """Zero AMM price should fall back to pure auction."""
+        group = OrderGroup(
+            token_a=TOKEN_A,
+            token_b=TOKEN_B,
+            sellers_of_a=[
+                make_order("ask1", TOKEN_A, TOKEN_B, 100, 200),  # 2 B/A
+            ],
+            sellers_of_b=[
+                make_order("bid1", TOKEN_B, TOKEN_A, 300, 100),  # 3 B/A
+            ],
+        )
+
+        # Zero price should fall back to pure auction (midpoint matching)
+        result = run_hybrid_auction(group, amm_price=Decimal("0"))
+
+        # Should match like pure auction at midpoint (2.5)
+        assert len(result.cow_matches) == 1
+        assert result.clearing_price == Decimal("2.5")
+
+    def test_negative_amm_price_falls_back_to_pure_auction(self) -> None:
+        """Negative AMM price should fall back to pure auction."""
+        group = OrderGroup(
+            token_a=TOKEN_A,
+            token_b=TOKEN_B,
+            sellers_of_a=[
+                make_order("ask1", TOKEN_A, TOKEN_B, 100, 200),
+            ],
+            sellers_of_b=[
+                make_order("bid1", TOKEN_B, TOKEN_A, 300, 100),
+            ],
+        )
+
+        result = run_hybrid_auction(group, amm_price=Decimal("-1"))
+
+        # Should fall back to pure auction
+        assert len(result.cow_matches) == 1
+
+    def test_limit_price_respected_after_truncation(self) -> None:
+        """Integer truncation should not violate limit prices."""
+        # Create a scenario where truncation could violate limits
+        # Ask: sell 3 A, want 7 B (price = 7/3 = 2.333... B/A)
+        # Bid: sell 10 B, want 4 A (price = 10/4 = 2.5 B/A)
+        # AMM price: 2.34 B/A (barely above ask's limit)
+        #
+        # At AMM price 2.34:
+        # match_a could be 3, match_b = int(3 * 2.34) = int(7.02) = 7
+        # actual_price = 7/3 = 2.333... which is < 2.34 but >= ask_limit (2.333...)
+        group = OrderGroup(
+            token_a=TOKEN_A,
+            token_b=TOKEN_B,
+            sellers_of_a=[
+                make_order("ask1", TOKEN_A, TOKEN_B, 3, 7),  # 2.333... B/A
+            ],
+            sellers_of_b=[
+                make_order("bid1", TOKEN_B, TOKEN_A, 10, 4),  # 2.5 B/A max
+            ],
+        )
+
+        result = run_hybrid_auction(group, amm_price=Decimal("2.34"))
+
+        # If there's a match, verify limits are satisfied
+        for match in result.cow_matches:
+            actual_price = Decimal(match.amount_b) / Decimal(match.amount_a)
+            # Ask wanted at least 7/3 = 2.333... B/A
+            assert actual_price >= Decimal("7") / Decimal("3")
+            # Bid offered at most 10/4 = 2.5 B/A
+            assert actual_price <= Decimal("10") / Decimal("4")

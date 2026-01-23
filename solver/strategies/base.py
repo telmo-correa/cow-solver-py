@@ -102,8 +102,12 @@ class OrderFill:
         The remainder order has:
         - New derived UID (hash of original UID + ":remainder")
         - Reduced sell_amount/buy_amount based on what's left
-        - Adjusted limit to maintain the same price constraint
+        - Adjusted buy_amount to ensure TOTAL requirement is met
         - original_uid field tracking the parent order for fill merging
+
+        Note: CoW Protocol uses total-based limits, not per-unit limits.
+        If original order wanted 5000 USDC for 2 WETH and got 3000 USDC for 1 WETH,
+        the remainder needs 2000 USDC for 1 WETH (to meet 5000 total).
         """
         if self.is_complete:
             return None

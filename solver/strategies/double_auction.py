@@ -125,10 +125,14 @@ def run_double_auction(
 ) -> DoubleAuctionResult:
     """Run double auction clearing on an order group.
 
-    Implements the classic double auction algorithm:
-    1. Sort asks (sellers of A) by price ascending
-    2. Sort bids (sellers of B) by price descending
-    3. Match until prices cross
+    Implements a two-pass double auction algorithm:
+    1. First pass: Find the valid clearing price range from matchable orders
+    2. Compute uniform clearing price (midpoint of valid range)
+    3. Second pass: Execute all matches at this single clearing price
+
+    Using a uniform clearing price is essential for valid CoW Protocol settlement.
+    Each trade must satisfy: prices[sell_token] * sell = prices[buy_token] * buy,
+    which requires all matches to execute at the same price.
 
     Args:
         group: OrderGroup with orders in both directions
@@ -154,8 +158,9 @@ def run_double_auction(
         (order, get_limit_price(order, is_selling_a=True), order.sell_amount_int)
         for order in group.sellers_of_a
     ]
-    # Filter out invalid orders (None prices)
+    # Separate valid and invalid orders
     asks = [(o, p, a) for o, p, a in asks_raw if p is not None]
+    invalid_asks = [(o, a) for o, p, a in asks_raw if p is None]
     asks.sort(key=lambda x: x[1])
 
     # Sellers of B: sorted descending (highest bidders first)
@@ -163,9 +168,18 @@ def run_double_auction(
         (order, get_limit_price(order, is_selling_a=False), order.sell_amount_int)
         for order in group.sellers_of_b
     ]
-    # Filter out invalid orders (None prices)
+    # Separate valid and invalid orders
     bids = [(o, p, a) for o, p, a in bids_raw if p is not None]
+    invalid_bids = [(o, a) for o, p, a in bids_raw if p is None]
     bids.sort(key=lambda x: x[1], reverse=True)
+
+    # Log invalid orders (zero/negative amounts)
+    if invalid_asks or invalid_bids:
+        logger.warning(
+            "double_auction_invalid_orders",
+            invalid_asks=len(invalid_asks),
+            invalid_bids=len(invalid_bids),
+        )
 
     logger.debug(
         "double_auction_start",
@@ -177,16 +191,23 @@ def run_double_auction(
         best_bid=float(bids[0][1]) if bids else None,
     )
 
-    # Track remaining amounts
-    ask_remaining = {order.uid: amount for order, _, amount in asks}
-    bid_remaining = {order.uid: amount for order, _, amount in bids}
+    # ========================================================================
+    # FIRST PASS: Determine the uniform clearing price
+    # ========================================================================
+    # Find all matchable pairs (ask_limit <= bid_limit) and compute valid price range.
+    # The clearing price must satisfy ALL participants:
+    # - All matched asks need: clearing_price >= their limit (they get enough B per A)
+    # - All matched bids need: clearing_price <= their limit (they don't pay too much)
+    #
+    # Valid range: [max(matched_ask_limits), min(matched_bid_limits)]
 
-    matches: list[DoubleAuctionMatch] = []
-    total_a_matched = 0
-    total_b_matched = 0
-    last_clearing_price: Decimal | None = None
+    # Find orders that could potentially match (have overlapping prices)
+    matchable_ask_limits: list[Decimal] = []
+    matchable_bid_limits: list[Decimal] = []
 
-    # Match orders
+    # Simulate matching to find which orders participate
+    temp_ask_remaining = {order.uid: amount for order, _, amount in asks}
+    temp_bid_remaining = {order.uid: amount for order, _, amount in bids}
     ask_idx = 0
     bid_idx = 0
 
@@ -194,14 +215,112 @@ def run_double_auction(
         ask_order, ask_price, _ = asks[ask_idx]
         bid_order, bid_price, _ = bids[bid_idx]
 
-        # Check if prices cross (no more matches possible)
+        # Prices crossed - no more matches
         if ask_price > bid_price:
-            logger.debug(
-                "double_auction_prices_crossed",
-                ask_price=float(ask_price),
-                bid_price=float(bid_price),
-            )
             break
+
+        ask_amt = temp_ask_remaining[ask_order.uid]
+        bid_amt = temp_bid_remaining[bid_order.uid]
+
+        if ask_amt <= 0:
+            ask_idx += 1
+            continue
+        if bid_amt <= 0:
+            bid_idx += 1
+            continue
+
+        # Use midpoint temporarily to estimate fill amounts
+        temp_price = (ask_price + bid_price) / 2
+        bid_can_buy_a = int(Decimal(bid_amt) / temp_price)
+        match_a = min(ask_amt, bid_can_buy_a)
+
+        if match_a <= 0:
+            bid_idx += 1
+            continue
+
+        match_b = int(Decimal(match_a) * temp_price)
+
+        if match_b <= 0:
+            # Price too small for meaningful B amount, try next bid
+            bid_idx += 1
+            continue
+
+        # Only record limits AFTER confirming match is valid (match_a > 0 and match_b > 0)
+        # This ensures the clearing price is only influenced by orders that actually match
+        matchable_ask_limits.append(ask_price)
+        matchable_bid_limits.append(bid_price)
+
+        temp_ask_remaining[ask_order.uid] -= match_a
+        temp_bid_remaining[bid_order.uid] -= match_b
+
+        # Advance indices when orders are exhausted
+        if temp_ask_remaining[ask_order.uid] <= 0:
+            ask_idx += 1
+        if temp_bid_remaining[bid_order.uid] <= 0:
+            bid_idx += 1
+
+    # Compute uniform clearing price from valid range
+    if not matchable_ask_limits or not matchable_bid_limits:
+        # No matches possible
+        return DoubleAuctionResult(
+            matches=[],
+            total_a_matched=0,
+            total_b_matched=0,
+            clearing_price=None,
+            unmatched_sellers=[(o, a) for o, _, a in asks] + list(invalid_asks),
+            unmatched_buyers=[(o, a) for o, _, a in bids] + list(invalid_bids),
+        )
+
+    # Valid clearing price range: [max_ask_limit, min_bid_limit]
+    max_ask_limit = max(matchable_ask_limits)
+    min_bid_limit = min(matchable_bid_limits)
+
+    if max_ask_limit > min_bid_limit:
+        # This shouldn't happen if we found matchable pairs, but handle defensively
+        logger.warning(
+            "double_auction_invalid_price_range",
+            max_ask=float(max_ask_limit),
+            min_bid=float(min_bid_limit),
+        )
+        return DoubleAuctionResult(
+            matches=[],
+            total_a_matched=0,
+            total_b_matched=0,
+            clearing_price=None,
+            unmatched_sellers=[(o, a) for o, _, a in asks] + list(invalid_asks),
+            unmatched_buyers=[(o, a) for o, _, a in bids] + list(invalid_bids),
+        )
+
+    # Use midpoint of valid range as clearing price (fair to both sides)
+    clearing_price = (max_ask_limit + min_bid_limit) / 2
+
+    logger.debug(
+        "double_auction_clearing_price",
+        max_ask_limit=float(max_ask_limit),
+        min_bid_limit=float(min_bid_limit),
+        clearing_price=float(clearing_price),
+    )
+
+    # ========================================================================
+    # SECOND PASS: Execute matches at uniform clearing price
+    # ========================================================================
+    ask_remaining = {order.uid: amount for order, _, amount in asks}
+    bid_remaining = {order.uid: amount for order, _, amount in bids}
+
+    matches: list[DoubleAuctionMatch] = []
+    total_a_matched = 0
+    total_b_matched = 0
+
+    # Only match orders whose limits are satisfied by the clearing price
+    matchable_asks = [(o, p, a) for o, p, a in asks if p <= clearing_price]
+    matchable_bids = [(o, p, a) for o, p, a in bids if p >= clearing_price]
+
+    ask_idx = 0
+    bid_idx = 0
+
+    while ask_idx < len(matchable_asks) and bid_idx < len(matchable_bids):
+        ask_order, ask_price, _ = matchable_asks[ask_idx]
+        bid_order, bid_price, _ = matchable_bids[bid_idx]
 
         # Get remaining amounts
         ask_remaining_amount = ask_remaining[ask_order.uid]
@@ -215,14 +334,7 @@ def run_double_auction(
             bid_idx += 1
             continue
 
-        # Calculate match amount
-        # The ask sells A, the bid buys A
-        # We need to convert bid's B amount to equivalent A amount
-
-        # Use midpoint price for clearing (fair to both sides)
-        clearing_price = (ask_price + bid_price) / 2
-
-        # Amount of A the bid can buy with remaining B
+        # Amount of A the bid can buy with remaining B at clearing price
         bid_can_buy_a = int(Decimal(bid_remaining_amount) / clearing_price)
 
         # Match is minimum of what ask has and what bid can buy
@@ -247,30 +359,28 @@ def run_double_auction(
                 ask_idx += 1
                 continue
 
-        # Calculate B amount for this match
+        # Calculate B amount for this match at uniform clearing price
         match_b = int(Decimal(match_a) * clearing_price)
 
         if match_b <= 0:
             bid_idx += 1
             continue
 
-        # Verify limit prices are satisfied
-        # Ask limit: needs at least ask_price B per A
-        actual_ask_price = Decimal(match_b) / Decimal(match_a)
-        if actual_ask_price < ask_price:
+        # Verify limit prices are satisfied after integer truncation
+        actual_price = Decimal(match_b) / Decimal(match_a)
+        if actual_price < ask_price:
             logger.warning(
                 "double_auction_ask_limit_violation",
-                actual=float(actual_ask_price),
+                actual=float(actual_price),
                 limit=float(ask_price),
             )
             ask_idx += 1
             continue
 
-        # Bid limit: pays at most bid_price B per A
-        if actual_ask_price > bid_price:
+        if actual_price > bid_price:
             logger.warning(
                 "double_auction_bid_limit_violation",
-                actual=float(actual_ask_price),
+                actual=float(actual_price),
                 limit=float(bid_price),
             )
             bid_idx += 1
@@ -282,7 +392,7 @@ def run_double_auction(
             buyer=bid_order,
             amount_a=match_a,
             amount_b=match_b,
-            clearing_price=clearing_price,
+            clearing_price=clearing_price,  # Same for all matches
         )
         matches.append(match)
 
@@ -291,7 +401,6 @@ def run_double_auction(
         bid_remaining[bid_order.uid] -= match_b
         total_a_matched += match_a
         total_b_matched += match_b
-        last_clearing_price = clearing_price
 
         logger.debug(
             "double_auction_match",
@@ -308,13 +417,18 @@ def run_double_auction(
         if bid_remaining[bid_order.uid] <= 0:
             bid_idx += 1
 
-    # Collect unmatched orders
+    # Collect unmatched orders (including invalid orders which couldn't participate)
     unmatched_sellers = [
         (order, ask_remaining[order.uid]) for order, _, _ in asks if ask_remaining[order.uid] > 0
     ]
+    # Add invalid asks to unmatched (they have invalid amounts but should still be tracked)
+    unmatched_sellers.extend(invalid_asks)
+
     unmatched_buyers = [
         (order, bid_remaining[order.uid]) for order, _, _ in bids if bid_remaining[order.uid] > 0
     ]
+    # Add invalid bids to unmatched
+    unmatched_buyers.extend(invalid_bids)
 
     logger.info(
         "double_auction_complete",
@@ -322,7 +436,7 @@ def run_double_auction(
         num_matches=len(matches),
         total_a_matched=total_a_matched,
         total_b_matched=total_b_matched,
-        clearing_price=float(last_clearing_price) if last_clearing_price else None,
+        clearing_price=float(clearing_price) if matches else None,
         unmatched_sellers=len(unmatched_sellers),
         unmatched_buyers=len(unmatched_buyers),
     )
@@ -331,7 +445,7 @@ def run_double_auction(
         matches=matches,
         total_a_matched=total_a_matched,
         total_b_matched=total_b_matched,
-        clearing_price=last_clearing_price,
+        clearing_price=clearing_price if matches else None,
         unmatched_sellers=unmatched_sellers,
         unmatched_buyers=unmatched_buyers,
     )
@@ -471,6 +585,15 @@ def run_hybrid_auction(
             total_cow_b=pure_result.total_b_matched,
         )
 
+    # Validate AMM price
+    if amm_price <= 0:
+        logger.warning(
+            "hybrid_auction_invalid_amm_price",
+            amm_price=float(amm_price),
+        )
+        # Fall back to pure auction behavior
+        return run_hybrid_auction(group, amm_price=None, respect_fill_or_kill=respect_fill_or_kill)
+
     # With AMM price: match orders that can clear at AMM price
     # Sort asks ascending (cheapest sellers first)
     asks_raw = [
@@ -478,6 +601,7 @@ def run_hybrid_auction(
         for order in group.sellers_of_a
     ]
     asks = [(o, p, a) for o, p, a in asks_raw if p is not None]
+    invalid_asks = [o for o, p, _ in asks_raw if p is None]
     asks.sort(key=lambda x: x[1])
 
     # Sort bids descending (highest bidders first)
@@ -486,7 +610,16 @@ def run_hybrid_auction(
         for order in group.sellers_of_b
     ]
     bids = [(o, p, a) for o, p, a in bids_raw if p is not None]
+    invalid_bids = [o for o, p, _ in bids_raw if p is None]
     bids.sort(key=lambda x: x[1], reverse=True)
+
+    # Log invalid orders
+    if invalid_asks or invalid_bids:
+        logger.warning(
+            "hybrid_auction_invalid_orders",
+            invalid_asks=len(invalid_asks),
+            invalid_bids=len(invalid_bids),
+        )
 
     # Track remaining amounts
     ask_remaining = {order.uid: amount for order, _, amount in asks}
@@ -549,6 +682,32 @@ def run_hybrid_auction(
             bid_idx += 1
             continue
 
+        # Verify limit prices are satisfied after integer truncation
+        # Ask limit: needs at least ask_limit B per A
+        ask_limit = get_limit_price(ask_order, is_selling_a=True)
+        bid_limit = get_limit_price(bid_order, is_selling_a=False)
+        actual_price = Decimal(match_b) / Decimal(match_a)
+
+        if ask_limit is not None and actual_price < ask_limit:
+            # Truncation violated ask's limit - skip this match
+            logger.debug(
+                "hybrid_auction_ask_limit_violation",
+                actual=float(actual_price),
+                limit=float(ask_limit),
+            )
+            ask_idx += 1
+            continue
+
+        if bid_limit is not None and actual_price > bid_limit:
+            # Truncation violated bid's limit - skip this match
+            logger.debug(
+                "hybrid_auction_bid_limit_violation",
+                actual=float(actual_price),
+                limit=float(bid_limit),
+            )
+            bid_idx += 1
+            continue
+
         # Record match
         match = DoubleAuctionMatch(
             seller=ask_order,
@@ -580,11 +739,19 @@ def run_hybrid_auction(
         if remaining > 0:
             amm_routes.append(AMMRoute(order=order, amount=remaining, is_selling_a=True))
 
+    # Invalid asks -> route to AMM (will likely fail but shouldn't be silently dropped)
+    for order in invalid_asks:
+        amm_routes.append(AMMRoute(order=order, amount=order.sell_amount_int, is_selling_a=True))
+
     # Unmatched bids -> route to AMM
     for order, _, _ in bids:
         remaining = bid_remaining[order.uid]
         if remaining > 0:
             amm_routes.append(AMMRoute(order=order, amount=remaining, is_selling_a=False))
+
+    # Invalid bids -> route to AMM
+    for order in invalid_bids:
+        amm_routes.append(AMMRoute(order=order, amount=order.sell_amount_int, is_selling_a=False))
 
     logger.info(
         "hybrid_auction_complete",

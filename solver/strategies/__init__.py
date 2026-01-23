@@ -24,6 +24,7 @@ from solver.strategies.double_auction import (
     run_double_auction,
     run_hybrid_auction,
 )
+from solver.strategies.hybrid_cow import HybridCowStrategy
 
 __all__ = [
     "SolutionStrategy",
@@ -31,6 +32,7 @@ __all__ = [
     "OrderFill",
     "PriceWorsened",
     "CowMatchStrategy",
+    "HybridCowStrategy",
     "AmmRoutingStrategy",
     # Double auction (Phase 4)
     "DoubleAuctionMatch",
