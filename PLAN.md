@@ -294,7 +294,7 @@ The Rust baseline solver supports 5 liquidity types. All implemented:
 - `scripts/analyze_auction_structure.py` - Historical auction analysis
 - `docs/design/phase4-slice4.1-problem-formulation.md` - Formal problem definition
 
-### Slice 4.2: Hybrid CoW+AMM Strategy ⬅️ IN PROGRESS
+### Slice 4.2: Hybrid CoW+AMM Strategy ⬅️ IMPLEMENTATION COMPLETE
 **Goal:** Use AMM prices as reference to unlock CoW matches
 
 > **Revised Approach:** Pure double auction has limited value because prices cross.
@@ -302,23 +302,25 @@ The Rust baseline solver supports 5 liquidity types. All implemented:
 > orders that would otherwise need AMM routing — capturing the gas savings while
 > ensuring fair execution.
 
-**4.2a: AMM Price Integration**
-- [ ] Add `get_best_price(token_a, token_b)` method to router
-- [ ] Query V2/V3/Balancer for reference price
-- [ ] Handle no-liquidity cases gracefully
-- [ ] Test: price queries for common pairs
+**4.2a: AMM Price Integration** ✅
+- [x] Add `get_reference_price(token_a, token_b)` method to router
+- [x] Query V2/V3/Balancer for reference price
+- [x] Handle no-liquidity cases gracefully (returns None)
+- [x] Test: price queries for common pairs
 
-**4.2b: Hybrid Double Auction**
-- [ ] Extend `run_double_auction()` to accept AMM reference price
-- [ ] AMM acts as unlimited bid/ask at market price
-- [ ] Match orders against each other AND against AMM price
-- [ ] Route unmatched remainders through AMM
-- [ ] Test: compare hybrid vs pure-AMM routing
+**4.2b: Hybrid Double Auction** ✅
+- [x] Create `run_hybrid_auction()` with AMM reference price
+- [x] AMM price used as clearing price for CoW matches
+- [x] Match orders against each other at AMM price
+- [x] Route unmatched remainders through AMM (returns `amm_routes`)
+- [x] Multi-price candidate selection for fill-or-kill orders
+- [x] Test: hybrid auction behavior
 
-**4.2c: Strategy Integration**
-- [ ] Integrate hybrid auction into `CowMatchStrategy`
-- [ ] Process top N pairs by order count
-- [ ] Fall back to AMM routing for single-direction pairs
+**4.2c: Strategy Integration** ✅
+- [x] Create `HybridCowStrategy` with 3-strategy chain (CowMatch → HybridCow → AmmRouting)
+- [x] Build router from auction liquidity at solve time
+- [x] Handle overlapping tokens across pairs (filter to largest)
+- [x] Fall back to AMM routing for single-direction pairs
 - [ ] Benchmark: measure surplus improvement on historical auctions
 
 **Exit Criteria:** Hybrid strategy outperforms pure-AMM routing on at least 20% of CoW-eligible auctions.
