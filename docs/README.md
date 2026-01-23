@@ -11,6 +11,8 @@ docs/
 ├── research/        # Research spikes and exploratory docs
 ├── reviews/         # Architecture and code reviews
 └── sessions/        # Development session logs
+    ├── summaries/   # Phase summaries
+    └── archive/     # Individual session logs
 ```
 
 ## Quick Links

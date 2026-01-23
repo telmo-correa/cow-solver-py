@@ -6,16 +6,16 @@ This directory tracks progress across AI-assisted development sessions.
 
 | Phase | Sessions | Status | Summary |
 |-------|----------|--------|---------|
-| [Phase 1](phase-1-summary.md) | 1-9 | Complete | Infrastructure + Single Order Routing |
-| [Phase 2](phase-2-summary.md) | 10-15 | Complete | CoW Matching |
-| [Phase 3.1](phase-3.1-summary.md) | 16-23 | Complete | UniswapV3 Integration |
-| [Phase 3.2](phase-3.2-summary.md) | 25-34 | Complete | Balancer Integration + Code Quality |
-| [Phase 3.5](phase-3.5-summary.md) | 38-39 | Complete | 0x Limit Order Integration |
-| [Pre-Phase 4](pre-phase4-architecture.md) | 42 | Complete | Architecture Refactoring |
-| [Slice 4.1](session-43-slice4.1-analysis.md) | 43 | Complete | Problem Formulation & Analysis |
-| [Slice 4.2a](session-44-slice4.2a-amm-price.md) | 44 | Complete | AMM Price Integration |
-| [Slice 4.2b](session-45-slice4.2b-uniform-price.md) | 45 | Complete | Uniform Clearing Price & HybridCowStrategy |
-| [Slice 4.2c](session-46-slice4.2c-integration.md) | 46 | Complete | Strategy Integration |
+| [Phase 1](summaries/phase-1.md) | 1-9 | Complete | Infrastructure + Single Order Routing |
+| [Phase 2](summaries/phase-2.md) | 10-15 | Complete | CoW Matching |
+| [Phase 3.1](summaries/phase-3.1.md) | 16-23 | Complete | UniswapV3 Integration |
+| [Phase 3.2](summaries/phase-3.2.md) | 25-34 | Complete | Balancer Integration + Code Quality |
+| [Phase 3.5](summaries/phase-3.5.md) | 38-39 | Complete | 0x Limit Order Integration |
+| [Pre-Phase 4](summaries/pre-phase4.md) | 42 | Complete | Architecture Refactoring |
+| [Slice 4.1](archive/session-43-slice4.1-analysis.md) | 43 | Complete | Problem Formulation & Analysis |
+| [Slice 4.2a](archive/session-44-slice4.2a-amm-price.md) | 44 | Complete | AMM Price Integration |
+| [Slice 4.2b](archive/session-45-slice4.2b-uniform-price.md) | 45 | Complete | Uniform Clearing Price & HybridCowStrategy |
+| [Slice 4.2c](archive/session-46-slice4.2c-integration.md) | 46 | Complete | Strategy Integration |
 | [Slice 4.3](../evaluations/slice-4.3-evaluation-results.md) | 48 | Complete | Evaluation & Ring Trade Analysis |
 
 ## Current Status
@@ -84,12 +84,12 @@ Individual session logs are preserved in the `archive/` directory for reference.
 | [39](archive/session-39.md) | 2026-01-22 | Limit Order Benchmark Verification |
 | [40](archive/session-40.md) | 2026-01-23 | V2 Gas Estimate Parity and Price Estimation |
 | [41](archive/session-41.md) | 2026-01-23 | Solver Fee Feature and Code Review Fixes |
-| [42](pre-phase4-architecture.md) | 2026-01-23 | Pre-Phase 4 Architecture Refactoring |
-| [43](session-43-slice4.1-analysis.md) | 2026-01-23 | Slice 4.1 - Problem Formulation & Analysis |
-| [44](session-44-slice4.2a-amm-price.md) | 2026-01-23 | Slice 4.2a - AMM Price Integration |
-| [45](session-45-slice4.2b-uniform-price.md) | 2026-01-23 | Slice 4.2b - Uniform Clearing Price & HybridCowStrategy |
-| [46](session-46-slice4.2c-integration.md) | 2026-01-23 | Slice 4.2c - Strategy Integration |
-| [47](session-47-decimal-fix.md) | 2026-01-23 | Token Decimal Handling Fix |
+| [42](summaries/pre-phase4.md) | 2026-01-23 | Pre-Phase 4 Architecture Refactoring |
+| [43](archive/session-43-slice4.1-analysis.md) | 2026-01-23 | Slice 4.1 - Problem Formulation & Analysis |
+| [44](archive/session-44-slice4.2a-amm-price.md) | 2026-01-23 | Slice 4.2a - AMM Price Integration |
+| [45](archive/session-45-slice4.2b-uniform-price.md) | 2026-01-23 | Slice 4.2b - Uniform Clearing Price & HybridCowStrategy |
+| [46](archive/session-46-slice4.2c-integration.md) | 2026-01-23 | Slice 4.2c - Strategy Integration |
+| [47](archive/session-47-decimal-fix.md) | 2026-01-23 | Token Decimal Handling Fix |
 | [48](../evaluations/slice-4.3-evaluation-results.md) | 2026-01-23 | Slice 4.3 - Evaluation & Ring Trade Analysis |
 
 ## Session Template
