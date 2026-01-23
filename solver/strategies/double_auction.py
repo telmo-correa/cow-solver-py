@@ -84,6 +84,27 @@ class DoubleAuctionResult:
         return len(orders)
 
 
+@dataclass
+class MatchingAtPriceResult:
+    """Result of executing matches at a specific clearing price.
+
+    Internal dataclass used by _execute_matches_at_price helper.
+
+    Attributes:
+        matches: List of matches executed at this price
+        ask_remaining: Remaining amounts for each ask order (by UID)
+        bid_remaining: Remaining amounts for each bid order (by UID)
+        total_a_matched: Total amount of token A matched
+        total_b_matched: Total amount of token B matched
+    """
+
+    matches: list[DoubleAuctionMatch]
+    ask_remaining: dict[str, int]
+    bid_remaining: dict[str, int]
+    total_a_matched: int
+    total_b_matched: int
+
+
 def get_limit_price(order: Order, is_selling_a: bool) -> Decimal | None:
     """Calculate the limit price for an order in terms of B/A.
 
@@ -119,6 +140,141 @@ def get_limit_price(order: Order, is_selling_a: bool) -> Decimal | None:
         return sell / buy
 
 
+def _execute_matches_at_price(
+    clearing_price: Decimal,
+    asks: list[tuple[Order, Decimal, int]],
+    bids: list[tuple[Order, Decimal, int]],
+    respect_fill_or_kill: bool,
+) -> MatchingAtPriceResult:
+    """Execute matching at a given clearing price.
+
+    This is a helper function for run_double_auction that tries to match
+    orders at a specific price.
+
+    Args:
+        clearing_price: The price to use for matching (B per A)
+        asks: Sorted list of (order, limit_price, amount) for sellers of A
+        bids: Sorted list of (order, limit_price, amount) for sellers of B
+        respect_fill_or_kill: If True, skip orders that would be partially filled
+
+    Returns:
+        MatchingAtPriceResult with matches and remaining amounts
+    """
+    ask_remaining = {order.uid: amount for order, _, amount in asks}
+    bid_remaining = {order.uid: amount for order, _, amount in bids}
+
+    matches: list[DoubleAuctionMatch] = []
+    total_a_matched = 0
+    total_b_matched = 0
+
+    # Only match orders whose limits are satisfied by the clearing price
+    matchable_asks = [(o, p, a) for o, p, a in asks if p <= clearing_price]
+    matchable_bids = [(o, p, a) for o, p, a in bids if p >= clearing_price]
+
+    ask_idx = 0
+    bid_idx = 0
+
+    while ask_idx < len(matchable_asks) and bid_idx < len(matchable_bids):
+        ask_order, ask_price, _ = matchable_asks[ask_idx]
+        bid_order, bid_price, _ = matchable_bids[bid_idx]
+
+        # Get remaining amounts
+        ask_remaining_amount = ask_remaining[ask_order.uid]
+        bid_remaining_amount = bid_remaining[bid_order.uid]
+
+        if ask_remaining_amount <= 0:
+            ask_idx += 1
+            continue
+
+        if bid_remaining_amount <= 0:
+            bid_idx += 1
+            continue
+
+        # Amount of A the bid can buy with remaining B at clearing price
+        bid_can_buy_a = int(Decimal(bid_remaining_amount) / clearing_price)
+
+        # Match is minimum of what ask has and what bid can buy
+        match_a = min(ask_remaining_amount, bid_can_buy_a)
+
+        if match_a <= 0:
+            bid_idx += 1
+            continue
+
+        # Check fill-or-kill constraints
+        if respect_fill_or_kill:
+            # Would ask be partially filled?
+            if match_a < ask_remaining_amount and not ask_order.partially_fillable:
+                # This ask can't be partially filled, skip to next bid
+                bid_idx += 1
+                continue
+
+            # Would bid be partially filled?
+            bid_fill_amount = int(Decimal(match_a) * clearing_price)
+            if bid_fill_amount < bid_remaining_amount and not bid_order.partially_fillable:
+                # This bid can't be partially filled, skip to next ask
+                ask_idx += 1
+                continue
+
+        # Calculate B amount for this match at uniform clearing price
+        match_b = int(Decimal(match_a) * clearing_price)
+
+        if match_b <= 0:
+            bid_idx += 1
+            continue
+
+        # Verify limit prices are satisfied after integer truncation
+        actual_price = Decimal(match_b) / Decimal(match_a)
+        if actual_price < ask_price:
+            logger.debug(
+                "execute_matches_ask_limit_violation",
+                clearing_price=float(clearing_price),
+                actual_price=float(actual_price),
+                ask_limit=float(ask_price),
+            )
+            ask_idx += 1
+            continue
+
+        if actual_price > bid_price:
+            logger.debug(
+                "execute_matches_bid_limit_violation",
+                clearing_price=float(clearing_price),
+                actual_price=float(actual_price),
+                bid_limit=float(bid_price),
+            )
+            bid_idx += 1
+            continue
+
+        # Record match
+        match = DoubleAuctionMatch(
+            seller=ask_order,
+            buyer=bid_order,
+            amount_a=match_a,
+            amount_b=match_b,
+            clearing_price=clearing_price,
+        )
+        matches.append(match)
+
+        # Update remaining amounts
+        ask_remaining[ask_order.uid] -= match_a
+        bid_remaining[bid_order.uid] -= match_b
+        total_a_matched += match_a
+        total_b_matched += match_b
+
+        # Move to next order if current is exhausted
+        if ask_remaining[ask_order.uid] <= 0:
+            ask_idx += 1
+        if bid_remaining[bid_order.uid] <= 0:
+            bid_idx += 1
+
+    return MatchingAtPriceResult(
+        matches=matches,
+        ask_remaining=ask_remaining,
+        bid_remaining=bid_remaining,
+        total_a_matched=total_a_matched,
+        total_b_matched=total_b_matched,
+    )
+
+
 def run_double_auction(
     group: OrderGroup,
     respect_fill_or_kill: bool = True,
@@ -127,12 +283,16 @@ def run_double_auction(
 
     Implements a two-pass double auction algorithm:
     1. First pass: Find the valid clearing price range from matchable orders
-    2. Compute uniform clearing price (midpoint of valid range)
-    3. Second pass: Execute all matches at this single clearing price
+    2. Try candidate prices: midpoint, then boundary prices if needed
+    3. Select the price that maximizes matched volume
 
     Using a uniform clearing price is essential for valid CoW Protocol settlement.
     Each trade must satisfy: prices[sell_token] * sell = prices[buy_token] * buy,
     which requires all matches to execute at the same price.
+
+    For fill-or-kill orders, the midpoint price may not allow complete fills.
+    In this case, boundary prices (max_ask_limit or min_bid_limit) are tried,
+    which may allow complete fills by favoring one side.
 
     Args:
         group: OrderGroup with orders in both directions
@@ -291,131 +451,86 @@ def run_double_auction(
             unmatched_buyers=[(o, a) for o, _, a in bids] + list(invalid_bids),
         )
 
-    # Use midpoint of valid range as clearing price (fair to both sides)
-    clearing_price = (max_ask_limit + min_bid_limit) / 2
+    # ========================================================================
+    # SECOND PASS: Try candidate prices and select the best one
+    # ========================================================================
+    # For fill-or-kill orders, the midpoint price may cause partial fills that
+    # violate constraints. We try multiple candidate prices and select the one
+    # that maximizes matched volume.
+    #
+    # Candidate prices:
+    # 1. Midpoint (fair to both sides)
+    # 2. max_ask_limit (favors sellers)
+    # 3. min_bid_limit (favors buyers)
+
+    midpoint_price = (max_ask_limit + min_bid_limit) / 2
+    candidate_prices = [midpoint_price, max_ask_limit, min_bid_limit]
+
+    # Remove duplicates while preserving order (midpoint first)
+    seen: set[Decimal] = set()
+    unique_prices: list[Decimal] = []
+    for p in candidate_prices:
+        if p not in seen:
+            seen.add(p)
+            unique_prices.append(p)
 
     logger.debug(
-        "double_auction_clearing_price",
+        "double_auction_candidate_prices",
         max_ask_limit=float(max_ask_limit),
         min_bid_limit=float(min_bid_limit),
-        clearing_price=float(clearing_price),
+        midpoint=float(midpoint_price),
+        num_candidates=len(unique_prices),
     )
 
-    # ========================================================================
-    # SECOND PASS: Execute matches at uniform clearing price
-    # ========================================================================
-    ask_remaining = {order.uid: amount for order, _, amount in asks}
-    bid_remaining = {order.uid: amount for order, _, amount in bids}
+    # Try each candidate price and track the best result
+    # Initialize with original amounts (used when no matches happen)
+    best_result = MatchingAtPriceResult(
+        matches=[],
+        ask_remaining={order.uid: amount for order, _, amount in asks},
+        bid_remaining={order.uid: amount for order, _, amount in bids},
+        total_a_matched=0,
+        total_b_matched=0,
+    )
+    best_price: Decimal | None = None
 
-    matches: list[DoubleAuctionMatch] = []
-    total_a_matched = 0
-    total_b_matched = 0
-
-    # Only match orders whose limits are satisfied by the clearing price
-    matchable_asks = [(o, p, a) for o, p, a in asks if p <= clearing_price]
-    matchable_bids = [(o, p, a) for o, p, a in bids if p >= clearing_price]
-
-    ask_idx = 0
-    bid_idx = 0
-
-    while ask_idx < len(matchable_asks) and bid_idx < len(matchable_bids):
-        ask_order, ask_price, _ = matchable_asks[ask_idx]
-        bid_order, bid_price, _ = matchable_bids[bid_idx]
-
-        # Get remaining amounts
-        ask_remaining_amount = ask_remaining[ask_order.uid]
-        bid_remaining_amount = bid_remaining[bid_order.uid]
-
-        if ask_remaining_amount <= 0:
-            ask_idx += 1
-            continue
-
-        if bid_remaining_amount <= 0:
-            bid_idx += 1
-            continue
-
-        # Amount of A the bid can buy with remaining B at clearing price
-        bid_can_buy_a = int(Decimal(bid_remaining_amount) / clearing_price)
-
-        # Match is minimum of what ask has and what bid can buy
-        match_a = min(ask_remaining_amount, bid_can_buy_a)
-
-        if match_a <= 0:
-            bid_idx += 1
-            continue
-
-        # Check fill-or-kill constraints
-        if respect_fill_or_kill:
-            # Would ask be partially filled?
-            if match_a < ask_remaining_amount and not ask_order.partially_fillable:
-                # This ask can't be partially filled, skip to next bid
-                bid_idx += 1
-                continue
-
-            # Would bid be partially filled?
-            bid_fill_amount = int(Decimal(match_a) * clearing_price)
-            if bid_fill_amount < bid_remaining_amount and not bid_order.partially_fillable:
-                # This bid can't be partially filled, skip to next ask
-                ask_idx += 1
-                continue
-
-        # Calculate B amount for this match at uniform clearing price
-        match_b = int(Decimal(match_a) * clearing_price)
-
-        if match_b <= 0:
-            bid_idx += 1
-            continue
-
-        # Verify limit prices are satisfied after integer truncation
-        actual_price = Decimal(match_b) / Decimal(match_a)
-        if actual_price < ask_price:
-            logger.warning(
-                "double_auction_ask_limit_violation",
-                actual=float(actual_price),
-                limit=float(ask_price),
-            )
-            ask_idx += 1
-            continue
-
-        if actual_price > bid_price:
-            logger.warning(
-                "double_auction_bid_limit_violation",
-                actual=float(actual_price),
-                limit=float(bid_price),
-            )
-            bid_idx += 1
-            continue
-
-        # Record match
-        match = DoubleAuctionMatch(
-            seller=ask_order,
-            buyer=bid_order,
-            amount_a=match_a,
-            amount_b=match_b,
-            clearing_price=clearing_price,  # Same for all matches
+    for candidate_price in unique_prices:
+        result = _execute_matches_at_price(
+            clearing_price=candidate_price,
+            asks=asks,
+            bids=bids,
+            respect_fill_or_kill=respect_fill_or_kill,
         )
-        matches.append(match)
 
-        # Update remaining amounts
-        ask_remaining[ask_order.uid] -= match_a
-        bid_remaining[bid_order.uid] -= match_b
-        total_a_matched += match_a
-        total_b_matched += match_b
+        # Select this price if it gives better volume (measured by token A matched)
+        if result.total_a_matched > best_result.total_a_matched:
+            best_result = result
+            best_price = candidate_price
 
+            logger.debug(
+                "double_auction_new_best_price",
+                price=float(candidate_price),
+                total_a_matched=result.total_a_matched,
+                num_matches=len(result.matches),
+            )
+
+    # Use the best result
+    matches = best_result.matches
+    ask_remaining = best_result.ask_remaining
+    bid_remaining = best_result.bid_remaining
+    total_a_matched = best_result.total_a_matched
+    total_b_matched = best_result.total_b_matched
+    clearing_price = best_price if best_price is not None else midpoint_price
+
+    # Log individual matches for debugging
+    for match in matches:
         logger.debug(
             "double_auction_match",
-            seller=ask_order.uid[:12] + "...",
-            buyer=bid_order.uid[:12] + "...",
-            amount_a=match_a,
-            amount_b=match_b,
-            price=float(clearing_price),
+            seller=match.seller.uid[:12] + "...",
+            buyer=match.buyer.uid[:12] + "...",
+            amount_a=match.amount_a,
+            amount_b=match.amount_b,
+            price=float(match.clearing_price),
         )
-
-        # Move to next order if current is exhausted
-        if ask_remaining[ask_order.uid] <= 0:
-            ask_idx += 1
-        if bid_remaining[bid_order.uid] <= 0:
-            bid_idx += 1
 
     # Collect unmatched orders (including invalid orders which couldn't participate)
     unmatched_sellers = [

@@ -23,14 +23,19 @@ from typing import TYPE_CHECKING
 
 import structlog
 
+from solver.amm.uniswap_v2 import UniswapV2, uniswap_v2
 from solver.models.auction import AuctionInstance
 from solver.models.order_groups import find_cow_opportunities
 from solver.models.types import normalize_address
+from solver.pools import PoolRegistry, build_registry_from_liquidity
+from solver.routing.router import SingleOrderRouter
 from solver.strategies.base import OrderFill, StrategyResult
 from solver.strategies.double_auction import run_hybrid_auction
 
 if TYPE_CHECKING:
-    from solver.routing.router import SingleOrderRouter
+    from solver.amm.balancer import BalancerStableAMM, BalancerWeightedAMM
+    from solver.amm.limit_order import LimitOrderAMM
+    from solver.amm.uniswap_v3 import UniswapV3AMM
 
 logger = structlog.get_logger()
 
@@ -46,13 +51,50 @@ class HybridCowStrategy:
     This captures gas savings from CoW matching while using AMM
     prices to ensure fair execution.
 
+    Like AmmRoutingStrategy, this builds a router from auction liquidity
+    at solve time to get reference prices from available pools.
+
     Args:
-        router: Router to query AMM reference prices
+        amm: AMM implementation for swap math. Defaults to UniswapV2.
+        router: Injected router for testing. If provided, used directly.
+        v3_amm: UniswapV3 AMM for V3 pool routing. If None, V3 pools are skipped.
+        weighted_amm: Balancer weighted AMM. If None, weighted pools are skipped.
+        stable_amm: Balancer stable AMM. If None, stable pools are skipped.
+        limit_order_amm: 0x limit order AMM. If None, limit orders are skipped.
     """
 
-    def __init__(self, router: SingleOrderRouter) -> None:
-        """Initialize with router for AMM price queries."""
-        self.router = router
+    def __init__(
+        self,
+        amm: UniswapV2 | None = None,
+        router: SingleOrderRouter | None = None,
+        v3_amm: UniswapV3AMM | None = None,
+        weighted_amm: BalancerWeightedAMM | None = None,
+        stable_amm: BalancerStableAMM | None = None,
+        limit_order_amm: LimitOrderAMM | None = None,
+    ) -> None:
+        """Initialize with optional AMM components for price queries."""
+        self.amm = amm if amm is not None else uniswap_v2
+        self._injected_router = router
+        self.v3_amm = v3_amm
+        self.weighted_amm = weighted_amm
+        self.stable_amm = stable_amm
+        self.limit_order_amm = limit_order_amm
+
+    def _get_router(self, pool_registry: PoolRegistry) -> SingleOrderRouter:
+        """Get the router to use for AMM price queries.
+
+        Returns the injected router if available, otherwise creates a new one.
+        """
+        if self._injected_router is not None:
+            return self._injected_router
+        return SingleOrderRouter(
+            amm=self.amm,
+            pool_registry=pool_registry,
+            v3_amm=self.v3_amm,
+            weighted_amm=self.weighted_amm,
+            stable_amm=self.stable_amm,
+            limit_order_amm=self.limit_order_amm,
+        )
 
     def try_solve(self, auction: AuctionInstance) -> StrategyResult | None:
         """Try to find CoW matches using hybrid auction.
@@ -76,6 +118,45 @@ class HybridCowStrategy:
             )
             return None
 
+        # Build pool registry from auction liquidity for price queries
+        pool_registry = build_registry_from_liquidity(auction.liquidity)
+        router = self._get_router(pool_registry)
+
+        logger.debug(
+            "hybrid_cow_pool_registry",
+            pool_count=pool_registry.pool_count,
+            liquidity_count=len(auction.liquidity),
+        )
+
+        # Check for overlapping tokens across pairs
+        # If tokens overlap, we can only safely process one pair (the largest)
+        # because clearing prices must be consistent across the entire solution
+        if len(cow_groups) > 1:
+            all_tokens: set[str] = set()
+            has_overlap = False
+            for group in cow_groups:
+                token_a = normalize_address(group.token_a)
+                token_b = normalize_address(group.token_b)
+                if token_a in all_tokens or token_b in all_tokens:
+                    has_overlap = True
+                    break
+                all_tokens.add(token_a)
+                all_tokens.add(token_b)
+
+            if has_overlap:
+                # Only process the pair with the most orders
+                original_count = len(cow_groups)
+                cow_groups = sorted(
+                    cow_groups,
+                    key=lambda g: len(g.sellers_of_a) + len(g.sellers_of_b),
+                    reverse=True,
+                )[:1]
+                logger.warning(
+                    "hybrid_cow_overlapping_tokens",
+                    original_pairs=original_count,
+                    message="Tokens overlap across pairs; processing only largest pair",
+                )
+
         # Process each CoW group
         all_fills: list[OrderFill] = []
         all_remainders = []
@@ -83,7 +164,7 @@ class HybridCowStrategy:
 
         for group in cow_groups:
             # Get AMM reference price for this pair
-            amm_price = self.router.get_reference_price(group.token_a, group.token_b)
+            amm_price = router.get_reference_price(group.token_a, group.token_b)
 
             logger.debug(
                 "hybrid_cow_processing_pair",
@@ -126,9 +207,8 @@ class HybridCowStrategy:
 
             # Set clearing prices for this pair
             # Price is set so token conservation holds: sum(sell) = sum(buy)
-            # NOTE: For multi-pair auctions where tokens overlap, later pair
-            # prices overwrite earlier. This is acceptable for the single-pair
-            # optimization focus of this strategy.
+            # Note: Overlapping tokens across pairs are handled earlier by
+            # filtering to only the largest pair when overlap is detected.
             token_a_norm = normalize_address(group.token_a)
             token_b_norm = normalize_address(group.token_b)
             all_prices[token_a_norm] = str(result.total_cow_b)
@@ -165,15 +245,21 @@ class HybridCowStrategy:
                 merged_buy = existing.buy_filled + fill.buy_filled
 
                 # Cap sell_filled at order's maximum sell amount
-                # Note: buy_filled has no maximum - users WANT to receive more
-                # (buy_amount is the MINIMUM they require, not maximum)
+                # When capping, also scale buy_filled proportionally to maintain
+                # the clearing price ratio (required for valid settlement)
                 max_sell = fill.order.sell_amount_int
                 if merged_sell > max_sell:
+                    # Scale buy_filled proportionally
+                    scale_factor = max_sell / merged_sell
+                    original_buy = merged_buy
+                    merged_buy = int(merged_buy * scale_factor)
                     logger.warning(
                         "hybrid_cow_fill_overflow_capped",
                         uid=uid[:16] + "...",
                         merged_sell=merged_sell,
                         max_sell=max_sell,
+                        original_buy=original_buy,
+                        scaled_buy=merged_buy,
                     )
                     merged_sell = max_sell
 

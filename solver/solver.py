@@ -33,8 +33,9 @@ class Solver:
     strategies are tried on the remainder orders.
 
     Default strategies (in priority order):
-    1. CowMatchStrategy - Direct peer-to-peer matching (no AMM fees)
-    2. AmmRoutingStrategy - Route through liquidity pools
+    1. CowMatchStrategy - Simple 2-order CoW matching (handles fill-or-kill)
+    2. HybridCowStrategy - N-order CoW matching using AMM reference prices
+    3. AmmRoutingStrategy - Route through liquidity pools
 
     Args:
         strategies: List of strategies to try in order. If None, uses defaults.
@@ -56,7 +57,8 @@ class Solver:
 
         Args:
             strategies: List of SolutionStrategy instances to try in order.
-                       If None, uses [CowMatchStrategy(), AmmRoutingStrategy()].
+                       If None, uses [CowMatchStrategy(), HybridCowStrategy(),
+                       AmmRoutingStrategy()].
             router: Deprecated. For backwards compatibility, if provided,
                     creates AmmRoutingStrategy with this router.
             amm: Deprecated. For backwards compatibility, if provided,
@@ -77,10 +79,27 @@ class Solver:
             or limit_order_amm is not None
         ):
             # Backwards compatibility: create strategies from legacy params
-            from solver.strategies import AmmRoutingStrategy, CowMatchStrategy
+            from solver.strategies import (
+                AmmRoutingStrategy,
+                CowMatchStrategy,
+                HybridCowStrategy,
+            )
 
             self.strategies = [
+                # CowMatchStrategy handles 2-order cases with "price improvement"
+                # logic that correctly handles fill-or-kill orders
                 CowMatchStrategy(),
+                # HybridCowStrategy handles N-order cases with AMM price reference.
+                # For 2-order cases, it acts as fallback if CowMatchStrategy fails
+                # (e.g., crossed limits that AMM price can unlock)
+                HybridCowStrategy(
+                    amm=amm,
+                    router=router,
+                    v3_amm=v3_amm,
+                    weighted_amm=weighted_amm,
+                    stable_amm=stable_amm,
+                    limit_order_amm=limit_order_amm,
+                ),
                 AmmRoutingStrategy(
                     amm=amm,
                     router=router,
@@ -92,10 +111,20 @@ class Solver:
             ]
         else:
             # Default strategies
-            from solver.strategies import AmmRoutingStrategy, CowMatchStrategy
+            from solver.strategies import (
+                AmmRoutingStrategy,
+                CowMatchStrategy,
+                HybridCowStrategy,
+            )
 
             self.strategies = [
+                # CowMatchStrategy handles 2-order cases with "price improvement"
+                # logic that correctly handles fill-or-kill orders
                 CowMatchStrategy(),
+                # HybridCowStrategy handles N-order cases with AMM price reference.
+                # For 2-order cases, it acts as fallback if CowMatchStrategy fails
+                # (e.g., crossed limits that AMM price can unlock)
+                HybridCowStrategy(),
                 AmmRoutingStrategy(),
             ]
 

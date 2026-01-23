@@ -15,6 +15,7 @@ This directory tracks progress across AI-assisted development sessions.
 | [Slice 4.1](session-43-slice4.1-analysis.md) | 43 | Complete | Problem Formulation & Analysis |
 | [Slice 4.2a](session-44-slice4.2a-amm-price.md) | 44 | Complete | AMM Price Integration |
 | [Slice 4.2b](session-45-slice4.2b-uniform-price.md) | 45 | Complete | Uniform Clearing Price & HybridCowStrategy |
+| [Slice 4.2c](session-46-slice4.2c-integration.md) | 46 | Complete | Strategy Integration |
 
 ## Current Status
 
@@ -27,10 +28,11 @@ This directory tracks progress across AI-assisted development sessions.
 - **Slice 4.1:** Complete (empirical analysis, double auction prototype)
 - **Slice 4.2a:** Complete (AMM price queries, hybrid auction algorithm)
 - **Slice 4.2b:** Complete (Uniform clearing price, HybridCowStrategy)
-- **Tests:** 839 passing
+- **Slice 4.2c:** Complete (Strategy integration into solver)
+- **Tests:** 842 passing
 - **Liquidity:** V2, V3, Balancer weighted, Balancer stable, 0x limit orders
 - **Parity:** Complete liquidity parity with Rust baseline solver
-- **Next:** Slice 4.2c - Strategy Integration & Benchmarking
+- **Next:** Benchmarking on historical auctions
 
 ## Session Archive
 
@@ -83,6 +85,7 @@ Individual session logs are preserved in the `archive/` directory for reference.
 | [43](session-43-slice4.1-analysis.md) | 2026-01-23 | Slice 4.1 - Problem Formulation & Analysis |
 | [44](session-44-slice4.2a-amm-price.md) | 2026-01-23 | Slice 4.2a - AMM Price Integration |
 | [45](session-45-slice4.2b-uniform-price.md) | 2026-01-23 | Slice 4.2b - Uniform Clearing Price & HybridCowStrategy |
+| [46](session-46-slice4.2c-integration.md) | 2026-01-23 | Slice 4.2c - Strategy Integration |
 
 ## Session Template
 

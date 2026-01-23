@@ -190,12 +190,77 @@ class TestDoubleAuction:
         # No match because ask is fill-or-kill
         assert result.matches == []
 
+    def test_fill_or_kill_complete_fill(self) -> None:
+        """Fill-or-kill orders match when complete fill is possible.
+
+        The double auction tries candidate prices (midpoint and boundaries) and
+        selects one that allows complete fill for fill-or-kill orders.
+        """
+        # Ask: sell 50 A, want 100 B (price = 2 B/A), NOT partially fillable
+        # Bid: sell 125 B, want 50 A (price = 2.5 B/A)
+        # Valid price range: [2.0, 2.5]
+        # At midpoint = 2.25 -> bid can buy 125/2.25 = 55 A >= 50 (complete fill)
+        # At max_ask = 2.0 -> bid can buy 125/2.0 = 62 A >= 50 (complete fill)
+        # Both prices allow complete fill; midpoint is tried first
+        group = OrderGroup(
+            token_a=TOKEN_A,
+            token_b=TOKEN_B,
+            sellers_of_a=[
+                make_order("ask1", TOKEN_A, TOKEN_B, 50, 100, partially_fillable=False),
+            ],
+            sellers_of_b=[
+                make_order("bid1", TOKEN_B, TOKEN_A, 125, 50),  # 2.5 B/A max
+            ],
+        )
+        result = run_double_auction(group, respect_fill_or_kill=True)
+
+        # Should match completely - fill-or-kill is satisfied
+        assert len(result.matches) == 1
+        assert result.total_a_matched == 50  # Complete fill of ask
+        assert len(result.unmatched_sellers) == 0  # Ask fully matched
+
+    def test_fill_or_kill_boundary_price_enables_match(self) -> None:
+        """Fill-or-kill match found at boundary price when midpoint fails.
+
+        When midpoint causes partial fill that violates fill-or-kill, the algorithm
+        tries boundary prices. If a boundary price allows complete fill, it succeeds.
+        """
+        # Ask: sell 100 A, want 200 B (price = 2 B/A), NOT partially fillable
+        # Bid: sell 201 B, want 50 A (price = 4.02 B/A)
+        # Valid price range: [2.0, 4.02]
+        # At midpoint = 3.01 -> bid can buy 201/3.01 = 66.7 -> 66 A (< 100, partial fill!)
+        #   Ask fill-or-kill violated at midpoint
+        # At max_ask = 2.0 -> bid can buy 201/2.0 = 100.5 -> 100 A (complete fill!)
+        group = OrderGroup(
+            token_a=TOKEN_A,
+            token_b=TOKEN_B,
+            sellers_of_a=[
+                make_order("ask1", TOKEN_A, TOKEN_B, 100, 200, partially_fillable=False),
+            ],
+            sellers_of_b=[
+                make_order("bid1", TOKEN_B, TOKEN_A, 201, 50),  # 4.02 B/A max
+            ],
+        )
+        result = run_double_auction(group, respect_fill_or_kill=True)
+
+        # Should match at boundary price (2.0) which allows complete fill
+        assert len(result.matches) == 1
+        assert result.total_a_matched == 100  # Complete fill of ask
+        assert float(result.clearing_price) == 2.0  # Uses boundary price
+
     def test_partial_fill_allowed(self) -> None:
-        """Partially fillable orders should match partially."""
+        """Partially fillable orders should match partially.
+
+        The double auction tries candidate prices (midpoint and boundaries) and
+        selects the one that maximizes matched volume. At the ask's limit price
+        (2 B/A), more A can be matched than at midpoint (2.25 B/A).
+        """
         # Ask: sell 100 A, want 200 B (price = 2 B/A), partially fillable
         # Bid: sell 125 B, want 50 A (price = 2.5 B/A)
-        # Midpoint price = 2.25 B/A
-        # At price 2.25, bid can buy 125/2.25 = 55.5 -> 55 A
+        # Candidate prices: midpoint=2.25, max_ask=2.0, min_bid=2.5
+        # At price 2.0 (max_ask_limit), bid can buy 125/2.0 = 62.5 -> 62 A
+        # At price 2.25 (midpoint), bid can buy 125/2.25 = 55.5 -> 55 A
+        # Algorithm selects price 2.0 for maximum volume
         group = OrderGroup(
             token_a=TOKEN_A,
             token_b=TOKEN_B,
@@ -208,16 +273,55 @@ class TestDoubleAuction:
         )
         result = run_double_auction(group)
 
-        # Should match ~55 A (limited by bid's B at clearing price)
+        # Should match 62 A at price 2.0 (boundary price maximizes volume)
         assert len(result.matches) == 1
-        assert result.total_a_matched == 55  # 125 / 2.25 = 55.5 -> 55
-        # Remaining 45 A should be unmatched
+        assert result.total_a_matched == 62  # 125 / 2.0 = 62.5 -> 62
+        assert float(result.clearing_price) == 2.0  # Uses ask's limit (max_ask_limit)
+        # Remaining 38 A should be unmatched
         assert len(result.unmatched_sellers) == 1
-        assert result.unmatched_sellers[0][1] == 45  # 100 - 55 = 45 A remaining
+        assert result.unmatched_sellers[0][1] == 38  # 100 - 62 = 38 A remaining
 
 
 class TestMultiOrderAuction:
     """Tests for multi-order double auctions."""
+
+    def test_n_order_fill_or_kill_boundary_price(self) -> None:
+        """N>2 orders where boundary price enables fill-or-kill match.
+
+        With 3 orders, the midpoint price would cause partial fill of the
+        fill-or-kill ask, but boundary price allows complete fill.
+        """
+        # Ask1: sell 100 A, want 200 B (price = 2 B/A), fill-or-kill
+        # Ask2: sell 20 A, want 30 B (price = 1.5 B/A), partially fillable
+        # Bid1: sell 250 B, want 50 A (price = 5 B/A)
+        #
+        # Valid price range: [2.0, 5.0], midpoint = 3.5
+        #
+        # At midpoint 3.5:
+        #   - Bid1 can buy: 250/3.5 = 71 A
+        #   - Ask1 needs 100 A (fill-or-kill) -> can't match!
+        #
+        # At max_ask 2.0:
+        #   - Bid1 can buy: 250/2.0 = 125 A
+        #   - Ask1 (100 A) + Ask2 (20 A) = 120 A -> both can match!
+        group = OrderGroup(
+            token_a=TOKEN_A,
+            token_b=TOKEN_B,
+            sellers_of_a=[
+                make_order("ask1", TOKEN_A, TOKEN_B, 100, 200, partially_fillable=False),
+                make_order("ask2", TOKEN_A, TOKEN_B, 20, 30, partially_fillable=True),
+            ],
+            sellers_of_b=[
+                make_order("bid1", TOKEN_B, TOKEN_A, 250, 50),  # 5 B/A max
+            ],
+        )
+        result = run_double_auction(group, respect_fill_or_kill=True)
+
+        # Boundary price (2.0) enables both asks to match
+        assert len(result.matches) == 2
+        assert result.total_a_matched == 120  # 100 + 20
+        assert float(result.clearing_price) == 2.0  # Boundary price
+        assert len(result.unmatched_sellers) == 0  # Both asks fully matched
 
     def test_three_asks_two_bids(self) -> None:
         """Multiple asks and bids should clear correctly."""
