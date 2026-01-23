@@ -337,6 +337,7 @@ class SingleOrderRouter:
         token_in: str,
         token_out: str,
         probe_amount: int | None = None,
+        token_in_decimals: int = 18,
     ) -> Decimal | None:
         """Get the reference market price for a token pair.
 
@@ -352,21 +353,32 @@ class SingleOrderRouter:
             token_in: Token being sold (numerator token)
             token_out: Token being bought (denominator token)
             probe_amount: Amount to use for price discovery. If None,
-                         uses 1e15 (0.001 with 18 decimals) as a small
-                         probe that minimizes price impact.
+                         uses 0.001 tokens scaled to token_in_decimals.
+            token_in_decimals: Decimals of the input token. Used to scale
+                         the default probe amount. For USDC (6 decimals),
+                         probe is 10^3; for WETH (18 decimals), probe is 10^15.
+                         Defaults to 18 for backward compatibility.
 
         Returns:
-            Price as Decimal (token_out per token_in), or None if no
-            liquidity exists for the pair.
+            Price as Decimal in RAW units (raw_token_out / raw_token_in),
+            or None if no liquidity exists for the pair.
+
+            The raw price is consistent with order limit prices, allowing
+            direct comparison in CoW matching without additional scaling.
 
         Example:
-            >>> price = router.get_reference_price(WETH, USDC)
-            >>> # price = Decimal("2500.00") means 1 WETH = 2500 USDC
+            >>> # Pool: 2500 USDC per WETH
+            >>> price = router.get_reference_price(WETH, USDC, token_in_decimals=18)
+            >>> # price ≈ 2.5e-9 (raw_USDC / raw_WETH = 2500 * 10^(6-18))
+            >>> price = router.get_reference_price(USDC, WETH, token_in_decimals=6)
+            >>> # price ≈ 4e8 (raw_WETH / raw_USDC = 0.0004 * 10^(18-6))
         """
-        # Default probe amount: 0.001 tokens (with 18 decimals)
+        # Default probe amount: 0.001 tokens scaled to token decimals
         # Small enough to minimize price impact, large enough to avoid dust issues
+        # For 18 decimals: 10^15 = 0.001 tokens
+        # For 6 decimals: 10^3 = 0.001 tokens
         if probe_amount is None:
-            probe_amount = 10**15
+            probe_amount = 10 ** max(0, token_in_decimals - 3)
 
         # Get all pools for this pair
         pools = self._registry.get_pools_for_pair(token_in, token_out)

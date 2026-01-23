@@ -29,12 +29,11 @@ This directory tracks progress across AI-assisted development sessions.
 - **Slice 4.2a:** Complete (AMM price queries, hybrid auction algorithm)
 - **Slice 4.2b:** Complete (Uniform clearing price, HybridCowStrategy)
 - **Slice 4.2c:** Complete (Strategy integration into solver)
-- **Slice 4.2 Benchmark:** Exit criteria PASS (33.3% >= 20%) on Python-only fixtures
-- **Tests:** 842 passing
+- **Slice 4.2 Benchmark:** Exit criteria PASS (50.0% >= 20%) on all CoW fixtures
+- **Tests:** 848 passing
 - **Liquidity:** V2, V3, Balancer weighted, Balancer stable, 0x limit orders
 - **Parity:** Complete liquidity parity with Rust baseline solver
-- **Known Issue:** `get_reference_price` probe amount bug for non-18-decimal tokens
-- **Next:** Fix probe amount bug, then benchmark on N-order fixtures with AMM liquidity
+- **Next:** Phase 4 continued - multi-order optimization
 
 ## Session Archive
 
@@ -88,6 +87,7 @@ Individual session logs are preserved in the `archive/` directory for reference.
 | [44](session-44-slice4.2a-amm-price.md) | 2026-01-23 | Slice 4.2a - AMM Price Integration |
 | [45](session-45-slice4.2b-uniform-price.md) | 2026-01-23 | Slice 4.2b - Uniform Clearing Price & HybridCowStrategy |
 | [46](session-46-slice4.2c-integration.md) | 2026-01-23 | Slice 4.2c - Strategy Integration |
+| [47](session-47-decimal-fix.md) | 2026-01-23 | Token Decimal Handling Fix |
 
 ## Session Template
 

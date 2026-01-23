@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING
 import structlog
 
 from solver.amm.uniswap_v2 import UniswapV2, uniswap_v2
+from solver.fees.price_estimation import get_token_info
 from solver.models.auction import AuctionInstance
 from solver.models.order_groups import find_cow_opportunities
 from solver.models.types import normalize_address
@@ -163,8 +164,22 @@ class HybridCowStrategy:
         all_prices: dict[str, str] = {}
 
         for group in cow_groups:
+            # Get token decimals for proper probe amount scaling
+            token_a_info = get_token_info(auction, group.token_a)
+            if token_a_info is None or token_a_info.decimals is None:
+                logger.warning(
+                    "hybrid_cow_token_decimals_not_found",
+                    token=group.token_a[-8:],
+                    using_default=18,
+                )
+                token_a_decimals = 18
+            else:
+                token_a_decimals = token_a_info.decimals
+
             # Get AMM reference price for this pair
-            amm_price = router.get_reference_price(group.token_a, group.token_b)
+            amm_price = router.get_reference_price(
+                group.token_a, group.token_b, token_in_decimals=token_a_decimals
+            )
 
             logger.debug(
                 "hybrid_cow_processing_pair",

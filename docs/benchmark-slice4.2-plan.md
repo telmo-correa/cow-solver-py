@@ -7,18 +7,22 @@ From `PLAN.md`:
 
 ## Current Status: PASS
 
-**Results on `benchmark_python_only` fixtures:**
+**Results on all CoW fixtures (benchmark_python_only + n_order_cow):**
 ```
-Total auctions:      6
-CoW-eligible:        6
+Total auctions:      18
+CoW-eligible:        18
 
 On CoW-eligible auctions:
-  HybridCow wins:    2 (33.3%)
-  AmmRouting wins:   2 (33.3%)
-  Ties:              2 (33.3%)
+  HybridCow wins:    9 (50.0%)
+  AmmRouting wins:   7 (38.9%)
+  Ties:              2 (11.1%)
 
-Exit Criteria: 33.3% >= 20% -> PASS
+Exit Criteria: 50.0% >= 20% -> PASS
 ```
+
+**Breakdown by fixture category:**
+- `benchmark_python_only` (6 fixtures, no AMM liquidity): HybridCow wins 33.3%
+- `n_order_cow` (12 fixtures, with AMM liquidity): HybridCow wins 41.7%
 
 ## Overview
 
@@ -162,55 +166,50 @@ The benchmark passes if:
 
 ## Known Issues
 
-### `get_reference_price` probe amount assumes 18-decimal tokens
+### ~~`get_reference_price` probe amount assumes 18-decimal tokens~~ RESOLVED
 
-#### What is the issue?
+#### What was the issue?
 
-The `SingleOrderRouter.get_reference_price` method (`solver/routing/router.py`) calculates AMM reference prices by simulating a small "probe" swap. The probe amount is hardcoded to `1e15` (1,000,000,000,000,000 raw units), which was designed for 18-decimal tokens like WETH where it represents 0.001 WETH.
+The `SingleOrderRouter.get_reference_price` method was hardcoding the probe amount to `1e15`, which only worked for 18-decimal tokens. For USDC (6 decimals), this meant probing with 1 billion USDC instead of 0.001 USDC.
+
+#### Resolution
+
+Added `token_in_decimals` parameter to `get_reference_price()`:
 
 ```python
-if probe_amount is None:
-    probe_amount = 10**15  # Assumes 18-decimal token
+def get_reference_price(
+    self,
+    token_in: str,
+    token_out: str,
+    probe_amount: int | None = None,
+    token_in_decimals: int = 18,  # NEW: defaults to 18 for backward compatibility
+) -> Decimal | None:
+    if probe_amount is None:
+        probe_amount = 10 ** max(0, token_in_decimals - 3)  # 0.001 tokens
 ```
 
-#### Why does this exist?
+Updated `HybridCowStrategy` to look up token decimals using the existing `get_token_info` helper:
+```python
+from solver.fees.price_estimation import get_token_info
 
-The probe amount was chosen to be:
-- Small enough to minimize price impact (avoid moving the market)
-- Large enough to avoid dust/rounding issues
+token_a_info = get_token_info(auction, group.token_a)
+token_a_decimals = token_a_info.decimals if token_a_info and token_a_info.decimals else 18
+amm_price = router.get_reference_price(group.token_a, group.token_b, token_in_decimals=token_a_decimals)
+```
 
-For 18-decimal tokens: `1e15 / 1e18 = 0.001 tokens` - a reasonable probe size.
+#### Semantics preserved
 
-#### What is the impact?
+The returned price is still in **raw units** (raw_out / raw_in), which is consistent with how order limit prices are calculated. This allows direct comparison in CoW matching without additional scaling.
 
-When the input token has fewer decimals (e.g., USDC with 6 decimals):
-- `1e15 / 1e6 = 1,000,000,000 tokens` (1 billion USDC!)
-- This exceeds most pool reserves, causing the swap simulation to fail or return extreme prices
-- The returned AMM price is nonsensical (e.g., 19,044,890 instead of ~2,500 for USDC/WETH)
+#### Test coverage
 
-**Consequence for HybridCowStrategy:**
-- `run_hybrid_auction` uses the AMM price to filter which orders can match
-- With an invalid price (19M instead of 2.5K), no orders pass the filter
-- Result: 0 CoW matches found, even when valid matches exist
-- HybridCow falls back to pure AMM routing, losing its advantage
-
-#### Why doesn't this affect the benchmark result?
-
-The `benchmark_python_only` fixtures that PASS the exit criteria have **no AMM liquidity**:
-- Without liquidity, `get_reference_price` returns `None`
-- `run_hybrid_auction` falls back to pure double auction (no AMM price filter)
-- Orders match based purely on their limit prices overlapping
-- This is why HybridCow wins on those fixtures
-
-#### Status
-
-**Unresolved.** This issue affects N-order fixtures with AMM liquidity and non-18-decimal tokens. A fix requires careful design consideration around:
-- Whether to scale probe amount by token decimals
-- Whether to use a percentage of pool reserves instead
-- How to handle pools without direct reserve access (V3, Balancer)
-- Ensuring the fix doesn't change execution price semantics
-
-**Tracking:** This should be addressed in a future slice with proper design review.
+Added `TestGetReferencePriceNon18Decimals` test class with 6 tests covering:
+- 6→18 decimal (USDC→WETH)
+- 18→6 decimal (WETH→USDC)
+- 6→6 decimal (USDC→USDT)
+- 8→18 decimal (WBTC→WETH)
+- Mixed decimal reverse direction
+- Small liquidity pools
 
 ## Notes
 
