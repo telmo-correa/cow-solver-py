@@ -741,6 +741,106 @@ class UniswapV3AMM:
             amount_in_maximum=amount_in_max,
         )
 
+    def max_fill_sell_order(
+        self,
+        pool: UniswapV3Pool,
+        token_in: str,
+        _token_out: str,
+        sell_amount: int,
+        buy_amount: int,
+    ) -> int:
+        """Calculate maximum input for a sell order that satisfies the limit price.
+
+        Uses binary search since V3 quotes are obtained from the quoter contract.
+
+        Args:
+            pool: The V3 liquidity pool
+            token_in: Input token address
+            _token_out: Output token address (unused, derived from pool)
+            sell_amount: Order's sell amount (search range upper bound)
+            buy_amount: Order's minimum buy amount (for limit check)
+
+        Returns:
+            Maximum input amount that satisfies the limit, or 0 if impossible
+        """
+        if sell_amount <= 0 or buy_amount <= 0:
+            return 0
+
+        # Binary search for maximum fill
+        lo, hi = 0, sell_amount
+
+        while lo < hi:
+            mid = (lo + hi + 1) // 2
+            result = self.simulate_swap(pool, token_in, mid)
+
+            if result is None:
+                hi = mid - 1
+                continue
+
+            # Check limit: output/input >= buy_amount/sell_amount
+            if result.amount_out * sell_amount >= buy_amount * mid:
+                lo = mid
+            else:
+                hi = mid - 1
+
+        # Verify the final result
+        if lo > 0:
+            result = self.simulate_swap(pool, token_in, lo)
+            if result is None or result.amount_out * sell_amount < buy_amount * lo:
+                return 0
+
+        return lo
+
+    def max_fill_buy_order(
+        self,
+        pool: UniswapV3Pool,
+        token_in: str,
+        _token_out: str,
+        sell_amount: int,
+        buy_amount: int,
+    ) -> int:
+        """Calculate maximum output for a buy order that satisfies the limit price.
+
+        Uses binary search since V3 quotes are obtained from the quoter contract.
+
+        Args:
+            pool: The V3 liquidity pool
+            token_in: Input token address
+            _token_out: Output token address (unused, derived from pool)
+            sell_amount: Order's maximum sell amount (for limit check)
+            buy_amount: Order's desired buy amount (search range upper bound)
+
+        Returns:
+            Maximum output amount that satisfies the limit, or 0 if impossible
+        """
+        if sell_amount <= 0 or buy_amount <= 0:
+            return 0
+
+        # Binary search for maximum fill
+        lo, hi = 0, buy_amount
+
+        while lo < hi:
+            mid = (lo + hi + 1) // 2
+            result = self.simulate_swap_exact_output(pool, token_in, mid)
+
+            if result is None:
+                hi = mid - 1
+                continue
+
+            # Check limit: input/output <= sell_amount/buy_amount
+            if result.amount_in * buy_amount <= sell_amount * mid:
+                lo = mid
+            else:
+                hi = mid - 1
+
+        # Verify the final result
+        if lo > 0:
+            result = self.simulate_swap_exact_output(pool, token_in, lo)
+            if result is None or result.amount_in * buy_amount > sell_amount * lo:
+                return 0
+
+        return lo
+
 
 def parse_v3_liquidity(liquidity: "Liquidity") -> UniswapV3Pool | None:
     """Parse UniswapV3 pool from auction liquidity data.

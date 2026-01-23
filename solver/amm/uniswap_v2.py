@@ -335,6 +335,68 @@ class UniswapV2(AMM):
             gas_estimate=POOL_SWAP_GAS_COST,
         )
 
+    def pool_max_fill_sell_order(
+        self,
+        pool: UniswapV2Pool,
+        token_in: str,
+        _token_out: str,
+        sell_amount: int,
+        buy_amount: int,
+    ) -> int:
+        """Calculate maximum input for a sell order that satisfies the limit price.
+
+        Pool-based wrapper for max_fill_sell_order that matches SwapCalculator protocol.
+
+        Args:
+            pool: The liquidity pool
+            token_in: Input token address
+            token_out: Output token address (unused, derived from pool)
+            sell_amount: Order's sell amount (search range upper bound)
+            buy_amount: Order's minimum buy amount (for limit check)
+
+        Returns:
+            Maximum input amount that satisfies the limit, or 0 if impossible
+        """
+        reserve_in, reserve_out = pool.get_reserves(token_in)
+        return self.max_fill_sell_order(
+            reserve_in=reserve_in,
+            reserve_out=reserve_out,
+            sell_amount=sell_amount,
+            buy_amount=buy_amount,
+            fee_multiplier=pool.fee_multiplier,
+        )
+
+    def pool_max_fill_buy_order(
+        self,
+        pool: UniswapV2Pool,
+        token_in: str,
+        _token_out: str,
+        sell_amount: int,
+        buy_amount: int,
+    ) -> int:
+        """Calculate maximum output for a buy order that satisfies the limit price.
+
+        Pool-based wrapper for max_fill_buy_order that matches SwapCalculator protocol.
+
+        Args:
+            pool: The liquidity pool
+            token_in: Input token address
+            token_out: Output token address (unused, derived from pool)
+            sell_amount: Order's maximum sell amount (for limit check)
+            buy_amount: Order's desired buy amount (search range upper bound)
+
+        Returns:
+            Maximum output amount that satisfies the limit, or 0 if impossible
+        """
+        reserve_in, reserve_out = pool.get_reserves(token_in)
+        return self.max_fill_buy_order(
+            reserve_in=reserve_in,
+            reserve_out=reserve_out,
+            sell_amount=sell_amount,
+            buy_amount=buy_amount,
+            fee_multiplier=pool.fee_multiplier,
+        )
+
     def _prepare_swap_encoding(
         self,
         token_in: str,
