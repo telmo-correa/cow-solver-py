@@ -1,0 +1,130 @@
+{
+  "id": "n_order_cow_4_145",
+  "tokens": {
+    "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2": {
+      "decimals": 18,
+      "symbol": "WETH",
+      "referencePrice": "1000000000000000000",
+      "availableBalance": "2300000000000000000",
+      "trusted": true
+    },
+    "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48": {
+      "decimals": 6,
+      "symbol": "USDC",
+      "referencePrice": "400000000000000",
+      "availableBalance": "7971000000",
+      "trusted": true
+    }
+  },
+  "orders": [
+    {
+      "uid": "0x6dc7bb05077e45f796d1dce61333e5d8bbb10f3c392b4001ac0a12fa9eb1e93a28ff3955919d4a23b4fc2f756a6a7bc7af42936047f4478e",
+      "sellToken": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+      "buyToken": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+      "sellAmount": "1800000000000000000",
+      "fullSellAmount": "1800000000000000000",
+      "buyAmount": "4443079593",
+      "fullBuyAmount": "4443079593",
+      "feePolicies": [],
+      "validTo": 0,
+      "kind": "sell",
+      "owner": "0x60c32c166abf4689ad287a70cb86b872240c7e05",
+      "partiallyFillable": true,
+      "preInteractions": [],
+      "postInteractions": [],
+      "sellTokenSource": "erc20",
+      "buyTokenDestination": "erc20",
+      "class": "limit",
+      "appData": "0x0000000000000000000000000000000000000000000000000000000000000000",
+      "signingScheme": "presign",
+      "signature": "0x"
+    },
+    {
+      "uid": "0x085d1909832942c98a8e36d60a4465119073a73750174fb0b24cb36771fd329d175e270bb24946378e5ceb9f978ba8e3df61057fc20947e2",
+      "sellToken": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+      "buyToken": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+      "sellAmount": "500000000000000000",
+      "fullSellAmount": "500000000000000000",
+      "buyAmount": "1216550987",
+      "fullBuyAmount": "1216550987",
+      "feePolicies": [],
+      "validTo": 0,
+      "kind": "sell",
+      "owner": "0x3751cd6e6eb641cd8f05bef17e9e1e5015f448e5",
+      "partiallyFillable": true,
+      "preInteractions": [],
+      "postInteractions": [],
+      "sellTokenSource": "erc20",
+      "buyTokenDestination": "erc20",
+      "class": "limit",
+      "appData": "0x0000000000000000000000000000000000000000000000000000000000000000",
+      "signingScheme": "presign",
+      "signature": "0x"
+    },
+    {
+      "uid": "0x37d469a34fd3454ba5d70a9f2a54f0a409e5b31cf1d24cb092c6a050ed978e56c6844f29957441b4a45c88c5dadf55fb4438ba81546d4b6c",
+      "sellToken": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+      "buyToken": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+      "sellAmount": "3719000000",
+      "fullSellAmount": "3719000000",
+      "buyAmount": "1458968040268914432",
+      "fullBuyAmount": "1458968040268914432",
+      "feePolicies": [],
+      "validTo": 0,
+      "kind": "sell",
+      "owner": "0x04c15bbcd53c4bc9ad40bdc25c8e9a7f4414fdb8",
+      "partiallyFillable": true,
+      "preInteractions": [],
+      "postInteractions": [],
+      "sellTokenSource": "erc20",
+      "buyTokenDestination": "erc20",
+      "class": "limit",
+      "appData": "0x0000000000000000000000000000000000000000000000000000000000000000",
+      "signingScheme": "presign",
+      "signature": "0x"
+    },
+    {
+      "uid": "0x023b9163c5e34a039d2e3055add0d39e58863c0ab2044f1bbbb80f2a9b84cd0a0a6d12ab537a40049dc5f2598b7c8c084c9ee993e814434b",
+      "sellToken": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+      "buyToken": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+      "sellAmount": "4252000000",
+      "fullSellAmount": "4252000000",
+      "buyAmount": "1652035437713933824",
+      "fullBuyAmount": "1652035437713933824",
+      "feePolicies": [],
+      "validTo": 0,
+      "kind": "sell",
+      "owner": "0x2bcd26617b364898a5f46cd771be9e2e4ce3139c",
+      "partiallyFillable": true,
+      "preInteractions": [],
+      "postInteractions": [],
+      "sellTokenSource": "erc20",
+      "buyTokenDestination": "erc20",
+      "class": "limit",
+      "appData": "0x0000000000000000000000000000000000000000000000000000000000000000",
+      "signingScheme": "presign",
+      "signature": "0x"
+    }
+  ],
+  "liquidity": [
+    {
+      "kind": "constantProduct",
+      "id": "uniswap-v2-weth-usdc",
+      "address": "0x15d7f2b2e6d645fe8a5c3241572e2755a92a2e6c",
+      "router": "0x7a250d5630b4cf539739df2c5dacb4c659f2488d",
+      "gasEstimate": "110000",
+      "tokens": {
+        "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2": {
+          "balance": "20000000000000000000000"
+        },
+        "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48": {
+          "balance": "50000000000000"
+        }
+      },
+      "fee": "0.003"
+    }
+  ],
+  "effectiveGasPrice": "30000000000",
+  "deadline": "2106-01-01T00:00:00.000Z",
+  "surplusCapturingJitOrderOwners": []
+}

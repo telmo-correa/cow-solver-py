@@ -29,10 +29,12 @@ This directory tracks progress across AI-assisted development sessions.
 - **Slice 4.2a:** Complete (AMM price queries, hybrid auction algorithm)
 - **Slice 4.2b:** Complete (Uniform clearing price, HybridCowStrategy)
 - **Slice 4.2c:** Complete (Strategy integration into solver)
+- **Slice 4.2 Benchmark:** Exit criteria PASS (33.3% >= 20%) on Python-only fixtures
 - **Tests:** 842 passing
 - **Liquidity:** V2, V3, Balancer weighted, Balancer stable, 0x limit orders
 - **Parity:** Complete liquidity parity with Rust baseline solver
-- **Next:** Benchmarking on historical auctions
+- **Known Issue:** `get_reference_price` probe amount bug for non-18-decimal tokens
+- **Next:** Fix probe amount bug, then benchmark on N-order fixtures with AMM liquidity
 
 ## Session Archive
 
