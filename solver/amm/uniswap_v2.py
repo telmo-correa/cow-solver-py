@@ -41,12 +41,13 @@ class UniswapV2Pool:
 
     @property
     def fee_multiplier(self) -> int:
-        """Fee multiplier for AMM math (1000 - fee_bps/10).
+        """Fee multiplier for AMM math (10000 - fee_bps).
 
-        For 30 bps (0.3%), this returns 997.
-        Used in the formula: amount_in_with_fee = amount_in * fee_multiplier
+        For 30 bps (0.3%), this returns 9970.
+        For 25 bps (0.25%), this returns 9975.
+        Used in the formula: amount_in_with_fee = amount_in * fee_multiplier / 10000
         """
-        return 1000 - (self.fee_bps // 10)
+        return 10000 - self.fee_bps
 
     def get_reserves(self, token_in: str) -> tuple[int, int]:
         """Get reserves ordered as (reserve_in, reserve_out)."""
@@ -87,17 +88,17 @@ class UniswapV2(AMM):
         amount_in: int,
         reserve_in: int,
         reserve_out: int,
-        fee_multiplier: int = 997,
+        fee_multiplier: int = 9970,
     ) -> int:
         """Calculate output amount using constant product formula.
 
-        Formula: amount_out = (in * fee * res_out) / (res_in * 1000 + in * fee)
+        Formula: amount_out = (in * fee * res_out) / (res_in * 10000 + in * fee)
 
         Args:
             amount_in: Input token amount
             reserve_in: Reserve of input token in pool
             reserve_out: Reserve of output token in pool
-            fee_multiplier: Fee multiplier (default 997 for 0.3% fee)
+            fee_multiplier: Fee multiplier (default 9970 for 0.3% fee, 9975 for 0.25%)
 
         Returns:
             Output token amount
@@ -109,7 +110,7 @@ class UniswapV2(AMM):
 
         amount_in_with_fee = amount_in * fee_multiplier
         numerator = amount_in_with_fee * reserve_out
-        denominator = reserve_in * 1000 + amount_in_with_fee
+        denominator = reserve_in * 10000 + amount_in_with_fee
 
         return numerator // denominator
 
@@ -118,17 +119,17 @@ class UniswapV2(AMM):
         amount_out: int,
         reserve_in: int,
         reserve_out: int,
-        fee_multiplier: int = 997,
+        fee_multiplier: int = 9970,
     ) -> int:
         """Calculate required input for desired output.
 
-        Formula: amount_in = (res_in * out * 1000) / ((res_out - out) * fee) + 1
+        Formula: amount_in = (res_in * out * 10000) / ((res_out - out) * fee) + 1
 
         Args:
             amount_out: Desired output token amount
             reserve_in: Reserve of input token in pool
             reserve_out: Reserve of output token in pool
-            fee_multiplier: Fee multiplier (default 997 for 0.3% fee)
+            fee_multiplier: Fee multiplier (default 9970 for 0.3% fee, 9975 for 0.25%)
 
         Returns:
             Required input token amount
@@ -141,7 +142,7 @@ class UniswapV2(AMM):
             # Can't extract more than the reserve
             return 2**256 - 1  # Max uint256
 
-        numerator = reserve_in * amount_out * 1000
+        numerator = reserve_in * amount_out * 10000
         denominator = (reserve_out - amount_out) * fee_multiplier
 
         return (numerator // denominator) + 1
@@ -152,25 +153,32 @@ class UniswapV2(AMM):
         reserve_out: int,
         sell_amount: int,
         buy_amount: int,
-        fee_multiplier: int = 997,
+        fee_multiplier: int = 9970,
+        solver_fee: int = 0,
     ) -> int:
         """Calculate maximum input for a sell order that satisfies the limit price.
 
         For a sell order, the user wants to sell tokens and receive at least
         a minimum amount. This calculates the maximum input amount where the
-        output rate still satisfies the limit: output/input >= buy_amount/sell_amount.
+        output rate still satisfies the limit price.
+
+        Without solver_fee: output/input >= buy_amount/sell_amount
+        With solver_fee: output/(input + solver_fee) >= buy_amount/sell_amount
+
+        The solver fee is deducted from the executed amount, so the effective
+        input for the limit check is (input + solver_fee).
 
         The formula is derived from:
         - output(x) = (x * fee * R_out) / (R_in * 1000 + x * fee)
-        - Constraint: output(x) / x >= buy_amount / sell_amount
-        - Solving: x <= R_out * sell_amount / buy_amount - R_in * 1000 / fee
+        - Constraint: output(x) * sell_amount >= buy_amount * (x + solver_fee)
 
         Args:
             reserve_in: Pool reserve of input token
             reserve_out: Pool reserve of output token
             sell_amount: Order's sell amount (used for limit rate)
             buy_amount: Order's minimum buy amount (used for limit rate)
-            fee_multiplier: Fee multiplier (default 997 for 0.3% fee)
+            fee_multiplier: Fee multiplier (default 9970 for 0.3% fee)
+            solver_fee: Solver fee deducted from executed amount (default 0)
 
         Returns:
             Maximum input amount that satisfies the limit, or 0 if impossible
@@ -185,7 +193,7 @@ class UniswapV2(AMM):
         # max_input = R_out * sell_amount / buy_amount - R_in * 1000 / fee
         # Use integer math to avoid precision loss
         # max_input = (R_out * sell_amount * fee - R_in * 1000 * buy_amount) / (buy_amount * fee)
-        numerator = reserve_out * sell_amount * fee_multiplier - reserve_in * 1000 * buy_amount
+        numerator = reserve_out * sell_amount * fee_multiplier - reserve_in * 10000 * buy_amount
         denominator = buy_amount * fee_multiplier
 
         if numerator <= 0:
@@ -196,16 +204,17 @@ class UniswapV2(AMM):
 
         # Verify and adjust for integer rounding in get_amount_out
         # Use binary search to find the exact maximum that satisfies the constraint
+        # Constraint with solver_fee: output * sell_amount >= buy_amount * (input + solver_fee)
         if max_input > 0:
             actual_output = self.get_amount_out(max_input, reserve_in, reserve_out, fee_multiplier)
-            # Check: actual_output * sell_amount >= buy_amount * max_input
-            if actual_output * sell_amount < buy_amount * max_input:
+            # Check constraint including solver_fee
+            if actual_output * sell_amount < buy_amount * (max_input + solver_fee):
                 # Binary search for the largest valid input
                 lo, hi = 0, max_input
                 while lo < hi:
                     mid = (lo + hi + 1) // 2
                     mid_output = self.get_amount_out(mid, reserve_in, reserve_out, fee_multiplier)
-                    if mid_output * sell_amount >= buy_amount * mid:
+                    if mid_output * sell_amount >= buy_amount * (mid + solver_fee):
                         lo = mid
                     else:
                         hi = mid - 1
@@ -219,25 +228,32 @@ class UniswapV2(AMM):
         reserve_out: int,
         sell_amount: int,
         buy_amount: int,
-        fee_multiplier: int = 997,
+        fee_multiplier: int = 9970,
+        solver_fee: int = 0,
     ) -> int:
         """Calculate maximum output for a buy order that satisfies the limit price.
 
         For a buy order, the user wants to receive a specific amount and is
         willing to pay up to a maximum. This calculates the maximum output
-        where the input rate still satisfies the limit: input/output <= sell_amount/buy_amount.
+        where the input rate still satisfies the limit price.
+
+        Without solver_fee: input/output <= sell_amount/buy_amount
+        With solver_fee: (input + solver_fee)/output <= sell_amount/buy_amount
+
+        The solver fee is added to the input for the limit check, reducing
+        the maximum output we can achieve.
 
         The formula is derived from:
         - input(y) = (y * R_in * 1000) / (fee * (R_out - y))
-        - Constraint: input(y) / y <= sell_amount / buy_amount
-        - Solving: y <= R_out - R_in * 1000 * buy_amount / (fee * sell_amount)
+        - Constraint: (input(y) + solver_fee) * buy_amount <= sell_amount * y
 
         Args:
             reserve_in: Pool reserve of input token
             reserve_out: Pool reserve of output token
             sell_amount: Order's maximum sell amount (used for limit rate)
             buy_amount: Order's desired buy amount (used for limit rate)
-            fee_multiplier: Fee multiplier (default 997 for 0.3% fee)
+            fee_multiplier: Fee multiplier (default 9970 for 0.3% fee)
+            solver_fee: Solver fee added to input for limit check (default 0)
 
         Returns:
             Maximum output amount that satisfies the limit, or 0 if impossible
@@ -251,7 +267,7 @@ class UniswapV2(AMM):
 
         # max_output = R_out - R_in * 1000 * buy_amount / (fee * sell_amount)
         # Use integer math: max_output = (R_out * fee * sell_amount - R_in * 1000 * buy_amount) / (fee * sell_amount)
-        numerator = reserve_out * fee_multiplier * sell_amount - reserve_in * 1000 * buy_amount
+        numerator = reserve_out * fee_multiplier * sell_amount - reserve_in * 10000 * buy_amount
         denominator = fee_multiplier * sell_amount
 
         if numerator <= 0:
@@ -262,16 +278,17 @@ class UniswapV2(AMM):
 
         # Verify and adjust for integer rounding in get_amount_in
         # Use binary search to find the exact maximum that satisfies the constraint
+        # Constraint with solver_fee: (input + solver_fee) * buy_amount <= sell_amount * output
         if max_output > 0:
             actual_input = self.get_amount_in(max_output, reserve_in, reserve_out, fee_multiplier)
-            # Check: actual_input * buy_amount <= sell_amount * max_output
-            if actual_input * buy_amount > sell_amount * max_output:
+            # Check constraint including solver_fee
+            if (actual_input + solver_fee) * buy_amount > sell_amount * max_output:
                 # Binary search for the largest valid output
                 lo, hi = 0, max_output
                 while lo < hi:
                     mid = (lo + hi + 1) // 2
                     mid_input = self.get_amount_in(mid, reserve_in, reserve_out, fee_multiplier)
-                    if mid_input * buy_amount <= sell_amount * mid:
+                    if (mid_input + solver_fee) * buy_amount <= sell_amount * mid:
                         lo = mid
                     else:
                         hi = mid - 1
@@ -319,18 +336,23 @@ class UniswapV2(AMM):
         Args:
             pool: The liquidity pool
             token_in: Input token address
-            amount_out: Desired output amount
+            amount_out: Desired output amount (minimum to receive)
 
         Returns:
-            SwapResult with required input and desired output
+            SwapResult with required input and actual forward-simulated output.
+            Due to integer rounding, actual_output may be >= requested amount_out.
         """
         reserve_in, reserve_out = pool.get_reserves(token_in)
         token_out = pool.get_token_out(token_in)
         amount_in = self.get_amount_in(amount_out, reserve_in, reserve_out, pool.fee_multiplier)
 
+        # Forward verification: compute actual output from selling amount_in
+        # Due to integer division, actual output may differ from requested
+        actual_output = self.get_amount_out(amount_in, reserve_in, reserve_out, pool.fee_multiplier)
+
         return SwapResult(
             amount_in=amount_in,
-            amount_out=amount_out,
+            amount_out=actual_output,  # Use actual forward-simulated output
             pool_address=pool.address,
             token_in=token_in,
             token_out=token_out,

@@ -175,7 +175,8 @@ class TestSwapSimulation:
             amount_out=1 * 10**18,
         )
 
-        assert result.amount_out == 1 * 10**18
+        # Output is >= requested due to get_amount_in rounding up
+        assert result.amount_out >= 1 * 10**18
         assert result.amount_in > 0
         assert result.pool_address == "0xPoolAddress"
         assert result.token_in == "0xTokenA"

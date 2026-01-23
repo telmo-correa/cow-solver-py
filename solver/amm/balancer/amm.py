@@ -30,9 +30,65 @@ from .stable_math import stable_calc_in_given_out, stable_calc_out_given_in
 from .weighted_math import calc_in_given_out, calc_out_given_in
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from solver.amm.base import SwapResult
 
 logger = structlog.get_logger()
+
+
+# =============================================================================
+# Forward Verification (matches Rust's converge_in_amount exactly)
+# =============================================================================
+
+
+def converge_in_amount(
+    in_amount: int,
+    exact_out_amount: int,
+    get_amount_out: Callable[[int], int | None],
+) -> tuple[int, int] | None:
+    """Verify and bump input amount until forward simulation yields sufficient output.
+
+    Balancer V2 pools are "unstable": computing an input amount large enough to
+    buy X tokens, then selling that computed amount in the same pool state, may
+    yield X-δ tokens. This function bumps the input until forward simulation
+    gives >= requested output.
+
+    This is a direct translation of Rust's converge_in_amount from:
+    crates/shared/src/sources/balancer_v2/swap/mod.rs:335-364
+
+    Args:
+        in_amount: Initial input amount (after fee, in token decimals)
+        exact_out_amount: Required output amount
+        get_amount_out: Function that simulates selling in_amount, returns output or None
+
+    Returns:
+        Tuple of (converged_input, actual_output), or None if convergence fails.
+        The actual_output may be >= exact_out_amount due to rounding.
+    """
+    out_amount = get_amount_out(in_amount)
+    if out_amount is None:
+        return None
+    if out_amount >= exact_out_amount:
+        return (in_amount, out_amount)
+
+    # Approximate the output deficit in input tokens at current trading price,
+    # then multiply by 10 for each iteration.
+    # bump = ceil((exact_out - out) * in_amount / max(out, 1))
+    deficit = exact_out_amount - out_amount
+    divisor = max(out_amount, 1)
+    bump = max(1, (deficit * in_amount + divisor - 1) // divisor)  # ceil_div
+
+    for _ in range(6):
+        bumped_in_amount = in_amount + bump
+        out_amount = get_amount_out(bumped_in_amount)
+        if out_amount is None:
+            return None
+        if out_amount >= exact_out_amount:
+            return (bumped_in_amount, out_amount)
+        bump *= 10
+
+    return None
 
 
 # =============================================================================
@@ -360,15 +416,25 @@ class BalancerWeightedAMM:
                 _version=pool.version,
             )
 
-            # Add fee to input
-            amount_in_with_fee = add_swap_fee_amount(amount_in_raw.value, pool.fee)
+            # Order matches Rust: downscale_up first, then add_swap_fee_amount
+            amount_in_before_fee = scale_down_up(amount_in_raw, reserve_in.scaling_factor)
+            in_amount = add_swap_fee_amount(amount_in_before_fee, pool.fee)
 
-            # Scale down input (round up for buy orders)
-            amount_in_result = scale_down_up(Bfp(amount_in_with_fee), reserve_in.scaling_factor)
+            # Forward verification: bump input until forward sim gives >= requested output
+            def get_amount_out_weighted(amt_in: int) -> int | None:
+                sim_result = self.simulate_swap(pool, token_in, token_out, amt_in)
+                if sim_result is None:
+                    return None
+                return sim_result.amount_out
 
+            converged = converge_in_amount(in_amount, amount_out, get_amount_out_weighted)
+            if converged is None:
+                return None
+
+            converged_input, actual_output = converged
             return SwapResult(
-                amount_in=amount_in_result,
-                amount_out=amount_out,
+                amount_in=converged_input,
+                amount_out=actual_output,  # Use actual forward-simulated output
                 pool_address=pool.address,
                 token_in=normalize_address(token_in),
                 token_out=normalize_address(token_out),
@@ -538,13 +604,25 @@ class BalancerStableAMM:
                 amount_out=amount_out_scaled,
             )
 
-            # Add fee to input and scale down (round up for buy orders)
-            amount_in_with_fee = add_swap_fee_amount(amount_in_raw.value, pool.fee)
-            amount_in_result = scale_down_up(Bfp(amount_in_with_fee), reserve_in.scaling_factor)
+            # Order matches Rust: downscale_up first, then add_swap_fee_amount
+            amount_in_before_fee = scale_down_up(amount_in_raw, reserve_in.scaling_factor)
+            in_amount = add_swap_fee_amount(amount_in_before_fee, pool.fee)
 
+            # Forward verification: bump input until forward sim gives >= requested output
+            def get_amount_out_stable(amt_in: int) -> int | None:
+                sim_result = self.simulate_swap(pool, token_in, token_out, amt_in)
+                if sim_result is None:
+                    return None
+                return sim_result.amount_out
+
+            converged = converge_in_amount(in_amount, amount_out, get_amount_out_stable)
+            if converged is None:
+                return None
+
+            converged_input, actual_output = converged
             return SwapResult(
-                amount_in=amount_in_result,
-                amount_out=amount_out,
+                amount_in=converged_input,
+                amount_out=actual_output,  # Use actual forward-simulated output
                 pool_address=pool.address,
                 token_in=normalize_address(token_in),
                 token_out=normalize_address(token_out),

@@ -105,6 +105,8 @@ class BaseHandler:
         amount_in: int,
         amount_out: int,
         gas_estimate: int,
+        *,
+        actual_amount_out: int | None = None,
     ) -> RoutingResult:
         """Build a successful routing result.
 
@@ -112,17 +114,24 @@ class BaseHandler:
             order: The routed order
             pool: The pool used for the swap
             amount_in: Input amount
-            amount_out: Output amount
+            amount_out: Output amount (used for trade executedAmount and clearing prices)
             gas_estimate: Estimated gas cost for the swap
+            actual_amount_out: Actual forward-simulated output for interactions.
+                              If provided, used for HopResult.amount_out (interaction outputAmount).
+                              If None, amount_out is used for both.
+                              For buy orders, this allows using requested amount for trade/prices
+                              while using actual amount for interaction output.
 
         Returns:
             RoutingResult with success=True and hop details
         """
-        hop = self._build_hop(pool, order, amount_in, amount_out)
+        # For interactions, use actual forward-simulated output if provided
+        hop_amount_out = actual_amount_out if actual_amount_out is not None else amount_out
+        hop = self._build_hop(pool, order, amount_in, hop_amount_out)
         return RoutingResult(
             order=order,
             amount_in=amount_in,
-            amount_out=amount_out,
+            amount_out=amount_out,  # Used for trade and prices
             pool=pool,
             pools=[pool],
             hops=[hop],

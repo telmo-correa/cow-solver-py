@@ -107,8 +107,15 @@ class UniswapV3Handler(BaseHandler):
                 error=f"Required input {result.amount_in} exceeds maximum {max_sell_amount}",
             )
 
+        # For buy orders: use requested buy_amount for trade/prices,
+        # actual forward-simulated output for interaction
         return self._build_success_result(
-            order, pool, result.amount_in, buy_amount, pool.gas_estimate
+            order,
+            pool,
+            result.amount_in,
+            buy_amount,
+            pool.gas_estimate,
+            actual_amount_out=result.amount_out,
         )
 
 

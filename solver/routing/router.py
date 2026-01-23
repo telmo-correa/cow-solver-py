@@ -34,6 +34,11 @@ from solver.amm.uniswap_v2 import (
     UniswapV2Pool,
     uniswap_v2,
 )
+from solver.constants import (
+    BALANCER_STABLE_SWAP_GAS_COST,
+    BALANCER_WEIGHTED_SWAP_GAS_COST,
+    POOL_SWAP_GAS_COST,
+)
 from solver.models.auction import Order
 from solver.models.solution import Solution
 from solver.pools import AnyPool, LimitOrderPool, PoolRegistry
@@ -153,6 +158,8 @@ class SingleOrderRouter:
         registry = HandlerRegistry()
 
         # Register V2 (always available)
+        # TODO: Revert to p.gas_estimate once Rust is fixed to use fixture values.
+        # Rust uses hardcoded POOL_SWAP_GAS_COST (60000) ignoring the fixture's gasEstimate.
         registry.register(
             UniswapV2Pool,
             handler=self._v2_handler,  # type: ignore[arg-type]
@@ -163,11 +170,15 @@ class SingleOrderRouter:
                 ao,
             ),
             type_name="v2",
-            gas_estimate=lambda p: p.gas_estimate,
+            gas_estimate=lambda p: POOL_SWAP_GAS_COST,  # noqa: ARG005 - pool ignored for Rust parity
         )
 
         # Register V3 (if available)
+        # TODO: Revert to p.gas_estimate once Rust is fixed to use fixture values.
+        # Rust uses hardcoded V3_SWAP_GAS_COST (106000) ignoring the fixture's gasEstimate.
         if self.v3_amm is not None:
+            from solver.amm.uniswap_v3 import V3_SWAP_GAS_COST
+
             v3_amm = self.v3_amm  # Capture for lambda
             registry.register(
                 UniswapV3Pool,
@@ -179,10 +190,12 @@ class SingleOrderRouter:
                     ao,
                 ),
                 type_name="v3",
-                gas_estimate=lambda p: p.gas_estimate,
+                gas_estimate=lambda p: V3_SWAP_GAS_COST,  # noqa: ARG005 - pool ignored for Rust parity
             )
 
         # Register Balancer weighted (if available)
+        # TODO: Revert to p.gas_estimate once Rust is fixed to use fixture values.
+        # See comment in solver/routing/handlers/balancer.py for details.
         if self.weighted_amm is not None:
             weighted_amm = self.weighted_amm  # Capture for lambda
             registry.register(
@@ -199,10 +212,12 @@ class SingleOrderRouter:
                     ao,
                 ),
                 type_name="balancer_weighted",
-                gas_estimate=lambda p: p.gas_estimate,
+                gas_estimate=lambda p: BALANCER_WEIGHTED_SWAP_GAS_COST,  # noqa: ARG005 - pool ignored for Rust parity
             )
 
         # Register Balancer stable (if available)
+        # TODO: Revert to p.gas_estimate once Rust is fixed to use fixture values.
+        # See comment in solver/routing/handlers/balancer.py for details.
         if self.stable_amm is not None:
             stable_amm = self.stable_amm  # Capture for lambda
             registry.register(
@@ -216,7 +231,7 @@ class SingleOrderRouter:
                     ao,
                 ),
                 type_name="balancer_stable",
-                gas_estimate=lambda p: p.gas_estimate,
+                gas_estimate=lambda p: BALANCER_STABLE_SWAP_GAS_COST,  # noqa: ARG005 - pool ignored for Rust parity
             )
 
         # Register 0x limit orders (if available)
@@ -259,8 +274,11 @@ class SingleOrderRouter:
         """Find a route for a single order.
 
         Handles both sell orders (exact input) and buy orders (exact output).
-        Gets quotes from all available pools (V2 + V3) and selects the best.
-        Falls back to multi-hop routing if no direct pool exists.
+        Generates all candidate paths (direct + multi-hop), estimates each,
+        and selects the best based on output (sell) or input (buy).
+
+        This matches Rust's baseline solver behavior which considers all paths
+        and picks the optimal one rather than preferring direct routes.
 
         Args:
             order: The order to route
@@ -281,49 +299,105 @@ class SingleOrderRouter:
         if buy_amount <= 0:
             return self._error_result(order, "Buy amount must be positive")
 
-        # Get all pools (V2 + V3) for this token pair from registry
-        all_pools = self._registry.get_pools_for_pair(order.sell_token, order.buy_token)
+        # Get all candidate paths (direct + multi-hop)
+        candidate_paths = self._registry.get_all_candidate_paths(order.sell_token, order.buy_token)
 
-        # Also check legacy pool_finder for backward compatibility
-        # This handles cases where pool_finder returns a pool not in the registry
-        if not all_pools:
+        if not candidate_paths:
+            # Try legacy pool_finder for backward compatibility
             legacy_pool = self._pool_finder(order.sell_token, order.buy_token)
             if legacy_pool is not None:
-                all_pools = [legacy_pool]
+                # Create a direct path for the legacy pool
+                candidate_paths = [[order.sell_token, order.buy_token]]
 
-        if all_pools:
-            # Find the best pool based on quote (V2, V3, and Balancer pools)
-            best_result = self._find_best_direct_route(order, all_pools, sell_amount, buy_amount)
-            if best_result is not None:
-                return best_result
-
-        # No direct pool or all failed - try multi-hop routing using registry
-        path = self._registry.find_path(order.sell_token, order.buy_token)
-        if path is None or len(path) < 2:
+        if not candidate_paths:
             return self._error_result(
                 order, f"No route found for {order.sell_token}/{order.buy_token}"
             )
 
-        # Select best pools for each hop based on quotes
-        selection_result = self._multihop.select_best_pools_for_path(
-            path, sell_amount, is_sell=order.is_sell_order
-        )
-        if selection_result is None:
-            return self._error_result(order, f"No valid pools found for multi-hop path {path}")
-        pools, _ = selection_result
+        # Estimate each path and collect successful results
+        path_results: list[tuple[list[str], RoutingResult]] = []
 
-        logger.info(
-            "using_multihop_route",
-            order_uid=order.uid,
-            path=[p[-8:] for p in path],  # Log last 8 chars of addresses
-            hops=len(path) - 1,
-            pool_types=[self._handler_registry.get_type_name(p) for p in pools],
-        )
+        for path in candidate_paths:
+            result = self._estimate_path(order, path, sell_amount, buy_amount)
+            if result is not None and result.success:
+                path_results.append((path, result))
 
+        if not path_results:
+            return self._error_result(
+                order, f"No route found for {order.sell_token}/{order.buy_token}"
+            )
+
+        # Select the best path based on order type
         if order.is_sell_order:
-            return self._multihop.route_sell_order(order, pools, path, sell_amount, buy_amount)
+            # For sell orders, maximize output
+            best_path, best_result = max(path_results, key=lambda x: x[1].amount_out)
         else:
-            return self._multihop.route_buy_order(order, pools, path, sell_amount, buy_amount)
+            # For buy orders, minimize input
+            best_path, best_result = min(path_results, key=lambda x: x[1].amount_in)
+
+        # Log if we chose a multi-hop route
+        if len(best_path) > 2:
+            logger.info(
+                "using_multihop_route",
+                order_uid=order.uid,
+                path=[p[-8:] for p in best_path],
+                hops=len(best_path) - 1,
+            )
+
+        return best_result
+
+    def _estimate_path(
+        self,
+        order: Order,
+        path: list[str],
+        sell_amount: int,
+        buy_amount: int,
+    ) -> RoutingResult | None:
+        """Estimate a single path and return a routing result.
+
+        For direct paths (2 tokens), uses the best direct pool.
+        For multi-hop paths (3+ tokens), uses multi-hop routing.
+
+        Args:
+            order: The order to route
+            path: Token path to estimate
+            sell_amount: Order's sell amount
+            buy_amount: Order's buy amount
+
+        Returns:
+            RoutingResult if path is valid, None otherwise
+        """
+        if len(path) < 2:
+            return None
+
+        if len(path) == 2:
+            # Direct path - use best pool for this pair
+            pools = self._registry.get_pools_for_pair(path[0], path[1])
+
+            # Also check legacy pool_finder
+            if not pools:
+                legacy_pool = self._pool_finder(path[0], path[1])
+                if legacy_pool is not None:
+                    pools = [legacy_pool]
+
+            if not pools:
+                return None
+
+            return self._find_best_direct_route(order, pools, sell_amount, buy_amount)
+        else:
+            # Multi-hop path
+            selection_result = self._multihop.select_best_pools_for_path(
+                path, sell_amount, is_sell=order.is_sell_order
+            )
+            if selection_result is None:
+                return None
+
+            pools, _ = selection_result
+
+            if order.is_sell_order:
+                return self._multihop.route_sell_order(order, pools, path, sell_amount, buy_amount)
+            else:
+                return self._multihop.route_buy_order(order, pools, path, sell_amount, buy_amount)
 
     def _find_best_direct_route(
         self,

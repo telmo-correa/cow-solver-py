@@ -1,0 +1,32 @@
+{
+  "solutions": [
+    {
+      "id": 0,
+      "prices": {
+        "0x177127622c4a00f3d409b75571e12cb3c8973d3c": "1000000000000000000",
+        "0x9c58bacc331c9aa871afd802db6379a98e80cedb": "1663373703594405548696"
+      },
+      "trades": [
+        {
+          "kind": "fulfillment",
+          "order": "0x2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a",
+          "executedAmount": "1000000000000000000"
+        }
+      ],
+      "preInteractions": [],
+      "interactions": [
+        {
+          "kind": "liquidity",
+          "internalize": false,
+          "id": "0",
+          "inputToken": "0x9c58bacc331c9aa871afd802db6379a98e80cedb",
+          "outputToken": "0x177127622c4a00f3d409b75571e12cb3c8973d3c",
+          "inputAmount": "1000000000000000000",
+          "outputAmount": "1663373703594405548696"
+        }
+      ],
+      "postInteractions": [],
+      "gas": 206391
+    }
+  ]
+}

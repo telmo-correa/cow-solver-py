@@ -16,6 +16,7 @@ import structlog
 from solver.fees import DEFAULT_FEE_CALCULATOR, FeeCalculator
 from solver.models.auction import AuctionInstance, Order
 from solver.models.solution import Interaction, Solution, Trade, TradeKind
+from solver.models.types import normalize_address
 from solver.safe_int import S, Underflow
 
 if TYPE_CHECKING:
@@ -227,6 +228,9 @@ class StrategyResult:
         # Priority: explicit parameter > stored in result > default
         calculator = fee_calculator or self.fee_calculator or DEFAULT_FEE_CALCULATOR
         trades = []
+        # For limit orders with fees, we need to adjust prices by the fee ratio
+        # Rust scales both clearing prices so they're based on executed amount, not swap amount
+        adjusted_prices = dict(self.prices)
 
         for fill in self.fills:
             order = fill.order
@@ -281,6 +285,25 @@ class StrategyResult:
                             reason="This indicates a bug in validate_fee_against_amount",
                         )
                         continue  # Skip this trade
+
+                    # Adjust clearing prices by fee ratio to match Rust behavior.
+                    # Rust scales both prices so they're based on executedAmount,
+                    # not the full swap amount. This maintains the exchange rate
+                    # but uses fee-adjusted values.
+                    # price[buy_token] = executedAmount (for sell orders)
+                    # price[sell_token] = outputAmount * (executedAmount / inputAmount)
+                    original_amount = fill.executed_amount
+                    if original_amount > 0:
+                        sell_token = normalize_address(order.sell_token)
+                        buy_token = normalize_address(order.buy_token)
+                        if buy_token in adjusted_prices and sell_token in adjusted_prices:
+                            # Scale both prices by executed/original ratio
+                            sell_price = int(adjusted_prices[sell_token])
+                            # New prices maintain the same ratio but scaled down
+                            adjusted_prices[buy_token] = str(executed)
+                            adjusted_prices[sell_token] = str(
+                                sell_price * executed // original_amount
+                            )
                 else:
                     # For buy orders, fee is added to the sell side
                     executed = fill.executed_amount
@@ -305,7 +328,7 @@ class StrategyResult:
 
         return Solution(
             id=solution_id,
-            prices=self.prices,
+            prices=adjusted_prices,
             trades=trades,
             interactions=self.interactions,
             gas=self.gas,

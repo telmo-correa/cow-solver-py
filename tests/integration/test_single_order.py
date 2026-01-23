@@ -503,10 +503,13 @@ class TestRoutingWithMocks:
             assert call["pool"] == mock_weth_usdc_pool.address
 
         # Verify pool finder received the correct tokens
-        assert len(mock_finder.calls) == 1
-        token_a, token_b = mock_finder.calls[0]
-        assert "c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2" in token_a.lower()
-        assert "a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48" in token_b.lower()
+        # Called twice: once for CoW strategy (checking for potential matches),
+        # once for AMM routing
+        assert len(mock_finder.calls) == 2
+        for call in mock_finder.calls:
+            token_a, token_b = call
+            assert "c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2" in token_a.lower()
+            assert "a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48" in token_b.lower()
 
         app.dependency_overrides.clear()
 
@@ -520,16 +523,20 @@ class TestPartialCowAmmComposition:
         Order A: sells 2 WETH, wants min 5000 USDC (partiallyFillable)
         Order B: sells 3000 USDC, wants 1 WETH
 
-        Expected:
-        1. Partial CoW: 1 WETH <-> 3000 USDC (B fully satisfied)
-        2. Remainder: A's 1 WETH routed through AMM for ~2500 USDC
-        3. Final: A sells 2 WETH, gets ~5500 USDC (3000 CoW + ~2500 AMM)
+        Expected (2 independent solutions):
+        1. CoW solution: A+B trade directly (1 WETH <-> 3000 USDC), no AMM
+        2. AMM solution: A's remainder (1 WETH) routes through AMM
+
+        These are independent because either can execute without the other.
         """
+        order_a_uid = "0x" + "0A" * 56
+        order_b_uid = "0x" + "0B" * 56
+
         auction = {
             "id": "partial_cow_amm",
             "orders": [
                 {
-                    "uid": "0x" + "0A" * 56,
+                    "uid": order_a_uid,
                     "sellToken": WETH,
                     "buyToken": USDC,
                     "sellAmount": "2000000000000000000",  # 2 WETH
@@ -539,7 +546,7 @@ class TestPartialCowAmmComposition:
                     "partiallyFillable": True,  # A will be partially filled
                 },
                 {
-                    "uid": "0x" + "0B" * 56,
+                    "uid": order_b_uid,
                     "sellToken": USDC,
                     "buyToken": WETH,
                     "sellAmount": "3000000000",  # 3000 USDC
@@ -555,19 +562,21 @@ class TestPartialCowAmmComposition:
         assert response.status_code == 200
 
         data = response.json()
-        # Should have a solution
-        assert len(data["solutions"]) == 1
+        # Should have 2 independent solutions: CoW match + AMM remainder
+        assert len(data["solutions"]) == 2
 
-        solution = data["solutions"][0]
+        # Solution 0: CoW match (A+B trade directly, no AMM)
+        cow_solution = data["solutions"][0]
+        assert len(cow_solution["trades"]) == 2
+        assert len(cow_solution["interactions"]) == 0
+        assert cow_solution["gas"] == 0
 
-        # Should have two trades (both orders filled)
-        assert len(solution["trades"]) == 2
-
-        # Should have one interaction (AMM swap for A's remainder)
-        assert len(solution["interactions"]) == 1
-
-        # Gas should be non-zero (has AMM interaction)
-        assert solution["gas"] > 0
+        # Solution 1: AMM route for A's remainder
+        amm_solution = data["solutions"][1]
+        assert len(amm_solution["trades"]) == 1
+        assert amm_solution["trades"][0]["order"] == order_a_uid
+        assert len(amm_solution["interactions"]) == 1
+        assert amm_solution["gas"] > 0
 
     def test_partial_cow_only_when_no_amm_liquidity(self, client):
         """Partial CoW match without AMM when no liquidity available.
@@ -618,10 +627,13 @@ class TestPartialCowAmmComposition:
         assert solution["gas"] == 0
 
     def test_partial_cow_verifies_executed_amounts(self, client):
-        """Verify exact executed amounts in partial CoW + AMM solution.
+        """Verify exact executed amounts in partial CoW + AMM solutions.
 
-        This test ensures fill merging produces correct total amounts.
-        See Issue #11 in code review.
+        With separate solutions:
+        - Solution 0: CoW match (A partial 1 WETH + B full 3000 USDC)
+        - Solution 1: AMM route (A remainder 1 WETH)
+
+        Total for A = 1 + 1 = 2 WETH across both solutions.
         """
         order_a_uid = "0x" + "0E" * 56
         order_b_uid = "0x" + "0F" * 56
@@ -656,29 +668,46 @@ class TestPartialCowAmmComposition:
         assert response.status_code == 200
 
         data = response.json()
-        assert len(data["solutions"]) == 1
+        # 2 independent solutions: CoW match + AMM remainder
+        assert len(data["solutions"]) == 2
 
-        solution = data["solutions"][0]
-        trades = solution["trades"]
+        # Solution 0: CoW match (A partial + B full)
+        cow_solution = data["solutions"][0]
+        assert len(cow_solution["trades"]) == 2
+        assert len(cow_solution["interactions"]) == 0
+        assert cow_solution["gas"] == 0
 
-        # Find trades by order UID
-        trade_a = next(t for t in trades if t["order"] == order_a_uid)
-        trade_b = next(t for t in trades if t["order"] == order_b_uid)
+        cow_trade_a = next(t for t in cow_solution["trades"] if t["order"] == order_a_uid)
+        cow_trade_b = next(t for t in cow_solution["trades"] if t["order"] == order_b_uid)
+        # A gets 1 WETH filled via CoW
+        assert cow_trade_a["executedAmount"] == "1000000000000000000"
+        # B gets full 3000 USDC filled via CoW
+        assert cow_trade_b["executedAmount"] == "3000000000"
 
-        # Order A (sell): executed_amount should be FULL 2 WETH
-        # (1 WETH from CoW + 1 WETH from AMM, merged into single trade)
-        assert trade_a["executedAmount"] == "2000000000000000000"
+        # Solution 1: AMM route (A remainder only)
+        amm_solution = data["solutions"][1]
+        assert len(amm_solution["trades"]) == 1
+        assert len(amm_solution["interactions"]) == 1
+        assert amm_solution["gas"] > 0
 
-        # Order B (sell): executed_amount should be FULL 3000 USDC
-        # (fully filled by CoW match)
-        assert trade_b["executedAmount"] == "3000000000"
+        amm_trade_a = amm_solution["trades"][0]
+        assert amm_trade_a["order"] == order_a_uid
+        # A's remainder (1 WETH) routed via AMM
+        assert amm_trade_a["executedAmount"] == "1000000000000000000"
 
-    def test_each_order_appears_once_in_solution(self, client):
-        """Each order should appear exactly once in the solution trades.
+        # Total for A across both solutions = 2 WETH
+        total_a_executed = int(cow_trade_a["executedAmount"]) + int(amm_trade_a["executedAmount"])
+        assert total_a_executed == 2000000000000000000
 
-        This tests fill merging: when the same order is filled by multiple
-        strategies (CoW + AMM), the fills should be merged into one trade.
-        See Issue #11 in code review.
+    def test_each_order_appears_once_per_solution(self, client):
+        """Each order should appear at most once per solution.
+
+        With separate solutions for CoW vs AMM:
+        - Solution 0 (CoW): A once, B once
+        - Solution 1 (AMM): A once (B not present, fully filled by CoW)
+
+        Order A can appear in multiple solutions (once per solution),
+        but never duplicated within a single solution.
         """
         order_a_uid = "0x" + "10" * 56
         order_b_uid = "0x" + "11" * 56
@@ -712,22 +741,33 @@ class TestPartialCowAmmComposition:
         response = client.post("/production/mainnet", json=auction)
         data = response.json()
 
-        assert len(data["solutions"]) == 1
-        trades = data["solutions"][0]["trades"]
+        # 2 solutions: CoW + AMM
+        assert len(data["solutions"]) == 2
 
-        # Count occurrences of each order UID
-        uid_counts = {}
-        for trade in trades:
-            uid = trade["order"]
-            uid_counts[uid] = uid_counts.get(uid, 0) + 1
+        # Check each solution: every order appears at most once
+        for i, solution in enumerate(data["solutions"]):
+            uid_counts = {}
+            for trade in solution["trades"]:
+                uid = trade["order"]
+                uid_counts[uid] = uid_counts.get(uid, 0) + 1
 
-        # Each order should appear exactly once
-        assert uid_counts.get(order_a_uid, 0) == 1, (
-            f"Order A appears {uid_counts.get(order_a_uid, 0)} times, expected 1"
-        )
-        assert uid_counts.get(order_b_uid, 0) == 1, (
-            f"Order B appears {uid_counts.get(order_b_uid, 0)} times, expected 1"
-        )
+            for uid, count in uid_counts.items():
+                assert count == 1, (
+                    f"Solution {i}: Order {uid[:18]}... appears {count} times, expected 1"
+                )
+
+        # Verify solution structure
+        # Solution 0: CoW match has both orders
+        cow_solution = data["solutions"][0]
+        cow_uids = {t["order"] for t in cow_solution["trades"]}
+        assert order_a_uid in cow_uids
+        assert order_b_uid in cow_uids
+
+        # Solution 1: AMM has only A (B was fully filled by CoW)
+        amm_solution = data["solutions"][1]
+        amm_uids = {t["order"] for t in amm_solution["trades"]}
+        assert order_a_uid in amm_uids
+        assert order_b_uid not in amm_uids
 
     def test_partial_cow_returned_when_amm_has_no_liquidity(self, client):
         """When there's no AMM liquidity, partial CoW solution is still returned.
@@ -845,6 +885,8 @@ class TestFillOrKillIntegration:
 
         When both orders are fill-or-kill and one would need partial fill,
         no CoW match occurs. Falls back to AMM if available.
+
+        Since these are independent AMM routes, they become separate solutions.
         """
         auction = {
             "id": "fok_no_partial",
@@ -877,14 +919,22 @@ class TestFillOrKillIntegration:
         assert response.status_code == 200
 
         data = response.json()
-        # Should have a solution (AMM routing for both)
-        assert len(data["solutions"]) == 1
+        # 2 separate solutions (independent AMM routes, no CoW match)
+        assert len(data["solutions"]) == 2
 
-        solution = data["solutions"][0]
-        # Both orders routed through AMM (no CoW match possible)
-        assert len(solution["trades"]) == 2
-        # Should have AMM interactions (at least 2, one per order)
-        assert len(solution["interactions"]) >= 1
+        # Each solution has 1 trade and 1 interaction
+        for solution in data["solutions"]:
+            assert len(solution["trades"]) == 1
+            assert len(solution["interactions"]) == 1
+            assert solution["gas"] > 0
+
+        # Verify both orders are routed
+        routed_orders = {
+            data["solutions"][0]["trades"][0]["order"],
+            data["solutions"][1]["trades"][0]["order"],
+        }
+        assert "0x" + "F3" * 56 in routed_orders
+        assert "0x" + "F4" * 56 in routed_orders
 
     def test_fill_or_kill_no_solution_when_no_amm(self, client):
         """Fill-or-kill orders with no perfect match and no AMM = no solution.
@@ -930,13 +980,17 @@ class TestFillOrKillIntegration:
         """Mixed partiallyFillable and fill-or-kill orders work correctly.
 
         A is partiallyFillable, B is fill-or-kill.
-        B gets fully filled via CoW, A gets partially filled via CoW + AMM remainder.
+        - Solution 0: CoW match (A partial 1 WETH, B full 3000 USDC)
+        - Solution 1: AMM route (A remainder 1 WETH)
         """
+        order_a_uid = "0x" + "F7" * 56
+        order_b_uid = "0x" + "F8" * 56
+
         auction = {
             "id": "mixed_partial_fok",
             "orders": [
                 {
-                    "uid": "0x" + "F7" * 56,
+                    "uid": order_a_uid,
                     "sellToken": WETH,
                     "buyToken": USDC,
                     "sellAmount": "2000000000000000000",  # 2 WETH
@@ -946,7 +1000,7 @@ class TestFillOrKillIntegration:
                     "partiallyFillable": True,  # A can be partially filled
                 },
                 {
-                    "uid": "0x" + "F8" * 56,
+                    "uid": order_b_uid,
                     "sellToken": USDC,
                     "buyToken": WETH,
                     "sellAmount": "3000000000",  # 3000 USDC
@@ -963,22 +1017,36 @@ class TestFillOrKillIntegration:
         assert response.status_code == 200
 
         data = response.json()
-        # Should have a solution
-        assert len(data["solutions"]) == 1
+        # 2 solutions: CoW match + AMM remainder
+        assert len(data["solutions"]) == 2
 
-        solution = data["solutions"][0]
-        # Both orders in solution
-        assert len(solution["trades"]) == 2
-        # Should have AMM interaction for A's remainder
-        assert len(solution["interactions"]) == 1
+        # Solution 0: CoW match
+        cow_solution = data["solutions"][0]
+        assert len(cow_solution["trades"]) == 2
+        assert len(cow_solution["interactions"]) == 0
+        assert cow_solution["gas"] == 0
 
-        # A should be fully executed (CoW + AMM)
-        trade_a = next(t for t in solution["trades"] if t["order"] == "0x" + "F7" * 56)
-        assert trade_a["executedAmount"] == "2000000000000000000"  # Full 2 WETH
+        cow_trade_a = next(t for t in cow_solution["trades"] if t["order"] == order_a_uid)
+        cow_trade_b = next(t for t in cow_solution["trades"] if t["order"] == order_b_uid)
+        # A partial fill via CoW
+        assert cow_trade_a["executedAmount"] == "1000000000000000000"  # 1 WETH
+        # B fully filled via CoW
+        assert cow_trade_b["executedAmount"] == "3000000000"  # Full 3000 USDC
 
-        # B should be fully executed (CoW only)
-        trade_b = next(t for t in solution["trades"] if t["order"] == "0x" + "F8" * 56)
-        assert trade_b["executedAmount"] == "3000000000"  # Full 3000 USDC
+        # Solution 1: AMM route for A's remainder
+        amm_solution = data["solutions"][1]
+        assert len(amm_solution["trades"]) == 1
+        assert amm_solution["trades"][0]["order"] == order_a_uid
+        assert len(amm_solution["interactions"]) == 1
+        assert amm_solution["gas"] > 0
+        # A remainder via AMM
+        assert amm_solution["trades"][0]["executedAmount"] == "1000000000000000000"
+
+        # Total for A = 2 WETH across both solutions
+        total_a = int(cow_trade_a["executedAmount"]) + int(
+            amm_solution["trades"][0]["executedAmount"]
+        )
+        assert total_a == 2000000000000000000
 
 
 class TestMultiOrderAmmRouting:
@@ -989,20 +1057,23 @@ class TestMultiOrderAmmRouting:
     """
 
     def test_two_remainder_orders_both_routed(self, client):
-        """Both remainder orders are routed when liquidity exists.
+        """Both orders are routed when liquidity exists.
 
         Scenario:
-        - Order A: sells 2 WETH, wants 4000 USDC (rate: 2000 USDC/WETH)
-        - Order B: sells 2 WETH, wants 4000 USDC (same direction, no CoW possible)
+        - Order A: sells 1 WETH, wants 2000 USDC
+        - Order B: sells 1 WETH, wants 2000 USDC (same direction, no CoW possible)
 
         Since both orders sell WETH for USDC (same direction), CoW won't match.
-        AMM should route both orders independently.
+        AMM routes them as independent solutions (one per order).
         """
+        order_a_uid = "0x" + "A1" * 56
+        order_b_uid = "0x" + "A2" * 56
+
         auction = {
             "id": "multi_order_same_direction",
             "orders": [
                 {
-                    "uid": "0x" + "A1" * 56,
+                    "uid": order_a_uid,
                     "sellToken": WETH,
                     "buyToken": USDC,
                     "sellAmount": "1000000000000000000",  # 1 WETH
@@ -1011,7 +1082,7 @@ class TestMultiOrderAmmRouting:
                     "class": "limit",
                 },
                 {
-                    "uid": "0x" + "A2" * 56,
+                    "uid": order_b_uid,
                     "sellToken": WETH,
                     "buyToken": USDC,
                     "sellAmount": "1000000000000000000",  # 1 WETH
@@ -1027,15 +1098,22 @@ class TestMultiOrderAmmRouting:
         assert response.status_code == 200
 
         data = response.json()
-        assert len(data["solutions"]) == 1
+        # 2 separate solutions (independent AMM routes)
+        assert len(data["solutions"]) == 2
 
-        solution = data["solutions"][0]
-        # Both orders should be filled
-        assert len(solution["trades"]) == 2
-        # Two AMM interactions (one per order)
-        assert len(solution["interactions"]) == 2
-        # Gas for both swaps
-        assert solution["gas"] > 0
+        # Each solution has 1 trade and 1 interaction
+        for solution in data["solutions"]:
+            assert len(solution["trades"]) == 1
+            assert len(solution["interactions"]) == 1
+            assert solution["gas"] > 0
+
+        # Verify both orders are routed
+        routed_orders = {
+            data["solutions"][0]["trades"][0]["order"],
+            data["solutions"][1]["trades"][0]["order"],
+        }
+        assert order_a_uid in routed_orders
+        assert order_b_uid in routed_orders
 
     def test_partial_success_one_order_fails(self, client):
         """When one order can't be routed, the other still succeeds.
@@ -1123,55 +1201,42 @@ class TestMultiOrderAmmRouting:
         # No solution possible
         assert len(data["solutions"]) == 0
 
-    def test_partial_cow_with_two_remainders_both_routed(self, client):
-        """Partial CoW creates two remainders, both routed by AMM.
+    def test_opposite_direction_orders_no_cow_both_amm_routed(self, client):
+        """Opposite-direction fill-or-kill orders route via AMM when CoW fails.
 
-        This is the key scenario that motivated the fix:
-        - Order A: sells 3 WETH, wants 6000 USDC
-        - Order B: sells 4000 USDC, wants 2 WETH
+        Scenario:
+        - Order A: sells 2 WETH for 4000 USDC (fill-or-kill)
+        - Order B: sells 3000 USDC for 1 WETH (fill-or-kill)
 
-        Partial CoW: A sells 2 WETH <-> B sells 4000 USDC
-        Remainders:
-        - A: 1 WETH wanting 2000 USDC
-        - B: none (fully filled)
-
-        Wait, B is fully filled in this scenario. Let me adjust...
-
-        Actually, for two remainders we need a sell-sell scenario where
-        neither order is fully filled by CoW.
+        A perfect CoW match isn't possible (amounts don't match exactly).
+        A partial match would need A to be partially filled, but A is fill-or-kill.
+        So both orders fall back to AMM routing as independent solutions.
         """
-        # Order A: sells 2 WETH, wants 3000 USDC (rate: 1500 USDC/WETH)
-        # Order B: sells 2000 USDC, wants 1 WETH (rate: 2000 USDC/WETH)
-        # Partial CoW: A sells 1 WETH, B sells 2000 USDC
-        # A remainder: 1 WETH wanting 1000 USDC
-        # B remainder: none (B fully filled - got 1 WETH for 2000 USDC)
-        #
-        # Hmm, to get two remainders, we need different amounts...
-        # Let's use: A wants 1.5 WETH worth, B wants 1.5 WETH worth
-        # but they're in opposite directions so CoW can only match the minimum
-        #
-        # Actually this is complex. Let me just test that the composition works
-        # by checking the end-to-end scenario.
+        order_a_uid = "0x" + "D1" * 56
+        order_b_uid = "0x" + "D2" * 56
+
         auction = {
             "id": "partial_cow_two_remainders",
             "orders": [
                 {
-                    "uid": "0x" + "D1" * 56,
+                    "uid": order_a_uid,
                     "sellToken": WETH,
                     "buyToken": USDC,
                     "sellAmount": "2000000000000000000",  # 2 WETH
                     "buyAmount": "4000000000",  # min 4000 USDC
                     "kind": "sell",
                     "class": "limit",
+                    # partiallyFillable defaults to false (fill-or-kill)
                 },
                 {
-                    "uid": "0x" + "D2" * 56,
+                    "uid": order_b_uid,
                     "sellToken": USDC,
                     "buyToken": WETH,
                     "sellAmount": "3000000000",  # 3000 USDC
                     "buyAmount": "1000000000000000000",  # wants 1 WETH
                     "kind": "sell",
                     "class": "limit",
+                    # partiallyFillable defaults to false (fill-or-kill)
                 },
             ],
             "liquidity": [make_weth_usdc_pool_liquidity()],
@@ -1181,23 +1246,30 @@ class TestMultiOrderAmmRouting:
         assert response.status_code == 200
 
         data = response.json()
-        assert len(data["solutions"]) == 1
+        # 2 separate solutions (independent AMM routes, CoW rejected due to fill-or-kill)
+        assert len(data["solutions"]) == 2
 
-        solution = data["solutions"][0]
-        # Both orders should have trades (CoW + AMM fills)
-        assert len(solution["trades"]) == 2
+        # Each solution has 1 trade and 1 interaction
+        for solution in data["solutions"]:
+            assert len(solution["trades"]) == 1
+            assert len(solution["interactions"]) == 1
+            assert solution["gas"] > 0
 
-        # Should have AMM interaction for A's remainder
-        assert len(solution["interactions"]) >= 1
+        # Verify both orders are routed
+        routed_orders = {
+            data["solutions"][0]["trades"][0]["order"],
+            data["solutions"][1]["trades"][0]["order"],
+        }
+        assert order_a_uid in routed_orders
+        assert order_b_uid in routed_orders
 
-        # Verify both orders are fully filled
-        trade_a = next(t for t in solution["trades"] if t["order"] == "0x" + "D1" * 56)
-        trade_b = next(t for t in solution["trades"] if t["order"] == "0x" + "D2" * 56)
-
-        # A executed full 2 WETH (1 from CoW + 1 from AMM)
-        assert int(trade_a["executedAmount"]) == 2000000000000000000
-        # B executed full 3000 USDC
-        assert int(trade_b["executedAmount"]) == 3000000000
+        # Verify full fills
+        for solution in data["solutions"]:
+            trade = solution["trades"][0]
+            if trade["order"] == order_a_uid:
+                assert trade["executedAmount"] == "2000000000000000000"  # 2 WETH
+            else:
+                assert trade["executedAmount"] == "3000000000"  # 3000 USDC
 
 
 class TestPoolReserveUpdates:
@@ -1216,17 +1288,17 @@ class TestPoolReserveUpdates:
         Without reserve updates: Both orders would compute ~2,497,500 USDC each.
         With reserve updates: Second order gets slightly less due to price impact.
 
-        This test verifies that both orders are successfully routed through the
-        AMM. The reserve update mechanism is tested more explicitly in
-        test_reserve_updates_affect_output_amount which uses a smaller pool
-        to make price impact differences observable.
+        Since these are independent AMM routes, they become separate solutions.
+        The different output amounts in each solution demonstrate reserve updates.
         """
-        # Two identical orders swapping 1000 WETH each
+        order_e1_uid = "0x" + "E1" * 56
+        order_e2_uid = "0x" + "E2" * 56
+
         auction = {
             "id": "reserve_update_test",
             "orders": [
                 {
-                    "uid": "0x" + "E1" * 56,
+                    "uid": order_e1_uid,
                     "sellToken": WETH,
                     "buyToken": USDC,
                     "sellAmount": "1000000000000000000000",  # 1000 WETH
@@ -1235,7 +1307,7 @@ class TestPoolReserveUpdates:
                     "class": "limit",
                 },
                 {
-                    "uid": "0x" + "E2" * 56,
+                    "uid": order_e2_uid,
                     "sellToken": WETH,
                     "buyToken": USDC,
                     "sellAmount": "1000000000000000000000",  # 1000 WETH
@@ -1251,28 +1323,48 @@ class TestPoolReserveUpdates:
         assert response.status_code == 200
 
         data = response.json()
-        assert len(data["solutions"]) == 1
+        # 2 separate solutions (independent AMM routes)
+        assert len(data["solutions"]) == 2
 
-        solution = data["solutions"][0]
-        # Both orders should be routed
-        assert len(solution["trades"]) == 2
-        # Both should have AMM interactions
-        assert len(solution["interactions"]) == 2
+        # Each solution has 1 trade and 1 interaction
+        for solution in data["solutions"]:
+            assert len(solution["trades"]) == 1
+            assert len(solution["interactions"]) == 1
+            assert solution["gas"] > 0
 
-        # The clearing prices reflect the combined execution
-        assert WETH.lower() in solution["prices"]
-        assert USDC.lower() in solution["prices"]
+        # Verify both orders are routed
+        routed_orders = {
+            data["solutions"][0]["trades"][0]["order"],
+            data["solutions"][1]["trades"][0]["order"],
+        }
+        assert order_e1_uid in routed_orders
+        assert order_e2_uid in routed_orders
 
         # Verify both orders executed their full amounts
-        trade_e1 = next(t for t in solution["trades"] if t["order"] == "0x" + "E1" * 56)
-        trade_e2 = next(t for t in solution["trades"] if t["order"] == "0x" + "E2" * 56)
-        assert int(trade_e1["executedAmount"]) == 1000000000000000000000
-        assert int(trade_e2["executedAmount"]) == 1000000000000000000000
+        for solution in data["solutions"]:
+            assert int(solution["trades"][0]["executedAmount"]) == 1000000000000000000000
+
+        # The different output amounts demonstrate reserve updates working
+        # First order gets more USDC than second due to price impact
+        output_amounts = []
+        for solution in data["solutions"]:
+            interaction = solution["interactions"][0]
+            output_amounts.append(int(interaction["outputAmount"]))
+        # Second order should get less (or same if order undefined) due to reserves being depleted
+        # Just verify both outputs are reasonable
+        for output in output_amounts:
+            assert output > 1000000000  # At least 1000 USDC
 
     def test_reserve_updates_affect_output_amount(self, client):
         """Verify that reserve updates cause different outputs for identical orders.
 
         This test uses a smaller pool to make the price impact more visible.
+        With a 4 WETH / 10,000 USDC pool:
+        - First 1 WETH swap: gets ~1995 USDC, pool becomes 5 WETH / ~8005 USDC
+        - Second 1 WETH swap: gets ~1331 USDC (less due to depleted reserves)
+
+        Since these are independent AMM routes, they become separate solutions.
+        The different output amounts prove reserve updates are working.
         """
         # Create a smaller pool to make price impact more noticeable
         small_pool_liquidity = {
@@ -1288,12 +1380,15 @@ class TestPoolReserveUpdates:
             "fee": "0.003",
         }
 
+        order_f1_uid = "0x" + "F1" * 56
+        order_f2_uid = "0x" + "F2" * 56
+
         # Two orders each swapping 1 WETH
         auction = {
             "id": "small_pool_reserve_test",
             "orders": [
                 {
-                    "uid": "0x" + "F1" * 56,
+                    "uid": order_f1_uid,
                     "sellToken": WETH,
                     "buyToken": USDC,
                     "sellAmount": "1000000000000000000",  # 1 WETH
@@ -1302,7 +1397,7 @@ class TestPoolReserveUpdates:
                     "class": "limit",
                 },
                 {
-                    "uid": "0x" + "F2" * 56,
+                    "uid": order_f2_uid,
                     "sellToken": WETH,
                     "buyToken": USDC,
                     "sellAmount": "1000000000000000000",  # 1 WETH
@@ -1318,16 +1413,38 @@ class TestPoolReserveUpdates:
         assert response.status_code == 200
 
         data = response.json()
-        assert len(data["solutions"]) == 1
+        # 2 separate solutions (independent AMM routes)
+        assert len(data["solutions"]) == 2
 
-        solution = data["solutions"][0]
-        # Both orders should be filled
-        assert len(solution["trades"]) == 2
+        # Each solution has 1 trade and 1 interaction
+        for solution in data["solutions"]:
+            assert len(solution["trades"]) == 1
+            assert len(solution["interactions"]) == 1
 
-        # With a 4 WETH / 10,000 USDC pool (rate ~2500 USDC/WETH):
-        # First 1 WETH swap: gets ~1994 USDC, pool becomes 5 WETH / 8006 USDC
-        # Second 1 WETH swap: gets ~1334 USDC (much less due to changed reserves)
-        #
-        # The test passes if both trades are filled - this proves the second
-        # order used updated reserves (with stale reserves, both would compute
-        # the same ~1994 USDC output, but the on-chain execution would differ)
+        # Verify both orders are routed
+        routed_orders = {
+            data["solutions"][0]["trades"][0]["order"],
+            data["solutions"][1]["trades"][0]["order"],
+        }
+        assert order_f1_uid in routed_orders
+        assert order_f2_uid in routed_orders
+
+        # Get output amounts and verify they're different (reserve updates working)
+        output_amounts = []
+        for solution in data["solutions"]:
+            interaction = solution["interactions"][0]
+            output_amounts.append(int(interaction["outputAmount"]))
+
+        # Both outputs should be reasonable (> 1 USDC = 1e6)
+        assert all(out > 1000000 for out in output_amounts)
+
+        # The outputs should be different due to reserve updates
+        # First gets more (~1995 USDC), second gets less (~1331 USDC)
+        assert output_amounts[0] != output_amounts[1], (
+            f"Outputs should differ due to reserve updates: {output_amounts}"
+        )
+
+        # First order gets more USDC than second
+        assert output_amounts[0] > output_amounts[1], (
+            f"First order should get more: {output_amounts[0]} vs {output_amounts[1]}"
+        )

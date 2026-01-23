@@ -20,7 +20,7 @@ This directory tracks progress across AI-assisted development sessions.
 - **Phase 3.2:** Complete (Balancer weighted + stable pools, SafeInt, benchmarks)
 - **Slice 3.5:** Complete (0x limit order integration)
 - **Architecture:** Refactored (handler pattern, V3 split, registry)
-- **Tests:** 702 passing, 14 skipped
+- **Tests:** 749 passing, 14 skipped
 - **Liquidity:** V2, V3, Balancer weighted, Balancer stable, 0x limit orders
 - **Parity:** Complete liquidity parity with Rust baseline solver
 - **Next:** Curve pools or multi-order optimization
@@ -71,6 +71,7 @@ Individual session logs are preserved in the `archive/` directory for reference.
 | [38](archive/session-38.md) | 2026-01-22 | 0x Limit Order Integration |
 | [39](archive/session-39.md) | 2026-01-22 | Limit Order Benchmark Verification |
 | [40](archive/session-40.md) | 2026-01-23 | V2 Gas Estimate Parity and Price Estimation |
+| [41](archive/session-41.md) | 2026-01-23 | Solver Fee Feature and Code Review Fixes |
 
 ## Session Template
 

@@ -128,8 +128,15 @@ class UniswapV2Handler(BaseHandler):
                 error=f"Required input {swap_result.amount_in} exceeds maximum {max_sell_amount}",
             )
 
+        # For buy orders: use requested buy_amount for trade/prices,
+        # actual forward-simulated output for interaction
         return self._build_success_result(
-            order, pool, swap_result.amount_in, buy_amount, POOL_SWAP_GAS_COST
+            order,
+            pool,
+            swap_result.amount_in,
+            buy_amount,
+            POOL_SWAP_GAS_COST,
+            actual_amount_out=swap_result.amount_out,
         )
 
     def _try_partial_sell_order(
@@ -290,12 +297,15 @@ class UniswapV2Handler(BaseHandler):
             amount_in=swap_result.amount_in,
         )
 
-        return self._partial_fill_result(
+        # For buy orders: use requested max_output for trade/prices,
+        # actual forward-simulated output for interaction
+        return self._build_success_result(
             order,
             pool,
             swap_result.amount_in,
             max_output,
-            success=True,
+            POOL_SWAP_GAS_COST,
+            actual_amount_out=swap_result.amount_out,
         )
 
     def _partial_fill_result(

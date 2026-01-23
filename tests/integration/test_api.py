@@ -283,7 +283,9 @@ class TestDependencyInjection:
             assert call["amount_in"] == 1000000000000000000
 
         # Verify mock pool finder was called
-        assert len(mock_pool_finder.calls) == 1
+        # Called twice: once for CoW strategy (checking for potential matches),
+        # once for AMM routing
+        assert len(mock_pool_finder.calls) == 2
 
         data = response.json()
         # Should have a solution since mock AMM returns realistic values

@@ -175,6 +175,40 @@ The Rust "baseline" solver from [cowprotocol/services](https://github.com/cowpro
 - ❌ Does NOT support CoW matching
 - ❌ Does NOT optimize across multiple orders
 
+### Solution Structure: One Solution Per Order vs Combined Solutions
+
+**IMPORTANT:** This section documents a key architectural decision for parity with Rust.
+
+The CoW Protocol API allows two valid approaches for multi-order auctions:
+
+1. **Separate solutions (Rust approach):** One solution per order
+   - Each order is routed independently
+   - Returns `[Solution(trades=[trade1]), Solution(trades=[trade2]), ...]`
+   - Each solution has its own clearing prices
+   - Orders compete independently in the Fair Combinatorial Auction (CIP-67)
+
+2. **Combined solution:** One solution with multiple trades
+   - All orders combined into a single solution
+   - Returns `[Solution(trades=[trade1, trade2, ...])]`
+   - Trades share uniform clearing prices (required by protocol)
+   - Can capture cross-order efficiencies (CoW matches, gas sharing)
+
+**Both approaches are valid per the API spec**, but they have different implications:
+
+- The [Fair Combinatorial Auction (CIP-67)](https://forum.cow.fi/t/cip-67-moving-from-batch-auction-to-the-fair-combinatorial-auction/2967)
+  first scores individual directed token pairs, then considers batched solutions
+- Combined solutions MUST maintain [Uniform Directional Clearing Prices](https://docs.cow.fi/cow-protocol/reference/core/auctions/competition-rules)
+  for all trades on the same token pair and direction
+- Separate solutions allow different prices for independent orders
+
+**For Rust parity:** The Python solver uses separate solutions (one per order) to match
+Rust's baseline solver behavior exactly. This is implemented in `Solver.solve()` which
+creates independent solutions for each order. Combined solutions are only used when
+there's a cross-order efficiency (e.g., CoW match between orders).
+
+**Reference:** See `cow-services/crates/solvers/src/domain/solver.rs` lines 158-275 where
+Rust iterates over each order and creates a separate solution for each.
+
 See `BENCHMARKS.md` for details. Benchmarks are split into:
 - `benchmark/` - Shared functionality (Python vs Rust comparison)
 - `benchmark_python_only/` - Python-only features (CoW matching)
@@ -182,8 +216,8 @@ See `BENCHMARKS.md` for details. Benchmarks are split into:
 ### What's Next (Phase 4: Unified Optimization)
 See `PLAN.md` for full details.
 
-> **Phase 3 Complete:** All liquidity sources integrated (V2, V3, Balancer weighted, Balancer stable).
-> Python solver matches Rust baseline exactly on all benchmark fixtures.
+> **Phase 3 Status:** 16 of 18 Rust parity tests pass (89%).
+> Remaining issues: reference price estimation (0.0004% diff), partial fill algorithm (30% diff).
 > Next: Multi-order CoW detection and unified optimization.
 
 **Slice 3.1: UniswapV3 Integration** ✅ COMPLETE
@@ -195,7 +229,13 @@ See `PLAN.md` for full details.
 - [x] Weighted pool math (Balancer)
 - [x] Stable pool math (Curve/Balancer)
 - [x] Multi-source routing (V2, V3, weighted, stable)
-- [x] Exact match with Rust baseline on all Balancer benchmarks
+- [x] Multi-order solution structure (separate solutions per order for Rust parity)
+
+**Remaining Rust Parity Issues:**
+1. `limit_order_quoting_sell_order`: 0.0004% price difference - Rust uses buy order routing
+   for price estimation, Python uses sell order simulation. Minor rounding difference.
+2. `partial_fill`: 30% difference - Python calculates optimal partial fill, Rust uses
+   binary search halving (50%, 25%, 12.5%, etc.). Different algorithms, both valid.
 
 ## Key Files to Know
 

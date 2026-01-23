@@ -1,0 +1,91 @@
+{
+  "description": "Rust baseline solver test fixtures",
+  "source": "/Users/telmo/project/cow-services/crates/solvers/src/tests/cases",
+  "fixtures": [
+    {
+      "file": "bal_liquidity.rs",
+      "test": "weighted",
+      "input": "bal_liquidity_weighted.json"
+    },
+    {
+      "file": "bal_liquidity.rs",
+      "test": "weighted_v3plus",
+      "input": "bal_liquidity_weighted_v3plus.json"
+    },
+    {
+      "file": "bal_liquidity.rs",
+      "test": "stable",
+      "input": "bal_liquidity_stable.json"
+    },
+    {
+      "file": "bal_liquidity.rs",
+      "test": "composable_stable_v4",
+      "input": "bal_liquidity_composable_stable_v4.json"
+    },
+    {
+      "file": "buy_order_rounding.rs",
+      "test": "uniswap",
+      "input": "buy_order_rounding_uniswap.json"
+    },
+    {
+      "file": "buy_order_rounding.rs",
+      "test": "balancer_weighted",
+      "input": "buy_order_rounding_balancer_weighted.json"
+    },
+    {
+      "file": "buy_order_rounding.rs",
+      "test": "balancer_weighted_v3plus",
+      "input": "buy_order_rounding_balancer_weighted_v3plus.json"
+    },
+    {
+      "file": "buy_order_rounding.rs",
+      "test": "distant_convergence",
+      "input": "buy_order_rounding_distant_convergence.json"
+    },
+    {
+      "file": "buy_order_rounding.rs",
+      "test": "same_path",
+      "input": "buy_order_rounding_same_path.json"
+    },
+    {
+      "file": "buy_order_rounding.rs",
+      "test": "balancer_stable",
+      "input": "buy_order_rounding_balancer_stable.json"
+    },
+    {
+      "file": "direct_swap.rs",
+      "test": "test",
+      "input": "direct_swap.json"
+    },
+    {
+      "file": "internalization.rs",
+      "test": "trusted_token",
+      "input": "internalization_trusted_token.json"
+    },
+    {
+      "file": "internalization.rs",
+      "test": "untrusted_sell_token",
+      "input": "internalization_untrusted_sell_token.json"
+    },
+    {
+      "file": "internalization.rs",
+      "test": "insufficient_balance",
+      "input": "internalization_insufficient_balance.json"
+    },
+    {
+      "file": "limit_order_quoting.rs",
+      "test": "sell_order",
+      "input": "limit_order_quoting_sell_order.json"
+    },
+    {
+      "file": "limit_order_quoting.rs",
+      "test": "buy_order",
+      "input": "limit_order_quoting_buy_order.json"
+    },
+    {
+      "file": "partial_fill.rs",
+      "test": "test",
+      "input": "partial_fill.json"
+    }
+  ]
+}

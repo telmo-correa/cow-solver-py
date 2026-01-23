@@ -1,0 +1,64 @@
+{
+  "id": "1",
+  "tokens": {
+    "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2": {
+      "decimals": 18,
+      "symbol": "WETH",
+      "referencePrice": "1000000000000000000",
+      "availableBalance": "1412206645170290748",
+      "trusted": true
+    },
+    "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48": {
+      "decimals": 6,
+      "symbol": "USDC",
+      "referencePrice": "543222446200924874026413848",
+      "availableBalance": "556450389",
+      "trusted": true
+    }
+  },
+  "orders": [
+    {
+      "uid": "0x2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a",
+      "sellToken": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+      "buyToken": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+      "sellAmount": "2000000000",
+      "fullSellAmount": "2000000000",
+      "buyAmount": "1000000000000000000",
+      "fullBuyAmount": "1000000000000000000",
+      "feePolicies": [],
+      "validTo": 0,
+      "kind": "buy",
+      "owner": "0x5b1e2c2762667331bc91648052f646d1b0d35984",
+      "partiallyFillable": false,
+      "preInteractions": [],
+      "postInteractions": [],
+      "sellTokenSource": "erc20",
+      "buyTokenDestination": "erc20",
+      "class": "market",
+      "appData": "0x6000000000000000000000000000000000000000000000000000000000000007",
+      "signingScheme": "presign",
+      "signature": "0x"
+    }
+  ],
+  "liquidity": [
+    {
+      "kind": "constantProduct",
+      "tokens": {
+        "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48": {
+          "balance": "30493445841295"
+        },
+        "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2": {
+          "balance": "16551311935742077745684"
+        }
+      },
+      "fee": "0.003",
+      "id": "0",
+      "address": "0xB4e16d0168e52d35CaCD2c6185b44281Ec28C9Dc",
+      "router": "0x7a250d5630b4cf539739df2c5dacb4c659f2488d",
+      "gasEstimate": "110000"
+    }
+  ],
+  "effectiveGasPrice": "15000000000",
+  "deadline": "2106-01-01T00:00:00.000Z",
+  "surplusCapturingJitOrderOwners": []
+}

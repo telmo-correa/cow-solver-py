@@ -1,0 +1,60 @@
+{
+  "solutions": [
+    {
+      "id": 0,
+      "prices": {
+        "0x6b175474e89094c44da98b954eedeac495271d0f": "9999475",
+        "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48": "10000000000000000000"
+      },
+      "trades": [
+        {
+          "kind": "fulfillment",
+          "order": "0x0101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101",
+          "executedAmount": "10000000000000000000"
+        }
+      ],
+      "preInteractions": [],
+      "interactions": [
+        {
+          "kind": "liquidity",
+          "internalize": false,
+          "id": "0",
+          "inputToken": "0x6b175474e89094c44da98b954eedeac495271d0f",
+          "outputToken": "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+          "inputAmount": "10000000000000000000",
+          "outputAmount": "9999475"
+        }
+      ],
+      "postInteractions": [],
+      "gas": 289911
+    },
+    {
+      "id": 1,
+      "prices": {
+        "0x6b175474e89094c44da98b954eedeac495271d0f": "10000000",
+        "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48": "10000524328839166557"
+      },
+      "trades": [
+        {
+          "kind": "fulfillment",
+          "order": "0x0202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202",
+          "executedAmount": "10000000"
+        }
+      ],
+      "preInteractions": [],
+      "interactions": [
+        {
+          "kind": "liquidity",
+          "internalize": false,
+          "id": "0",
+          "inputToken": "0x6b175474e89094c44da98b954eedeac495271d0f",
+          "outputToken": "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+          "inputAmount": "10000524328839166557",
+          "outputAmount": "10000000"
+        }
+      ],
+      "postInteractions": [],
+      "gas": 289911
+    }
+  ]
+}

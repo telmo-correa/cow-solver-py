@@ -12,11 +12,23 @@ from solver.amm.balancer import (
     BalancerWeightedAMM,
     BalancerWeightedPool,
 )
+from solver.constants import (
+    BALANCER_STABLE_SWAP_GAS_COST,
+    BALANCER_WEIGHTED_SWAP_GAS_COST,
+)
 from solver.models.auction import Order
 from solver.routing.handlers.base import BaseHandler
 from solver.routing.types import RoutingResult
 
 logger = structlog.get_logger()
+
+# TODO: Revert to using pool.gas_estimate instead of hardcoded constants.
+# The Rust baseline solver ignores the gasEstimate from the auction JSON and uses
+# hardcoded constants (WEIGHTED=100000, STABLE=183520). This is likely a bug since
+# the driver provides per-pool gas estimates for a reason. For now we match Rust's
+# behavior for parity testing. Once parity is achieved, revert to pool.gas_estimate
+# and update test fixtures to expect the correct (non-hardcoded) gas values.
+# See: cow-services/crates/shared/src/sources/balancer_v2/swap/mod.rs:26-28
 
 
 class BalancerHandler(BaseHandler):
@@ -112,7 +124,7 @@ class BalancerHandler(BaseHandler):
                 )
 
             return self._build_success_result(
-                order, pool, sell_amount, result.amount_out, pool.gas_estimate
+                order, pool, sell_amount, result.amount_out, BALANCER_WEIGHTED_SWAP_GAS_COST
             )
         else:
             result = amm.simulate_swap_exact_output(
@@ -135,8 +147,15 @@ class BalancerHandler(BaseHandler):
                     error=f"Required input {result.amount_in} exceeds maximum {sell_amount}",
                 )
 
+            # For buy orders: use requested buy_amount for trade/prices,
+            # actual forward-simulated output for interaction
             return self._build_success_result(
-                order, pool, result.amount_in, buy_amount, pool.gas_estimate
+                order,
+                pool,
+                result.amount_in,
+                buy_amount,
+                BALANCER_WEIGHTED_SWAP_GAS_COST,
+                actual_amount_out=result.amount_out,
             )
 
     @_route_pool.register(BalancerStablePool)
@@ -174,7 +193,7 @@ class BalancerHandler(BaseHandler):
                 )
 
             return self._build_success_result(
-                order, pool, sell_amount, result.amount_out, pool.gas_estimate
+                order, pool, sell_amount, result.amount_out, BALANCER_STABLE_SWAP_GAS_COST
             )
         else:
             result = amm.simulate_swap_exact_output(
@@ -197,8 +216,15 @@ class BalancerHandler(BaseHandler):
                     error=f"Required input {result.amount_in} exceeds maximum {sell_amount}",
                 )
 
+            # For buy orders: use requested buy_amount for trade/prices,
+            # actual forward-simulated output for interaction
             return self._build_success_result(
-                order, pool, result.amount_in, buy_amount, pool.gas_estimate
+                order,
+                pool,
+                result.amount_in,
+                buy_amount,
+                BALANCER_STABLE_SWAP_GAS_COST,
+                actual_amount_out=result.amount_out,
             )
 
     def _try_partial_weighted(
@@ -305,6 +331,7 @@ class BalancerHandler(BaseHandler):
             )
 
         # Verify the limit price constraint
+        actual_out: int | None = None  # For buy orders, tracks actual forward-simulated output
         if is_sell:
             # Sell: output/input >= buy_amount/sell_amount
             limit_satisfied = result.amount_out * sell_amount >= buy_amount * max_fill
@@ -313,8 +340,12 @@ class BalancerHandler(BaseHandler):
             fill_ratio = f"{max_fill * 100 // sell_amount}%"
         else:
             # Buy: input/output <= sell_amount/buy_amount
-            limit_satisfied = result.amount_in * buy_amount <= sell_amount * max_fill
+            # Use result.amount_out for limit check (actual forward-simulated output)
+            limit_satisfied = result.amount_in * buy_amount <= sell_amount * result.amount_out
+            # For trade/prices: use requested max_fill
+            # For interaction: use actual result.amount_out
             final_in, final_out = result.amount_in, max_fill
+            actual_out = result.amount_out
             log_key = "partial_buy"
             fill_ratio = f"{max_fill * 100 // buy_amount}%"
 
@@ -342,7 +373,19 @@ class BalancerHandler(BaseHandler):
             fill_ratio=fill_ratio,
         )
 
-        return self._build_success_result(order, pool, final_in, final_out, pool.gas_estimate)
+        gas_cost = (
+            BALANCER_WEIGHTED_SWAP_GAS_COST
+            if pool_type == "weighted"
+            else BALANCER_STABLE_SWAP_GAS_COST
+        )
+        return self._build_success_result(
+            order,
+            pool,
+            final_in,
+            final_out,
+            gas_cost,
+            actual_amount_out=actual_out,
+        )
 
 
 __all__ = ["BalancerHandler"]

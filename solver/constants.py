@@ -35,6 +35,12 @@ def _validate_token_address(name: str, address: str) -> str:
 # Per-swap gas cost for UniswapV2-style pools
 POOL_SWAP_GAS_COST = 60_000
 
+# Balancer V2 gas costs (from shared/src/sources/balancer_v2/swap/mod.rs)
+# Rust ignores fixture gasEstimate and uses these hardcoded values
+BALANCER_WEIGHTED_SWAP_GAS_COST = 100_000
+# See https://dune.xyz/queries/219641 for cost of pure stable swaps
+BALANCER_STABLE_SWAP_GAS_COST = 183_520
+
 # Gas cost for 0x limit order fills (from Dune analytics)
 # Source: https://dune.com/queries/639669
 GAS_PER_ZEROEX_ORDER = 66_358

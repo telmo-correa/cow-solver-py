@@ -121,9 +121,23 @@ class UniswapV3AMM:
             )
             return None
 
+        # Forward verification: compute actual output from selling amount_in
+        # The quoter gives accurate results, but we do forward verification
+        # to return the actual output (which may be >= requested due to rounding)
+        actual_output = self.quoter.quote_exact_input(
+            token_in=token_in,
+            token_out=token_out,
+            fee=pool.fee,
+            amount_in=amount_in,
+        )
+
+        # If forward quote fails, fall back to requested output
+        if actual_output is None:
+            actual_output = amount_out
+
         return SwapResult(
             amount_in=amount_in,
-            amount_out=amount_out,
+            amount_out=actual_output,  # Use actual forward-simulated output
             pool_address=pool.address,
             token_in=normalize_address(token_in),
             token_out=normalize_address(token_out),

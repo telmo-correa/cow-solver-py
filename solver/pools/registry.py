@@ -368,6 +368,73 @@ class PoolRegistry:
 
         return graph
 
+    def get_all_candidate_paths(
+        self,
+        token_in: str,
+        token_out: str,
+        max_hops: int = 2,
+    ) -> list[list[str]]:
+        """Generate all candidate paths from token_in to token_out.
+
+        Similar to Rust's baseline solver path_candidates function.
+        Generates all possible paths including:
+        - Direct path: [token_in, token_out]
+        - 1-hop paths: [token_in, intermediary, token_out]
+        - 2-hop paths: [token_in, int1, int2, token_out] (if max_hops >= 2)
+
+        Only includes paths where pools actually exist for each hop.
+
+        Args:
+            token_in: Starting token address
+            token_out: Target token address
+            max_hops: Maximum number of swaps allowed (default 2)
+
+        Returns:
+            List of paths, where each path is a list of token addresses.
+            Empty list if no paths found.
+        """
+        token_in_norm = normalize_address(token_in)
+        token_out_norm = normalize_address(token_out)
+
+        if token_in_norm == token_out_norm:
+            return []
+
+        # Use cached graph or rebuild
+        if self._graph is None:
+            self._graph = self._build_graph()
+        graph = self._graph
+
+        if token_in_norm not in graph or token_out_norm not in graph:
+            return []
+
+        candidates: list[list[str]] = []
+
+        # Use BFS to find ALL paths up to max_hops
+        # Each queue entry is (path_so_far, visited_set)
+        queue: deque[tuple[list[str], set[str]]] = deque()
+        queue.append(([token_in_norm], {token_in_norm}))
+
+        while queue:
+            path, visited = queue.popleft()
+
+            # Check if we've exceeded max hops
+            # path has len nodes, so len-1 hops. We want at most max_hops.
+            if len(path) > max_hops + 1:
+                continue
+
+            current = path[-1]
+
+            for neighbor in graph.get(current, set()):
+                if neighbor == token_out_norm:
+                    # Found a valid path to destination
+                    candidates.append(path + [neighbor])
+                elif neighbor not in visited and len(path) < max_hops + 1:
+                    # Continue exploring through this neighbor
+                    new_visited = visited | {neighbor}
+                    queue.append((path + [neighbor], new_visited))
+
+        return candidates
+
     def find_path(
         self,
         token_in: str,

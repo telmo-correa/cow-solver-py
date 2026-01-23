@@ -207,8 +207,12 @@ class PoolBasedPriceEstimator:
     ) -> int | None:
         """Estimate price by routing through pools to native token.
 
-        Simulates a swap of 1 token (1e18 wei) to native token.
-        The output amount is the reference price.
+        Matches Rust baseline behavior exactly:
+        1. Create a BUY order for `native_token_price_estimation_amount` (1e18) of native
+        2. Route through pools to find required input amount
+        3. Price = native_token_price_estimation_amount / input_amount * 1e18
+
+        See cow-services/crates/solvers/src/domain/solver.rs:312-338 for Rust impl.
 
         Args:
             token: Token to price
@@ -245,22 +249,36 @@ class PoolBasedPriceEstimator:
         except ValueError:
             return None
 
-        # Simulate swap: how much native do we get for 1 token (1e18 wei)?
-        test_amount = 10**18  # 1 token
-        output = self._simulate_path_output(pools, path, test_amount, registry)
-        if output is None or output == 0:
-            return None
+        # Rust approach: simulate a BUY order for 1e18 native token
+        # to find the required input amount of the sell token.
+        # See cow-services/crates/solvers/src/domain/solver.rs:312-338
+        native_amount = 10**18  # Amount of native token to buy
 
-        # Price = output amount (already per 1e18 input)
-        # Reference price format: price in wei to buy 1e18 of the token
-        price = output
+        # Simulate exact output swap: how much token do we need to get 1e18 native?
+        input_amount = self._simulate_path_exact_output(pools, path, native_amount, registry)
+        if input_amount is None or input_amount == 0:
+            # Fallback to forward simulation if exact output fails.
+            # This uses a different formula and may produce different prices.
+            logger.warning(
+                "price_estimation_exact_output_failed_using_forward_fallback",
+                token=token[-8:],
+                native=native_token[-8:],
+            )
+            output = self._simulate_path_output(pools, path, 10**18, registry)
+            if output is None or output == 0:
+                return None
+            price = output
+        else:
+            # Price = native_amount / input_amount * 1e18
+            # This matches Rust: f64(native_amount) / f64(input_amount) then * 1e18
+            price = native_amount * 10**18 // input_amount
 
         logger.debug(
             "price_estimation_via_pools",
             token=token[-8:],
             native=native_token[-8:],
-            test_amount=test_amount,
-            output=output,
+            native_amount=native_amount,
+            input_amount=input_amount if input_amount else "forward_fallback",
             estimated_price=price,
         )
 
@@ -307,6 +325,64 @@ class PoolBasedPriceEstimator:
             if output is None or output == 0:
                 return None
             current_amount = output
+
+        return current_amount
+
+    def _simulate_path_exact_output(
+        self,
+        pools: list[AnyPool],
+        path: list[str],
+        amount_out: int,
+        registry: PoolRegistry,
+    ) -> int | None:
+        """Simulate exact output swap through path and return required input amount.
+
+        Works backwards through the path to calculate the required input for
+        a desired output amount. This matches Rust's buy order routing.
+
+        Args:
+            pools: List of pools in the path
+            path: Token addresses in path order
+            amount_out: Desired output amount
+            registry: Pool registry for the multihop router
+
+        Returns:
+            Required input amount, or None if simulation fails
+        """
+        if self._router is None:
+            return None
+
+        # Use the router's multihop capability
+        from solver.routing.multihop import MultihopRouter
+
+        # Create a minimal multihop router for simulation
+        multihop = MultihopRouter(
+            v2_amm=self._router.amm,
+            v3_amm=self._router.v3_amm,
+            weighted_amm=self._router.weighted_amm,
+            stable_amm=self._router.stable_amm,
+            registry=registry,
+            handler_registry=self._router._handler_registry,
+        )
+
+        # Work backwards through path to find required input
+        # Start with desired output and calculate required input at each step
+        current_amount = amount_out
+        for i in range(len(pools) - 1, -1, -1):
+            pool = pools[i]
+            token_in = path[i]
+            token_out = path[i + 1]
+
+            # Use exact output simulation
+            result = multihop._simulate_hop_exact_output_legacy(
+                pool, token_in, token_out, current_amount
+            )
+            if result is None:
+                return None
+            amount_in, _gas = result
+            if amount_in == 0:
+                return None
+            current_amount = amount_in
 
         return current_amount
 
