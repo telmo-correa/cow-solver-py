@@ -5,14 +5,14 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from solver.models.auction import Order
-from solver.models.types import normalize_address
-from solver.routing.types import HopResult, RoutingResult
+from solver.routing.handlers.base import BaseHandler
+from solver.routing.types import RoutingResult
 
 if TYPE_CHECKING:
     from solver.amm.uniswap_v3 import UniswapV3AMM, UniswapV3Pool
 
 
-class UniswapV3Handler:
+class UniswapV3Handler(BaseHandler):
     """Handler for UniswapV3 pool routing.
 
     Uses the V3 quoter to simulate swaps. V3 pools require on-chain quotes
@@ -53,17 +53,6 @@ class UniswapV3Handler:
             return self._route_sell_order(order, pool, sell_amount, buy_amount)
         return self._route_buy_order(order, pool, sell_amount, buy_amount)
 
-    def _error_result(self, order: Order, error: str) -> RoutingResult:
-        """Create a failed routing result."""
-        return RoutingResult(
-            order=order,
-            amount_in=0,
-            amount_out=0,
-            pool=None,
-            success=False,
-            error=error,
-        )
-
     def _route_sell_order(
         self,
         order: Order,
@@ -89,23 +78,8 @@ class UniswapV3Handler:
                 error=f"Output {result.amount_out} below minimum {min_buy_amount}",
             )
 
-        hop = HopResult(
-            pool=pool,
-            input_token=normalize_address(order.sell_token),
-            output_token=normalize_address(order.buy_token),
-            amount_in=sell_amount,
-            amount_out=result.amount_out,
-        )
-
-        return RoutingResult(
-            order=order,
-            amount_in=sell_amount,
-            amount_out=result.amount_out,
-            pool=pool,
-            pools=[pool],
-            hops=[hop],
-            success=True,
-            gas_estimate=pool.gas_estimate,
+        return self._build_success_result(
+            order, pool, sell_amount, result.amount_out, pool.gas_estimate
         )
 
     def _route_buy_order(
@@ -133,23 +107,8 @@ class UniswapV3Handler:
                 error=f"Required input {result.amount_in} exceeds maximum {max_sell_amount}",
             )
 
-        hop = HopResult(
-            pool=pool,
-            input_token=normalize_address(order.sell_token),
-            output_token=normalize_address(order.buy_token),
-            amount_in=result.amount_in,
-            amount_out=buy_amount,
-        )
-
-        return RoutingResult(
-            order=order,
-            amount_in=result.amount_in,
-            amount_out=buy_amount,
-            pool=pool,
-            pools=[pool],
-            hops=[hop],
-            success=True,
-            gas_estimate=pool.gas_estimate,
+        return self._build_success_result(
+            order, pool, result.amount_in, buy_amount, pool.gas_estimate
         )
 
 

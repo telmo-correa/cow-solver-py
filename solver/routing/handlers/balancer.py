@@ -13,13 +13,13 @@ from solver.amm.balancer import (
     BalancerWeightedPool,
 )
 from solver.models.auction import Order
-from solver.models.types import normalize_address
-from solver.routing.types import HopResult, RoutingResult
+from solver.routing.handlers.base import BaseHandler
+from solver.routing.types import RoutingResult
 
 logger = structlog.get_logger()
 
 
-class BalancerHandler:
+class BalancerHandler(BaseHandler):
     """Handler for Balancer pool routing (weighted and stable).
 
     Uses singledispatch to route to the correct AMM based on pool type,
@@ -111,7 +111,9 @@ class BalancerHandler:
                     error=f"Output {result.amount_out} below minimum {buy_amount}",
                 )
 
-            return self._build_result(order, pool, sell_amount, result.amount_out)
+            return self._build_success_result(
+                order, pool, sell_amount, result.amount_out, pool.gas_estimate
+            )
         else:
             result = amm.simulate_swap_exact_output(
                 pool, order.sell_token, order.buy_token, buy_amount
@@ -133,7 +135,9 @@ class BalancerHandler:
                     error=f"Required input {result.amount_in} exceeds maximum {sell_amount}",
                 )
 
-            return self._build_result(order, pool, result.amount_in, buy_amount)
+            return self._build_success_result(
+                order, pool, result.amount_in, buy_amount, pool.gas_estimate
+            )
 
     @_route_pool.register(BalancerStablePool)
     def _route_stable(
@@ -169,7 +173,9 @@ class BalancerHandler:
                     error=f"Output {result.amount_out} below minimum {buy_amount}",
                 )
 
-            return self._build_result(order, pool, sell_amount, result.amount_out)
+            return self._build_success_result(
+                order, pool, sell_amount, result.amount_out, pool.gas_estimate
+            )
         else:
             result = amm.simulate_swap_exact_output(
                 pool, order.sell_token, order.buy_token, buy_amount
@@ -191,7 +197,9 @@ class BalancerHandler:
                     error=f"Required input {result.amount_in} exceeds maximum {sell_amount}",
                 )
 
-            return self._build_result(order, pool, result.amount_in, buy_amount)
+            return self._build_success_result(
+                order, pool, result.amount_in, buy_amount, pool.gas_estimate
+            )
 
     def _try_partial_weighted(
         self,
@@ -334,45 +342,7 @@ class BalancerHandler:
             fill_ratio=fill_ratio,
         )
 
-        return self._build_result(order, pool, final_in, final_out)
-
-    def _build_result(
-        self,
-        order: Order,
-        pool: BalancerWeightedPool | BalancerStablePool,
-        amount_in: int,
-        amount_out: int,
-    ) -> RoutingResult:
-        """Build a successful routing result for a Balancer pool."""
-        hop = HopResult(
-            pool=pool,
-            input_token=normalize_address(order.sell_token),
-            output_token=normalize_address(order.buy_token),
-            amount_in=amount_in,
-            amount_out=amount_out,
-        )
-
-        return RoutingResult(
-            order=order,
-            amount_in=amount_in,
-            amount_out=amount_out,
-            pool=pool,
-            pools=[pool],
-            hops=[hop],
-            success=True,
-            gas_estimate=pool.gas_estimate,
-        )
-
-    def _error_result(self, order: Order, error: str) -> RoutingResult:
-        """Create a failed routing result."""
-        return RoutingResult(
-            order=order,
-            amount_in=0,
-            amount_out=0,
-            pool=None,
-            success=False,
-            error=error,
-        )
+        return self._build_success_result(order, pool, final_in, final_out, pool.gas_estimate)
 
 
 __all__ = ["BalancerHandler"]

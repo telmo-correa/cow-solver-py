@@ -19,6 +19,7 @@ from solver.routing.types import HopResult, RoutingResult
 
 if TYPE_CHECKING:
     from solver.amm.uniswap_v3 import UniswapV3AMM
+    from solver.routing.registry import HandlerRegistry
 
 
 class MultihopRouter:
@@ -35,6 +36,7 @@ class MultihopRouter:
         weighted_amm: BalancerWeightedAMM | None,
         stable_amm: BalancerStableAMM | None,
         registry: PoolRegistry,
+        handler_registry: HandlerRegistry | None = None,
     ) -> None:
         """Initialize the multi-hop router.
 
@@ -44,12 +46,16 @@ class MultihopRouter:
             weighted_amm: Balancer weighted AMM (if available)
             stable_amm: Balancer stable AMM (if available)
             registry: Pool registry for path finding
+            handler_registry: Optional handler registry for centralized dispatch.
+                             If provided, uses registry for simulation. Otherwise
+                             falls back to legacy isinstance-based dispatch.
         """
         self.v2_amm = v2_amm
         self.v3_amm = v3_amm
         self.weighted_amm = weighted_amm
         self.stable_amm = stable_amm
         self.registry = registry
+        self._handler_registry = handler_registry
 
     def route_sell_order(
         self,
@@ -67,8 +73,6 @@ class MultihopRouter:
 
         Supports V2, V3, and Balancer pools in the multi-hop path.
         """
-        from solver.amm.uniswap_v3 import UniswapV3Pool
-
         # Compute intermediate amounts for each hop
         hops: list[HopResult] = []
         current_amount = sell_amount
@@ -78,43 +82,23 @@ class MultihopRouter:
             token_in = normalize_address(path[i])
             token_out = normalize_address(path[i + 1])
 
-            # Dispatch to correct AMM based on pool type
-            if isinstance(pool, UniswapV3Pool):
-                if self.v3_amm is None:
-                    return self._error_result(order, "V3: AMM not configured for multi-hop")
-                result = self.v3_amm.simulate_swap(pool, path[i], current_amount)
-                if result is None:
-                    return self._error_result(order, f"V3: swap failed at hop {i}")
-                amount_out = result.amount_out
-                total_gas += pool.gas_estimate
-            elif isinstance(pool, BalancerWeightedPool):
-                if self.weighted_amm is None:
-                    return self._error_result(
-                        order, "Balancer weighted: AMM not configured for multi-hop"
-                    )
-                result = self.weighted_amm.simulate_swap(pool, path[i], path[i + 1], current_amount)
-                if result is None:
-                    return self._error_result(order, f"Balancer weighted: swap failed at hop {i}")
-                amount_out = result.amount_out
-                total_gas += pool.gas_estimate
-            elif isinstance(pool, BalancerStablePool):
-                if self.stable_amm is None:
-                    return self._error_result(
-                        order, "Balancer stable: AMM not configured for multi-hop"
-                    )
-                result = self.stable_amm.simulate_swap(pool, path[i], path[i + 1], current_amount)
-                if result is None:
-                    return self._error_result(order, f"Balancer stable: swap failed at hop {i}")
-                amount_out = result.amount_out
-                total_gas += pool.gas_estimate
-            else:
-                # V2 pool
-                v2_pool = pool  # type is narrowed by isinstance checks above
-                reserve_in, reserve_out = v2_pool.get_reserves(path[i])
-                amount_out = self.v2_amm.get_amount_out(
-                    current_amount, reserve_in, reserve_out, v2_pool.fee_multiplier
+            # Use handler registry if available, otherwise fall back to isinstance
+            if self._handler_registry is not None and self._handler_registry.is_registered(pool):
+                result = self._handler_registry.simulate_swap(
+                    pool, path[i], path[i + 1], current_amount
                 )
-                total_gas += POOL_SWAP_GAS_COST
+                if result is None:
+                    pool_type = self._handler_registry.get_type_name(pool)
+                    return self._error_result(order, f"{pool_type}: swap failed at hop {i}")
+                amount_out = result.amount_out
+                total_gas += self._handler_registry.get_gas_estimate(pool)
+            else:
+                # Legacy dispatch
+                sim_result = self._simulate_hop_legacy(pool, path[i], path[i + 1], current_amount)
+                if sim_result is None:
+                    return self._error_result(order, f"Swap failed at hop {i}")
+                amount_out, gas = sim_result
+                total_gas += gas
 
             hops.append(
                 HopResult(
@@ -172,8 +156,6 @@ class MultihopRouter:
 
         Supports V2, V3, and Balancer pools in the multi-hop path.
         """
-        from solver.amm.uniswap_v3 import UniswapV3Pool
-
         # Work backwards to compute required inputs for each hop
         amounts: list[int] = [0] * (len(pools) + 1)
         amounts[-1] = buy_amount  # Final output is the desired buy amount
@@ -184,51 +166,26 @@ class MultihopRouter:
             token_in = path[i]
             token_out = path[i + 1]
 
-            # Dispatch to correct AMM based on pool type
-            if isinstance(pool, UniswapV3Pool):
-                if self.v3_amm is None:
-                    return self._error_result(order, "V3: AMM not configured for multi-hop")
-                result = self.v3_amm.simulate_swap_exact_output(pool, token_in, amounts[i + 1])
-                if result is None:
-                    return self._error_result(order, f"V3: exact output failed at hop {i}")
-                amounts[i] = result.amount_in
-                total_gas += pool.gas_estimate
-            elif isinstance(pool, BalancerWeightedPool):
-                if self.weighted_amm is None:
-                    return self._error_result(
-                        order, "Balancer weighted: AMM not configured for multi-hop"
-                    )
-                result = self.weighted_amm.simulate_swap_exact_output(
+            # Use handler registry if available, otherwise fall back to isinstance
+            if self._handler_registry is not None and self._handler_registry.is_registered(pool):
+                result = self._handler_registry.simulate_swap_exact_output(
                     pool, token_in, token_out, amounts[i + 1]
                 )
                 if result is None:
-                    return self._error_result(
-                        order, f"Balancer weighted: exact output failed at hop {i}"
-                    )
+                    pool_type = self._handler_registry.get_type_name(pool)
+                    return self._error_result(order, f"{pool_type}: exact output failed at hop {i}")
                 amounts[i] = result.amount_in
-                total_gas += pool.gas_estimate
-            elif isinstance(pool, BalancerStablePool):
-                if self.stable_amm is None:
-                    return self._error_result(
-                        order, "Balancer stable: AMM not configured for multi-hop"
-                    )
-                result = self.stable_amm.simulate_swap_exact_output(
-                    pool, token_in, token_out, amounts[i + 1]
-                )
-                if result is None:
-                    return self._error_result(
-                        order, f"Balancer stable: exact output failed at hop {i}"
-                    )
-                amounts[i] = result.amount_in
-                total_gas += pool.gas_estimate
+                total_gas += self._handler_registry.get_gas_estimate(pool)
             else:
-                # V2 pool
-                v2_pool = pool  # type is narrowed by isinstance checks above
-                reserve_in, reserve_out = v2_pool.get_reserves(token_in)
-                amounts[i] = self.v2_amm.get_amount_in(
-                    amounts[i + 1], reserve_in, reserve_out, v2_pool.fee_multiplier
+                # Legacy dispatch
+                sim_result = self._simulate_hop_exact_output_legacy(
+                    pool, token_in, token_out, amounts[i + 1]
                 )
-                total_gas += POOL_SWAP_GAS_COST
+                if sim_result is None:
+                    return self._error_result(order, f"Exact output failed at hop {i}")
+                amount_in, gas = sim_result
+                amounts[i] = amount_in
+                total_gas += gas
 
         required_input = amounts[0]
 
@@ -350,34 +307,102 @@ class MultihopRouter:
         Returns:
             Output amount, or None if simulation fails
         """
+        # Use handler registry if available
+        if self._handler_registry is not None and self._handler_registry.is_registered(pool):
+            result = self._handler_registry.simulate_swap(pool, token_in, token_out, amount_in)
+            return result.amount_out if result else None
+
+        # Legacy dispatch
+        sim_result = self._simulate_hop_legacy(pool, token_in, token_out, amount_in)
+        return sim_result[0] if sim_result else None
+
+    def _simulate_hop_legacy(
+        self,
+        pool: AnyPool,
+        token_in: str,
+        token_out: str,
+        amount_in: int,
+    ) -> tuple[int, int] | None:
+        """Legacy simulation using isinstance dispatch.
+
+        Returns tuple of (amount_out, gas_estimate) or None if simulation fails.
+        """
         from solver.amm.uniswap_v3 import UniswapV3Pool
 
         if isinstance(pool, UniswapV3Pool):
             if self.v3_amm is None:
                 return None
             result = self.v3_amm.simulate_swap(pool, token_in, amount_in)
-            return result.amount_out if result else None
+            return (result.amount_out, pool.gas_estimate) if result else None
 
         elif isinstance(pool, BalancerWeightedPool):
             if self.weighted_amm is None:
                 return None
             result = self.weighted_amm.simulate_swap(pool, token_in, token_out, amount_in)
-            return result.amount_out if result else None
+            return (result.amount_out, pool.gas_estimate) if result else None
 
         elif isinstance(pool, BalancerStablePool):
             if self.stable_amm is None:
                 return None
             result = self.stable_amm.simulate_swap(pool, token_in, token_out, amount_in)
-            return result.amount_out if result else None
+            return (result.amount_out, pool.gas_estimate) if result else None
 
         else:
             # V2 pool
             v2_pool = pool  # type is narrowed by isinstance checks above
             try:
                 reserve_in, reserve_out = v2_pool.get_reserves(token_in)
-                return self.v2_amm.get_amount_out(
+                amount_out = self.v2_amm.get_amount_out(
                     amount_in, reserve_in, reserve_out, v2_pool.fee_multiplier
                 )
+                return (amount_out, POOL_SWAP_GAS_COST)
+            except (ValueError, ZeroDivisionError):
+                return None
+
+    def _simulate_hop_exact_output_legacy(
+        self,
+        pool: AnyPool,
+        token_in: str,
+        token_out: str,
+        amount_out: int,
+    ) -> tuple[int, int] | None:
+        """Legacy exact output simulation using isinstance dispatch.
+
+        Returns tuple of (amount_in, gas_estimate) or None if simulation fails.
+        """
+        from solver.amm.uniswap_v3 import UniswapV3Pool
+
+        if isinstance(pool, UniswapV3Pool):
+            if self.v3_amm is None:
+                return None
+            result = self.v3_amm.simulate_swap_exact_output(pool, token_in, amount_out)
+            return (result.amount_in, pool.gas_estimate) if result else None
+
+        elif isinstance(pool, BalancerWeightedPool):
+            if self.weighted_amm is None:
+                return None
+            result = self.weighted_amm.simulate_swap_exact_output(
+                pool, token_in, token_out, amount_out
+            )
+            return (result.amount_in, pool.gas_estimate) if result else None
+
+        elif isinstance(pool, BalancerStablePool):
+            if self.stable_amm is None:
+                return None
+            result = self.stable_amm.simulate_swap_exact_output(
+                pool, token_in, token_out, amount_out
+            )
+            return (result.amount_in, pool.gas_estimate) if result else None
+
+        else:
+            # V2 pool
+            v2_pool = pool  # type is narrowed by isinstance checks above
+            try:
+                reserve_in, reserve_out = v2_pool.get_reserves(token_in)
+                amount_in = self.v2_amm.get_amount_in(
+                    amount_out, reserve_in, reserve_out, v2_pool.fee_multiplier
+                )
+                return (amount_in, POOL_SWAP_GAS_COST)
             except (ValueError, ZeroDivisionError):
                 return None
 

@@ -7,13 +7,13 @@ import structlog
 from solver.amm.uniswap_v2 import UniswapV2, UniswapV2Pool
 from solver.constants import POOL_SWAP_GAS_COST
 from solver.models.auction import Order
-from solver.models.types import normalize_address
-from solver.routing.types import HopResult, RoutingResult
+from solver.routing.handlers.base import BaseHandler
+from solver.routing.types import RoutingResult
 
 logger = structlog.get_logger()
 
 
-class UniswapV2Handler:
+class UniswapV2Handler(BaseHandler):
     """Handler for UniswapV2 pool routing.
 
     Handles both sell orders (exact input) and buy orders (exact output),
@@ -27,17 +27,6 @@ class UniswapV2Handler:
             amm: UniswapV2 AMM instance for swap simulation
         """
         self.amm = amm
-
-    def _error_result(self, order: Order, error: str) -> RoutingResult:
-        """Create a failed routing result."""
-        return RoutingResult(
-            order=order,
-            amount_in=0,
-            amount_out=0,
-            pool=None,
-            success=False,
-            error=error,
-        )
 
     def route(
         self,
@@ -98,24 +87,8 @@ class UniswapV2Handler:
                 error=f"Output {swap_result.amount_out} below minimum {min_buy_amount}",
             )
 
-        # Create hop result for single-hop route
-        hop = HopResult(
-            pool=pool,
-            input_token=normalize_address(order.sell_token),
-            output_token=normalize_address(order.buy_token),
-            amount_in=sell_amount,
-            amount_out=swap_result.amount_out,
-        )
-
-        return RoutingResult(
-            order=order,
-            amount_in=sell_amount,
-            amount_out=swap_result.amount_out,
-            pool=pool,
-            pools=[pool],
-            hops=[hop],
-            success=True,
-            gas_estimate=POOL_SWAP_GAS_COST,
+        return self._build_success_result(
+            order, pool, sell_amount, swap_result.amount_out, POOL_SWAP_GAS_COST
         )
 
     def _route_buy_order(
@@ -155,24 +128,8 @@ class UniswapV2Handler:
                 error=f"Required input {swap_result.amount_in} exceeds maximum {max_sell_amount}",
             )
 
-        # Create hop result for single-hop route
-        hop = HopResult(
-            pool=pool,
-            input_token=normalize_address(order.sell_token),
-            output_token=normalize_address(order.buy_token),
-            amount_in=swap_result.amount_in,
-            amount_out=buy_amount,
-        )
-
-        return RoutingResult(
-            order=order,
-            amount_in=swap_result.amount_in,
-            amount_out=buy_amount,
-            pool=pool,
-            pools=[pool],
-            hops=[hop],
-            success=True,
-            gas_estimate=POOL_SWAP_GAS_COST,
+        return self._build_success_result(
+            order, pool, swap_result.amount_in, buy_amount, POOL_SWAP_GAS_COST
         )
 
     def _try_partial_sell_order(
@@ -365,24 +322,7 @@ class UniswapV2Handler:
                 error=error,
             )
 
-        hop = HopResult(
-            pool=pool,
-            input_token=normalize_address(order.sell_token),
-            output_token=normalize_address(order.buy_token),
-            amount_in=amount_in,
-            amount_out=amount_out,
-        )
-
-        return RoutingResult(
-            order=order,
-            amount_in=amount_in,
-            amount_out=amount_out,
-            pool=pool,
-            pools=[pool],
-            hops=[hop],
-            success=True,
-            gas_estimate=POOL_SWAP_GAS_COST,
-        )
+        return self._build_success_result(order, pool, amount_in, amount_out, POOL_SWAP_GAS_COST)
 
 
 __all__ = ["UniswapV2Handler"]

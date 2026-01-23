@@ -33,11 +33,13 @@ from solver.amm.uniswap_v2 import (
     UniswapV2Pool,
     uniswap_v2,
 )
+from solver.constants import POOL_SWAP_GAS_COST
 from solver.models.auction import Order
 from solver.models.solution import Solution
 from solver.pools import AnyPool, PoolRegistry
 from solver.routing.handlers import BalancerHandler, UniswapV2Handler, UniswapV3Handler
 from solver.routing.multihop import MultihopRouter
+from solver.routing.registry import HandlerRegistry
 from solver.routing.solution import build_solution
 from solver.routing.types import HopResult, RoutingResult
 
@@ -112,14 +114,101 @@ class SingleOrderRouter:
         self._v3_handler = UniswapV3Handler(v3_amm)
         self._balancer_handler = BalancerHandler(weighted_amm, stable_amm)
 
-        # Initialize multi-hop router
+        # Initialize handler registry for centralized dispatch
+        self._handler_registry = self._build_handler_registry()
+
+        # Initialize multi-hop router with the handler registry
         self._multihop = MultihopRouter(
             v2_amm=self.amm,
             v3_amm=v3_amm,
             weighted_amm=weighted_amm,
             stable_amm=stable_amm,
             registry=self._registry,
+            handler_registry=self._handler_registry,
         )
+
+    def _build_handler_registry(self) -> HandlerRegistry:
+        """Build the handler registry with all configured pool types.
+
+        Returns:
+            HandlerRegistry with handlers for all available pool types
+
+        Note: The lambdas use type: ignore because the registry maps specific pool
+        types to handlers, but the Callable type requires AnyPool. At runtime,
+        the registry only calls the simulator with the correct pool type.
+        """
+        from solver.amm.uniswap_v3 import UniswapV3Pool
+
+        registry = HandlerRegistry()
+
+        # Register V2 (always available)
+        registry.register(
+            UniswapV2Pool,
+            handler=self._v2_handler,  # type: ignore[arg-type]
+            simulator=lambda p, ti, _to, ai: self.amm.simulate_swap(p, ti, ai),  # type: ignore[arg-type]
+            exact_output_simulator=lambda p, ti, _to, ao: self.amm.simulate_swap_exact_output(
+                p,  # type: ignore[arg-type]
+                ti,
+                ao,
+            ),
+            type_name="v2",
+            gas_estimate=lambda _: POOL_SWAP_GAS_COST,
+        )
+
+        # Register V3 (if available)
+        if self.v3_amm is not None:
+            v3_amm = self.v3_amm  # Capture for lambda
+            registry.register(
+                UniswapV3Pool,
+                handler=self._v3_handler,  # type: ignore[arg-type]
+                simulator=lambda p, ti, _to, ai: v3_amm.simulate_swap(p, ti, ai),  # type: ignore[arg-type]
+                exact_output_simulator=lambda p, ti, _to, ao: v3_amm.simulate_swap_exact_output(
+                    p,  # type: ignore[arg-type]
+                    ti,
+                    ao,
+                ),
+                type_name="v3",
+                gas_estimate=lambda p: p.gas_estimate,  # type: ignore[union-attr]
+            )
+
+        # Register Balancer weighted (if available)
+        if self.weighted_amm is not None:
+            weighted_amm = self.weighted_amm  # Capture for lambda
+            registry.register(
+                BalancerWeightedPool,
+                handler=self._balancer_handler,  # type: ignore[arg-type]
+                simulator=lambda p, ti, to, ai: weighted_amm.simulate_swap(p, ti, to, ai),  # type: ignore[arg-type]
+                exact_output_simulator=lambda p,
+                ti,
+                to,
+                ao: weighted_amm.simulate_swap_exact_output(
+                    p,  # type: ignore[arg-type]
+                    ti,
+                    to,
+                    ao,
+                ),
+                type_name="balancer_weighted",
+                gas_estimate=lambda p: p.gas_estimate,  # type: ignore[union-attr]
+            )
+
+        # Register Balancer stable (if available)
+        if self.stable_amm is not None:
+            stable_amm = self.stable_amm  # Capture for lambda
+            registry.register(
+                BalancerStablePool,
+                handler=self._balancer_handler,  # type: ignore[arg-type]
+                simulator=lambda p, ti, to, ai: stable_amm.simulate_swap(p, ti, to, ai),  # type: ignore[arg-type]
+                exact_output_simulator=lambda p, ti, to, ao: stable_amm.simulate_swap_exact_output(
+                    p,  # type: ignore[arg-type]
+                    ti,
+                    to,
+                    ao,
+                ),
+                type_name="balancer_stable",
+                gas_estimate=lambda p: p.gas_estimate,  # type: ignore[union-attr]
+            )
+
+        return registry
 
     # Backward compatibility property
     @property
@@ -200,7 +289,7 @@ class SingleOrderRouter:
             order_uid=order.uid,
             path=[p[-8:] for p in path],  # Log last 8 chars of addresses
             hops=len(path) - 1,
-            pool_types=[self._get_pool_type(p) for p in pools],
+            pool_types=[self._handler_registry.get_type_name(p) for p in pools],
         )
 
         if order.is_sell_order:
@@ -230,73 +319,24 @@ class SingleOrderRouter:
         Returns:
             Best RoutingResult, or None if all pools failed
         """
-        from solver.amm.uniswap_v3 import UniswapV3Pool
-
         candidates: list[tuple[AnyPool, int, int]] = []
 
         for pool in pools:
-            if isinstance(pool, UniswapV3Pool):
-                # V3 pool - use V3 AMM
-                if self.v3_amm is None:
-                    continue
+            # Skip pools without registered handlers
+            if not self._handler_registry.is_registered(pool):
+                continue
 
-                if order.is_sell_order:
-                    result = self.v3_amm.simulate_swap(pool, order.sell_token, sell_amount)
-                    if result is not None:
-                        candidates.append((pool, result.amount_in, result.amount_out))
-                else:
-                    result = self.v3_amm.simulate_swap_exact_output(
-                        pool, order.sell_token, buy_amount
-                    )
-                    if result is not None:
-                        candidates.append((pool, result.amount_in, result.amount_out))
-
-            elif isinstance(pool, BalancerWeightedPool):
-                # Balancer weighted pool - use weighted AMM
-                if self.weighted_amm is None:
-                    continue
-
-                if order.is_sell_order:
-                    result = self.weighted_amm.simulate_swap(
-                        pool, order.sell_token, order.buy_token, sell_amount
-                    )
-                    if result is not None:
-                        candidates.append((pool, result.amount_in, result.amount_out))
-                else:
-                    result = self.weighted_amm.simulate_swap_exact_output(
-                        pool, order.sell_token, order.buy_token, buy_amount
-                    )
-                    if result is not None:
-                        candidates.append((pool, result.amount_in, result.amount_out))
-
-            elif isinstance(pool, BalancerStablePool):
-                # Balancer stable pool - use stable AMM
-                if self.stable_amm is None:
-                    continue
-
-                if order.is_sell_order:
-                    result = self.stable_amm.simulate_swap(
-                        pool, order.sell_token, order.buy_token, sell_amount
-                    )
-                    if result is not None:
-                        candidates.append((pool, result.amount_in, result.amount_out))
-                else:
-                    result = self.stable_amm.simulate_swap_exact_output(
-                        pool, order.sell_token, order.buy_token, buy_amount
-                    )
-                    if result is not None:
-                        candidates.append((pool, result.amount_in, result.amount_out))
-
-            else:
-                # V2 pool - use V2 AMM
-                v2_pool = pool  # type is narrowed by isinstance checks above
-                if order.is_sell_order:
-                    result = self.amm.simulate_swap(v2_pool, order.sell_token, sell_amount)
+            if order.is_sell_order:
+                result = self._handler_registry.simulate_swap(
+                    pool, order.sell_token, order.buy_token, sell_amount
+                )
+                if result is not None:
                     candidates.append((pool, result.amount_in, result.amount_out))
-                else:
-                    result = self.amm.simulate_swap_exact_output(
-                        v2_pool, order.sell_token, buy_amount
-                    )
+            else:
+                result = self._handler_registry.simulate_swap_exact_output(
+                    pool, order.sell_token, order.buy_token, buy_amount
+                )
+                if result is not None:
                     candidates.append((pool, result.amount_in, result.amount_out))
 
         if not candidates:
@@ -315,7 +355,7 @@ class SingleOrderRouter:
             logger.info(
                 "best_pool_selected",
                 order_uid=order.uid[:18] + "...",
-                pool_type=self._get_pool_type(best_pool),
+                pool_type=self._handler_registry.get_type_name(best_pool),
                 pool_address=best_pool.address[:10] + "...",
                 candidates=len(candidates),
                 amount_in=best_in,
@@ -343,28 +383,12 @@ class SingleOrderRouter:
         Returns:
             RoutingResult from the appropriate handler
         """
-        from solver.amm.uniswap_v3 import UniswapV3Pool
-
-        if isinstance(pool, UniswapV3Pool):
-            return self._v3_handler.route(order, pool, sell_amount, buy_amount)
-        elif isinstance(pool, (BalancerWeightedPool, BalancerStablePool)):
-            return self._balancer_handler.route(order, pool, sell_amount, buy_amount)
-        else:
-            # V2 pool
-            v2_pool = pool  # type is narrowed by isinstance checks above
-            return self._v2_handler.route(order, v2_pool, sell_amount, buy_amount)
-
-    def _get_pool_type(self, pool: AnyPool) -> str:
-        """Get the type string for a pool."""
-        from solver.amm.uniswap_v3 import UniswapV3Pool
-
-        if isinstance(pool, UniswapV3Pool):
-            return "v3"
-        elif isinstance(pool, BalancerWeightedPool):
-            return "balancer_weighted"
-        elif isinstance(pool, BalancerStablePool):
-            return "balancer_stable"
-        return "v2"
+        handler = self._handler_registry.get_handler(pool)
+        if handler is None:
+            return self._error_result(
+                order, f"No handler registered for pool type: {type(pool).__name__}"
+            )
+        return handler.route(order, pool, sell_amount, buy_amount)
 
     def build_solution(
         self,

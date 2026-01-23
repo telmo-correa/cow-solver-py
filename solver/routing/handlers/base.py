@@ -1,13 +1,15 @@
-"""Base protocol for pool routing handlers."""
+"""Base class and protocol for pool routing handlers."""
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Protocol
 
+from solver.models.types import normalize_address
+from solver.routing.types import HopResult, RoutingResult
+
 if TYPE_CHECKING:
     from solver.models.auction import Order
     from solver.pools import AnyPool
-    from solver.routing.types import RoutingResult
 
 
 class PoolHandler(Protocol):
@@ -44,4 +46,89 @@ class PoolHandler(Protocol):
         ...
 
 
-__all__ = ["PoolHandler"]
+class BaseHandler:
+    """Base class with shared handler utilities.
+
+    Provides common methods for building routing results that are used
+    across all handler implementations (V2, V3, Balancer).
+    """
+
+    def _error_result(self, order: Order, error: str) -> RoutingResult:
+        """Create a failed routing result.
+
+        Args:
+            order: The order that failed to route
+            error: Human-readable error message
+
+        Returns:
+            RoutingResult with success=False
+        """
+        return RoutingResult(
+            order=order,
+            amount_in=0,
+            amount_out=0,
+            pool=None,
+            success=False,
+            error=error,
+        )
+
+    def _build_hop(
+        self,
+        pool: AnyPool,
+        order: Order,
+        amount_in: int,
+        amount_out: int,
+    ) -> HopResult:
+        """Build a HopResult for a single-hop route.
+
+        Args:
+            pool: The pool used for the swap
+            order: The order being routed
+            amount_in: Input amount for the swap
+            amount_out: Output amount from the swap
+
+        Returns:
+            HopResult with normalized token addresses
+        """
+        return HopResult(
+            pool=pool,
+            input_token=normalize_address(order.sell_token),
+            output_token=normalize_address(order.buy_token),
+            amount_in=amount_in,
+            amount_out=amount_out,
+        )
+
+    def _build_success_result(
+        self,
+        order: Order,
+        pool: AnyPool,
+        amount_in: int,
+        amount_out: int,
+        gas_estimate: int,
+    ) -> RoutingResult:
+        """Build a successful routing result.
+
+        Args:
+            order: The routed order
+            pool: The pool used for the swap
+            amount_in: Input amount
+            amount_out: Output amount
+            gas_estimate: Estimated gas cost for the swap
+
+        Returns:
+            RoutingResult with success=True and hop details
+        """
+        hop = self._build_hop(pool, order, amount_in, amount_out)
+        return RoutingResult(
+            order=order,
+            amount_in=amount_in,
+            amount_out=amount_out,
+            pool=pool,
+            pools=[pool],
+            hops=[hop],
+            success=True,
+            gas_estimate=gas_estimate,
+        )
+
+
+__all__ = ["PoolHandler", "BaseHandler"]
