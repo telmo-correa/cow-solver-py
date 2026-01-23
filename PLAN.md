@@ -138,9 +138,9 @@ Each slice delivers end-to-end functionality for a specific auction type, with t
 
 ---
 
-## Phase 3: Liquidity Expansion ✅ COMPLETE
+## Phase 3: Liquidity Expansion ⬅️ IN PROGRESS
 
-> **Completed:** All liquidity sources integrated with exact Rust baseline match.
+> **Status:** V2, V3, and Balancer pools complete. 0x limit orders remaining for full Rust parity.
 > Full multi-source routing: V2, V3, Balancer weighted, Balancer stable pools.
 
 ### Slice 3.1: UniswapV3 Integration ✅ COMPLETE
@@ -224,13 +224,38 @@ Each slice delivers end-to-end functionality for a specific auction type, with t
 - [ ] Test: large orders that benefit from splitting
 - [ ] Benchmark: this approaches unified optimization territory
 
-**Exit Criteria:** Solver uses multiple liquidity sources, matching Rust baseline capabilities. ✅
+### Slice 3.5: 0x Limit Orders ⬅️ NEXT
+**Goal:** Add foreign limit order support to achieve full Rust liquidity parity
 
-**Tests:** 651 passing, 14 skipped
+> **Design Doc:** See `docs/design/limit-orders.md` for implementation details.
+
+The Rust baseline solver supports 5 liquidity types. We have 4. The missing one is:
+
+| Liquidity Type | Description | Status |
+|----------------|-------------|--------|
+| `constantProduct` | UniswapV2 | ✅ Complete |
+| `weightedProduct` | Balancer Weighted | ✅ Complete |
+| `stable` | Balancer/Curve Stable | ✅ Complete |
+| `concentratedLiquidity` | UniswapV3 | ✅ Complete |
+| `limitOrder` | 0x Foreign Orders | ❌ **Missing** |
+
+**Tasks:**
+- [ ] Parse `limitOrder` liquidity from auction JSON
+- [ ] Create `LimitOrderPool` dataclass (makerToken, takerToken, amounts, fee)
+- [ ] Implement swap simulation (simple proportional math)
+- [ ] Add `LimitOrderHandler` for routing
+- [ ] Integrate into `PoolRegistry` and router
+- [ ] Encode settlement interaction (0x protocol format)
+- [ ] Test: auctions with limit order liquidity
+- [ ] Benchmark: exact match with Rust baseline
+
+**Exit Criteria:** Solver handles all 5 Rust liquidity types. Full parity achieved.
+
+**Tests:** 662 passing, 14 skipped
 
 ---
 
-## Phase 4: Unified Optimization ⬅️ NEXT
+## Phase 4: Unified Optimization
 
 > **The Big Picture:** The optimal solution isn't "CoW matching" OR "AMM routing" —
 > it's the joint optimization across all mechanisms. This phase designs a unified
