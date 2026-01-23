@@ -46,22 +46,39 @@ cow-solver-py/
 │   ├── models/            # Pydantic schemas
 │   │   ├── auction.py     # AuctionInstance, Order, Token
 │   │   └── solution.py    # Solution, Trade, Interaction
-│   ├── amm/               # AMM math
+│   ├── amm/               # AMM math (packages for each DEX type)
 │   │   ├── base.py        # SwapResult dataclass, SwapCalculator protocol
 │   │   ├── uniswap_v2.py  # UniswapV2 implementation
-│   │   └── uniswap_v3.py  # UniswapV3 implementation (quoter-based)
+│   │   ├── uniswap_v3/    # UniswapV3 package
+│   │   │   ├── constants.py   # Fee tiers, addresses
+│   │   │   ├── pool.py        # UniswapV3Pool dataclass
+│   │   │   ├── quoter.py      # Quoter protocol + implementations
+│   │   │   ├── encoding.py    # SwapRouter calldata
+│   │   │   ├── amm.py         # UniswapV3AMM class
+│   │   │   └── parsing.py     # parse_v3_liquidity
+│   │   └── balancer/      # Balancer package
+│   │       ├── types.py       # BalancerToken, PoolVersion
+│   │       ├── weighted.py    # Weighted pool math + AMM
+│   │       ├── stable.py      # Stable pool math + AMM
+│   │       ├── parsing.py     # parse_balancer_liquidity
+│   │       └── handler.py     # BalancerHandler
+│   ├── pools/             # Pool management
+│   │   ├── registry.py    # PoolRegistry for dynamic pool lookup
+│   │   └── types.py       # AnyPool type alias
 │   ├── strategies/        # Solution strategies
 │   │   ├── base.py        # SolutionStrategy protocol, fee calculation
 │   │   ├── cow_match.py   # CoW matching strategy
 │   │   ├── matching_rules.py # Data-driven matching rules
 │   │   └── amm_routing.py # AMM routing strategy
 │   ├── routing/           # Order routing
-│   │   ├── router.py      # SingleOrderRouter facade (with DI)
+│   │   ├── router.py      # SingleOrderRouter facade
+│   │   ├── registry.py    # HandlerRegistry for extensible dispatch
 │   │   ├── types.py       # HopResult, RoutingResult dataclasses
 │   │   ├── handlers/      # Pool-specific routing handlers
-│   │   │   ├── v2.py      # UniswapV2Handler
-│   │   │   ├── v3.py      # UniswapV3Handler
-│   │   │   └── balancer.py # BalancerHandler (singledispatch)
+│   │   │   ├── base.py        # BaseHandler with shared utilities
+│   │   │   ├── v2.py          # UniswapV2Handler
+│   │   │   ├── v3.py          # UniswapV3Handler
+│   │   │   └── balancer.py    # BalancerHandler
 │   │   ├── multihop.py    # Multi-hop routing through multiple pools
 │   │   └── solution.py    # Solution building from routing results
 │   └── constants.py       # Centralized constants (addresses, etc.)
@@ -78,7 +95,7 @@ cow-solver-py/
 │
 └── tests/
     ├── conftest.py        # Fixtures + mock classes for DI testing
-    ├── unit/              # Unit tests
+    ├── unit/              # Unit tests (split by module)
     ├── integration/       # Integration tests
     └── fixtures/auctions/ # JSON test data
         ├── single_order/  # Single order fixtures
@@ -120,8 +137,31 @@ cow-solver-py/
 - ✅ **Balancer stable pools** (StableSwap invariant, Newton-Raphson)
 - ✅ **Multi-source routing** (V2, V3, weighted, stable pools)
 - ✅ **SafeInt arithmetic** (overflow/underflow protection)
+- ✅ **Architecture refactoring** (handler pattern, registry dispatch, module split)
 
 **Total: 651 passing tests** (unit + integration)
+
+### Architecture Patterns
+
+**Handler Registry Pattern:** Centralized pool type dispatch via `HandlerRegistry`:
+```python
+# Registration (in SingleOrderRouter.__init__)
+registry.register(UniswapV2Pool, handler=v2_handler, simulator=..., type_name="v2")
+
+# Dispatch (eliminates isinstance chains)
+handler = registry.get_handler(pool)
+handler.route(order, pool, sell_amount, buy_amount)
+```
+
+**BaseHandler:** Shared utilities for all routing handlers:
+- `_error_result()` - Create failed routing result
+- `_build_hop()` - Build HopResult from pool/order
+- `_build_success_result()` - Build successful RoutingResult
+
+**Package Structure:** Large modules split into focused packages with `__init__.py` re-exports:
+- `solver/amm/uniswap_v3/` - 6 modules (was 1031 LOC single file)
+- `solver/amm/balancer/` - 5 modules (was 838 LOC single file)
+- `solver/routing/handlers/` - 4 modules with protocol + base class
 
 ### Rust Baseline Solver Limitations
 
@@ -161,15 +201,17 @@ See `PLAN.md` for full details.
 | `solver/models/auction.py` | Input data structures (Order, Token, AuctionInstance) |
 | `solver/models/solution.py` | Output data structures (Solution, Trade, Interaction) |
 | `solver/amm/uniswap_v2.py` | UniswapV2 AMM math and encoding |
-| `solver/amm/uniswap_v3.py` | UniswapV3 AMM with quoter-based swap calculation |
-| `solver/amm/balancer.py` | Balancer weighted/stable pools, math, AMMs |
+| `solver/amm/uniswap_v3/` | UniswapV3 package (amm.py, quoter.py, encoding.py, etc.) |
+| `solver/amm/balancer/` | Balancer package (weighted.py, stable.py, etc.) |
+| `solver/pools/` | Pool management (registry.py, types.py for AnyPool) |
 | `solver/math/fixed_point.py` | Bfp class for 18-decimal fixed-point arithmetic |
 | `solver/strategies/base.py` | SolutionStrategy protocol, StrategyResult, fee calculation |
 | `solver/strategies/matching_rules.py` | Data-driven matching rules (constraint tables) |
 | `solver/strategies/cow_match.py` | CoW matching (perfect + partial) |
 | `solver/strategies/amm_routing.py` | AMM routing strategy |
 | `solver/routing/router.py` | SingleOrderRouter facade (delegates to handlers) |
-| `solver/routing/handlers/` | Pool-specific routing (V2, V3, Balancer) |
+| `solver/routing/registry.py` | HandlerRegistry for extensible pool dispatch |
+| `solver/routing/handlers/` | Pool-specific routing (base.py, v2.py, v3.py, balancer.py) |
 | `solver/constants.py` | Centralized addresses and constants |
 | `tests/conftest.py` | Mock fixtures for DI testing (MockAMM, MockV3Quoter) |
 | `benchmarks/harness.py` | Run both solvers and compare |

@@ -17,6 +17,7 @@ This directory tracks progress across AI-assisted development sessions.
 - **Phase 2:** Complete (CoW matching, partial fills)
 - **Phase 3.1:** Complete (UniswapV3 concentrated liquidity)
 - **Phase 3.2:** Complete (Balancer weighted + stable pools, SafeInt, benchmarks)
+- **Architecture:** Refactored (handler pattern, V3 split, registry)
 - **Tests:** 651 passing, 14 skipped
 - **Liquidity:** V2, V3, Balancer weighted, Balancer stable
 - **Next:** Curve pools or multi-order optimization
@@ -61,6 +62,8 @@ Individual session logs are preserved in the `archive/` directory for reference.
 | [32](archive/session-32.md) | 2026-01-22 | Router Integration for Balancer |
 | [33](archive/session-33.md) | 2026-01-22 | Integration Tests for Balancer |
 | [34](archive/session-34.md) | 2026-01-22 | Balancer Benchmarking |
+| [35](archive/session-35.md) | 2026-01-22 | Architecture Review and Refactoring (Phases 1-5) |
+| [36](archive/session-36.md) | 2026-01-22 | Architecture Improvements (Handlers, V3 Split, Registry) |
 
 ## Session Template
 
