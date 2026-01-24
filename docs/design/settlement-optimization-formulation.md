@@ -148,7 +148,34 @@ $$x_i \in \{0, S_i\}$$
 
 The fill-or-kill constraint makes this a **Mixed-Integer** problem.
 
-### 4.6 Non-Negativity
+### 4.6 EBBO Constraint (Ethereum Best Bid and Offer)
+
+**Clearing prices must be at least as good as AMM spot prices.**
+
+This is a social consensus rule (CIP-11) that requires solvers to provide execution
+prices at least as favorable as what users could obtain from "base protocols"
+(Uniswap, Balancer, Curve, etc.).
+
+For each order $i$ with $x_i > 0$, the clearing price ratio must satisfy:
+$$\frac{P_{s_i}}{P_{b_i}} \geq \text{AMM\_spot}(s_i, b_i)$$
+
+Where $\text{AMM\_spot}(s_i, b_i)$ is the best available spot price from base protocols.
+
+**Implications for CoW matching:**
+- Pure AMM routing is EBBO-compliant by construction
+- CoW matches must use AMM prices as reference (not just limit prices)
+- Ring trades must verify clearing prices against AMM benchmarks
+
+**Enforcement:**
+- NOT enforced by smart contracts or driver
+- Monitored post-settlement by EBBO tool
+- Violations require solver to reimburse users
+
+**References:**
+- [EBBO Rules](https://docs.cow.fi/cow-protocol/reference/core/auctions/ebbo-rules)
+- [Competition Rules](https://docs.cow.fi/cow-protocol/reference/core/auctions/competition-rules)
+
+### 4.7 Non-Negativity
 
 - $x_i \geq 0$ for all orders
 - $P_t > 0$ for all tokens

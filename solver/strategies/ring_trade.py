@@ -26,12 +26,17 @@ from __future__ import annotations
 from collections import defaultdict
 from collections.abc import Iterable
 from dataclasses import dataclass, field
+from decimal import Decimal
+from typing import TYPE_CHECKING
 
 import structlog
 
 from solver.models.auction import AuctionInstance, Order
 from solver.models.types import normalize_address
 from solver.strategies.base import OrderFill, StrategyResult
+
+if TYPE_CHECKING:
+    from solver.routing.router import SingleOrderRouter
 
 logger = structlog.get_logger()
 
@@ -401,22 +406,38 @@ class RingTradeStrategy:
     1. Builds an order graph from the auction
     2. Finds 3-node and 4-node cycles
     3. Checks each cycle for viability
-    4. Selects non-overlapping rings (greedy by surplus)
-    5. Returns combined result
+    4. Verifies EBBO compliance (if router provided)
+    5. Selects non-overlapping rings (greedy by surplus)
+    6. Returns combined result
 
     Note: This implementation handles "pure" rings only (product <= 1).
     AMM-assisted rings (product slightly > 1) are tracked but not executed.
     See docs/design/slice-4.4-ring-trade-detection.md for future plans.
+
+    EBBO Compliance:
+    Ring trade clearing prices must be at least as good as AMM spot prices.
+    If a router is provided, EBBO is verified before returning results.
+    Without a router, EBBO cannot be checked and a warning is logged.
     """
 
-    def __init__(self, max_4_cycles: int = 50):
+    def __init__(
+        self,
+        max_4_cycles: int = 50,
+        router: SingleOrderRouter | None = None,
+        enforce_ebbo: bool = True,
+    ):
         """Initialize the strategy.
 
         Args:
             max_4_cycles: Maximum 4-node cycles to find (limits computation)
+            router: Optional router for EBBO price verification
+            enforce_ebbo: If True, reject rings that violate EBBO (default True)
         """
         self.max_4_cycles = max_4_cycles
+        self.router = router
+        self.enforce_ebbo = enforce_ebbo
         self._near_viable_count = 0  # Track for metrics
+        self._ebbo_violations = 0  # Track EBBO rejections
 
     def try_solve(self, auction: AuctionInstance) -> StrategyResult | None:
         """Attempt to find ring trades in the auction.
@@ -429,6 +450,10 @@ class RingTradeStrategy:
         """
         # Reset metrics
         self._near_viable_count = 0
+        self._ebbo_violations = 0
+
+        # Store auction for EBBO verification
+        self._current_auction = auction
 
         # Convert to list once for efficient access
         orders = list(auction.orders)
@@ -653,13 +678,97 @@ class RingTradeStrategy:
         if viability.surplus_ratio > 0:
             surplus = int(viability.surplus_ratio * PRICE_PRECISION)
 
-        return RingTrade(
+        ring = RingTrade(
             cycle=tuple(cycle_tokens),
             orders=orders,
             fills=fills,
             clearing_prices=clearing_prices,
             surplus=surplus,
         )
+
+        # Verify EBBO compliance if router is available
+        if not self._verify_ebbo(ring):
+            return None
+
+        return ring
+
+    def _verify_ebbo(self, ring: RingTrade) -> bool:
+        """Verify ring trade clearing prices satisfy EBBO constraint.
+
+        EBBO (Ethereum Best Bid and Offer) requires that clearing prices be at
+        least as good as AMM spot prices. This prevents solvers from giving users
+        worse execution than they could get from base protocols.
+
+        Args:
+            ring: RingTrade to verify
+
+        Returns:
+            True if EBBO compliant (or cannot be checked), False if violation
+        """
+        if self.router is None:
+            # Cannot check EBBO without router
+            if self.enforce_ebbo:
+                logger.warning(
+                    "ring_trade_ebbo_check_skipped",
+                    reason="no_router",
+                    cycle=ring.cycle,
+                )
+            return True  # Allow when we can't check
+
+        auction = getattr(self, "_current_auction", None)
+        if auction is None:
+            return True  # No auction context
+
+        # Check each order's execution rate against AMM spot price
+        for i, order in enumerate(ring.orders):
+            sell_token = normalize_address(order.sell_token)
+            buy_token = normalize_address(order.buy_token)
+
+            # Get clearing price ratio from ring
+            sell_price = ring.clearing_prices.get(sell_token, 0)
+            buy_price = ring.clearing_prices.get(buy_token, 0)
+
+            if sell_price == 0 or buy_price == 0:
+                continue  # Can't verify without prices
+
+            ring_rate = Decimal(sell_price) / Decimal(buy_price)
+
+            # Get AMM spot price for comparison
+            token_info = auction.tokens.get(sell_token)
+            token_decimals = token_info.decimals if token_info and token_info.decimals else 18
+
+            amm_rate = self.router.get_reference_price(
+                sell_token, buy_token, token_in_decimals=token_decimals
+            )
+
+            if amm_rate is None:
+                # No AMM price available - allow (conservative)
+                logger.debug(
+                    "ring_trade_ebbo_no_amm_price",
+                    sell_token=sell_token[-8:],
+                    buy_token=buy_token[-8:],
+                )
+                continue
+
+            # EBBO check: ring rate must be >= AMM rate
+            # (user must get at least as much as from AMM)
+            # Allow 0.1% tolerance for rounding
+            if ring_rate < amm_rate * Decimal("0.999"):
+                logger.warning(
+                    "ring_trade_ebbo_violation",
+                    order_idx=i,
+                    ring_rate=float(ring_rate),
+                    amm_rate=float(amm_rate),
+                    deficit_pct=float((amm_rate - ring_rate) / amm_rate * 100),
+                    sell_token=sell_token[-8:],
+                    buy_token=buy_token[-8:],
+                )
+                self._ebbo_violations += 1
+
+                if self.enforce_ebbo:
+                    return False  # Reject EBBO-violating ring
+
+        return True
 
     def _select_rings(self, rings: list[RingTrade]) -> list[RingTrade]:
         """Select non-overlapping rings using greedy algorithm.
