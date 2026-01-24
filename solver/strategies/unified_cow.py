@@ -459,12 +459,14 @@ class UnifiedCowStrategy:
             price_sell = prices.get(sell_token)
             price_buy = prices.get(buy_token)
 
-            if price_sell is None or price_buy is None or price_sell <= 0:
+            if price_sell is None or price_buy is None or price_buy <= 0:
                 continue
 
             # Use high-precision context for exact division
+            # Clearing rate = buy_filled / sell_filled = price_sell / price_buy
+            # (from conservation: sell_filled * price_sell = buy_filled * price_buy)
             with decimal.localcontext(_DECIMAL_HIGH_PREC_CONTEXT):
-                clearing_rate = price_buy / price_sell
+                clearing_rate = price_sell / price_buy
 
             # Surplus = sell_filled × (clearing_rate - limit_rate)
             surplus = Decimal(fill.sell_filled) * (clearing_rate - limit_rate)
@@ -653,13 +655,14 @@ class UnifiedCowStrategy:
             price_sell = prices.get(sell_token)
             price_buy = prices.get(buy_token)
 
-            if price_sell is None or price_buy is None or price_sell <= 0:
+            if price_sell is None or price_buy is None or price_buy <= 0:
                 continue
 
             # Clearing rate at these prices (buy tokens per sell token)
-            # Use high-precision context for exact division
+            # clearing_rate = buy_filled / sell_filled = price_sell / price_buy
+            # (from conservation: sell_filled * price_sell = buy_filled * price_buy)
             with decimal.localcontext(_DECIMAL_HIGH_PREC_CONTEXT):
-                clearing_rate = price_buy / price_sell
+                clearing_rate = price_sell / price_buy
 
             # Order is eligible if it gets at least its limit price
             # Use integer comparison for exactness
@@ -742,12 +745,14 @@ class UnifiedCowStrategy:
             price_sell = prices.get(sell_token)
             price_buy = prices.get(buy_token)
 
-            if price_sell is None or price_buy is None or price_sell <= 0:
+            if price_sell is None or price_buy is None or price_buy <= 0:
                 continue
 
             # Use high-precision context for exact division
+            # Clearing rate = buy_filled / sell_filled = price_sell / price_buy
+            # (from conservation: sell_filled * price_sell = buy_filled * price_buy)
             with decimal.localcontext(_DECIMAL_HIGH_PREC_CONTEXT):
-                clearing_rate = price_buy / price_sell
+                clearing_rate = price_sell / price_buy
 
             token_info = auction.tokens.get(sell_token)
             decimals = (
@@ -797,21 +802,74 @@ class UnifiedCowStrategy:
         )
 
     def _normalize_prices(self, fills: list[OrderFill]) -> dict[str, str]:
-        """Compute clearing prices from fills."""
-        token_sells: dict[str, int] = defaultdict(int)
-        token_buys: dict[str, int] = defaultdict(int)
+        """Compute clearing prices from fills using conservation invariant.
+
+        For each fill, conservation requires:
+            sell_filled * sell_price = buy_filled * buy_price
+
+        We set a reference price and propagate through the fill graph using BFS.
+        This ensures all prices are consistent with the fill amounts.
+        """
+        if not fills:
+            return {}
+
+        # Build adjacency: token -> [(other_token, rate)]
+        # where rate = buy_filled / sell_filled for order selling token
+        # (i.e., how many other_token you get per token)
+        token_rates: dict[str, list[tuple[str, Decimal]]] = defaultdict(list)
 
         for fill in fills:
+            if fill.sell_filled <= 0 or fill.buy_filled <= 0:
+                continue
+
             sell_token = normalize_address(fill.order.sell_token)
             buy_token = normalize_address(fill.order.buy_token)
-            token_sells[sell_token] += fill.sell_filled
-            token_buys[buy_token] += fill.buy_filled
 
-        prices: dict[str, str] = {}
-        for token in set(token_sells.keys()) | set(token_buys.keys()):
-            prices[token] = str(max(token_sells.get(token, 0), token_buys.get(token, 0)))
+            # Rate from sell_token's perspective: buy_token per sell_token
+            with decimal.localcontext(_DECIMAL_HIGH_PREC_CONTEXT):
+                rate = Decimal(fill.buy_filled) / Decimal(fill.sell_filled)
+            token_rates[sell_token].append((buy_token, rate))
 
-        return prices
+            # Inverse rate from buy_token's perspective: sell_token per buy_token
+            with decimal.localcontext(_DECIMAL_HIGH_PREC_CONTEXT):
+                inv_rate = Decimal(fill.sell_filled) / Decimal(fill.buy_filled)
+            token_rates[buy_token].append((sell_token, inv_rate))
+
+        all_tokens = set(token_rates.keys())
+        if not all_tokens:
+            return {}
+
+        # BFS from first token to set consistent prices
+        prices: dict[str, Decimal] = {}
+        visited: set[str] = set()
+
+        for start_token in all_tokens:
+            if start_token in visited:
+                continue
+
+            # Set reference price for this component
+            prices[start_token] = Decimal(10**18)
+            visited.add(start_token)
+            queue = [start_token]
+
+            while queue:
+                token = queue.pop(0)
+                current_price = prices[token]
+
+                for other_token, rate in token_rates[token]:
+                    if other_token not in visited:
+                        # price[other] = price[token] / rate
+                        # Because: token -> other at rate means:
+                        # sell_filled(token) * price(token) = buy_filled(other) * price(other)
+                        # rate = buy_filled / sell_filled
+                        # So: price(other) = price(token) / rate
+                        with decimal.localcontext(_DECIMAL_HIGH_PREC_CONTEXT):
+                            prices[other_token] = current_price / rate
+                        visited.add(other_token)
+                        queue.append(other_token)
+
+        # Convert to strings (as integers)
+        return {token: str(int(price)) for token, price in prices.items()}
 
 
 __all__ = ["UnifiedCowStrategy"]
