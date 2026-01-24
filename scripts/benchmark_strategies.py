@@ -34,9 +34,9 @@ from solver.ebbo import EBBOPrices, EBBOValidator, load_ebbo_prices
 from solver.models.auction import AuctionInstance
 from solver.models.types import normalize_address
 from solver.strategies.cow_match import CowMatchStrategy
-from solver.strategies.hybrid_cow import HybridCowStrategy
 from solver.strategies.multi_pair import MultiPairCowStrategy
-from solver.strategies.ring_trade import RingTradeStrategy
+from solver.strategies.research.hybrid_cow import HybridCowStrategy
+from solver.strategies.research.ring_trade import RingTradeStrategy
 
 
 @dataclass
@@ -182,7 +182,7 @@ def analyze_matching_potential(auction: AuctionInstance) -> dict:
     from collections import defaultdict
 
     from solver.models.types import normalize_address
-    from solver.strategies.ring_trade import OrderGraph
+    from solver.strategies.research.ring_trade import OrderGraph
 
     # Build pair statistics
     pair_orders: dict[tuple[str, str], list] = defaultdict(list)

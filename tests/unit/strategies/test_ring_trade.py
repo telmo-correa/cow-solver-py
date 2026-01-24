@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from solver.models.auction import AuctionInstance, Order, Token
 from solver.strategies.graph import OrderGraph
-from solver.strategies.ring_trade import RingTrade, RingTradeStrategy
+from solver.strategies.research.ring_trade import RingTrade, RingTradeStrategy
 from solver.strategies.settlement import (
     CycleViability,
     check_cycle_viability,

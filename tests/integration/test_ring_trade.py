@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 
 from solver.models.auction import AuctionInstance, Order, Token
-from solver.strategies.ring_trade import OrderGraph, RingTradeStrategy
+from solver.strategies.research.ring_trade import OrderGraph, RingTradeStrategy
 
 
 def make_uid(short_id: str) -> str:

@@ -38,7 +38,6 @@ from solver.strategies.double_auction import (
     run_hybrid_auction,
 )
 from solver.strategies.graph import UnionFind, build_token_graph, find_spanning_tree
-from solver.strategies.hybrid_cow import HybridCowStrategy
 from solver.strategies.multi_pair import MultiPairCowStrategy
 from solver.strategies.pricing import (
     LPResult,
@@ -47,7 +46,8 @@ from solver.strategies.pricing import (
     enumerate_price_combinations,
     solve_fills_at_prices,
 )
-from solver.strategies.ring_trade import (
+from solver.strategies.research import (
+    HybridCowStrategy,
     OrderGraph,
     RingTrade,
     RingTradeStrategy,

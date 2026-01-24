@@ -6,7 +6,7 @@ from solver.amm.uniswap_v2 import UniswapV2, UniswapV2Pool
 from solver.models.auction import AuctionInstance, Order, Token
 from solver.pools import PoolRegistry
 from solver.routing.router import SingleOrderRouter
-from solver.strategies.hybrid_cow import HybridCowStrategy
+from solver.strategies.research.hybrid_cow import HybridCowStrategy
 
 # Counter for generating unique UIDs
 _uid_counter = 0

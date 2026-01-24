@@ -29,7 +29,7 @@ from solver.models.auction import AuctionInstance  # noqa: E402
 from solver.models.order_groups import find_cow_opportunities  # noqa: E402
 from solver.strategies.amm_routing import AmmRoutingStrategy  # noqa: E402
 from solver.strategies.base import StrategyResult  # noqa: E402
-from solver.strategies.hybrid_cow import HybridCowStrategy  # noqa: E402
+from solver.strategies.research.hybrid_cow import HybridCowStrategy  # noqa: E402
 
 logger = structlog.get_logger()
 

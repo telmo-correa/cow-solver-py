@@ -18,7 +18,7 @@ import pytest
 from solver.ebbo import EBBOPrices, EBBOValidator, load_ebbo_prices
 from solver.models.auction import AuctionInstance
 from solver.models.types import normalize_address
-from solver.strategies.ring_trade import (
+from solver.strategies.research.ring_trade import (
     OrderGraph,
     RingTradeStrategy,
     find_viable_cycle_direction,
