@@ -334,10 +334,61 @@ Fill-or-kill orders create integer constraints. In practice:
 
 ---
 
-## 11. Next Steps
+## 11. Benchmark Results (Historical Data)
 
-Before implementation:
-1. **Benchmark existing strategies** on historical data to establish baseline
-2. **Characterize the gap** between optimal and current strategies
+Benchmarked on 50 mainnet auctions (280,920 orders):
+
+### 11.1 Strategy Performance
+
+| Strategy | Orders Matched | Match Rate | Auctions w/ Matches |
+|----------|----------------|------------|---------------------|
+| CowMatch | 0 | 0.00% | 0/50 |
+| HybridCow | 192 | 0.07% | 42/50 |
+| RingTrade | 467 | 0.17% | 50/50 |
+
+### 11.2 Theoretical Potential
+
+| Metric | Count | Percentage |
+|--------|-------|------------|
+| Orders on bidirectional pairs | 102,373 | 36.4% |
+| Orders on crossing pairs (ask ≤ bid) | 40,521 | 14.4% |
+| Orders matched by best strategy | 467 | 0.17% |
+
+### 11.3 Gap Analysis
+
+**Primary Bottleneck: Price Crossing**
+- Only 39.6% of CoW-potential orders have crossing prices
+- 60.4% cannot match (ask > bid)
+
+**Crossing Pairs Breakdown:**
+- 611 pairs have crossing prices
+- 53 are 1v1 (single order each side)
+- 558 are multi-order (need aggregation)
+- Most limited by A-sellers (sell pressure)
+
+**Fill-or-Kill Impact:**
+- 94.9% of CoW-potential orders are partially fillable
+- Only 5.1% are fill-or-kill (not a major bottleneck)
+
+### 11.4 Key Insight
+
+The gap between **40,521 crossing orders** and **467 matched** (87x difference) comes from:
+
+1. **Strategy limitations:**
+   - CowMatch only handles 2-order auctions
+   - HybridCow needs AMM reference price
+   - RingTrade needs exact cycles
+
+2. **Volume imbalance:** Unequal buy/sell pressure on pairs
+
+3. **Token overlap:** Multiple pairs share tokens, causing clearing price conflicts
+
+---
+
+## 12. Next Steps
+
+~~1. Benchmark existing strategies on historical data to establish baseline~~ ✓
+~~2. Characterize the gap between optimal and current strategies~~ ✓
 3. **Prototype price enumeration** to test if discrete price search is tractable
 4. **Evaluate solvers** (scipy, cvxpy, or-tools) for the continuous relaxation
+5. **Design unified strategy** that processes all crossing pairs in each auction
