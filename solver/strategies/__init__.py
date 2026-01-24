@@ -25,6 +25,12 @@ from solver.strategies.double_auction import (
     run_hybrid_auction,
 )
 from solver.strategies.hybrid_cow import HybridCowStrategy
+from solver.strategies.ring_trade import (
+    CycleViability,
+    OrderGraph,
+    RingTrade,
+    RingTradeStrategy,
+)
 
 __all__ = [
     "SolutionStrategy",
@@ -42,4 +48,9 @@ __all__ = [
     "run_double_auction",
     "run_hybrid_auction",
     "calculate_surplus",
+    # Ring trades (Slice 4.4)
+    "OrderGraph",
+    "CycleViability",
+    "RingTrade",
+    "RingTradeStrategy",
 ]

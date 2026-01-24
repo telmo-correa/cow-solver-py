@@ -32,10 +32,11 @@ This directory tracks progress across AI-assisted development sessions.
 - **Slice 4.2c:** Complete (Strategy integration into solver)
 - **Slice 4.2 Benchmark:** Exit criteria PASS (50.0% >= 20%) on all CoW fixtures
 - **Slice 4.3:** Complete (Evaluation showed direct CoW 1.4%, ring trades 5.41%)
-- **Tests:** 877 passing
+- **Slice 4.4:** Complete (Ring trade detection - OrderGraph, cycle detection, RingTradeStrategy)
+- **Tests:** 942 passing
 - **Liquidity:** V2, V3, Balancer weighted, Balancer stable, 0x limit orders
 - **Parity:** Complete liquidity parity with Rust baseline solver
-- **Next:** Slice 4.4 - Ring Trade Implementation
+- **Next:** Slice 4.5 - Ring trade integration into solver pipeline
 
 ## Session Archive
 
@@ -91,6 +92,7 @@ Individual session logs are preserved in the `archive/` directory for reference.
 | [46](archive/session-46-slice4.2c-integration.md) | 2026-01-23 | Slice 4.2c - Strategy Integration |
 | [47](archive/session-47-decimal-fix.md) | 2026-01-23 | Token Decimal Handling Fix |
 | [48](../evaluations/slice-4.3-evaluation-results.md) | 2026-01-23 | Slice 4.3 - Evaluation & Ring Trade Analysis |
+| [49](archive/session-49-slice4.4-ring-trade.md) | 2026-01-23 | Slice 4.4 - Ring Trade Detection |
 
 ## Session Template
 
