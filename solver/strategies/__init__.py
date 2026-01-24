@@ -1,7 +1,16 @@
 """Solution strategies for the CoW Protocol solver.
 
-Strategies are tried in order of preference. Each strategy returns a StrategyResult
+Strategies are tried in order by the Solver. Each strategy returns a StrategyResult
 if it can handle the auction (even partially), or None to pass to the next strategy.
+
+**Default Production Chain:**
+    1. CowMatchStrategy - 2-order direct peer-to-peer matching
+    2. MultiPairCowStrategy - N-order joint optimization across overlapping pairs
+    3. AmmRoutingStrategy - AMM routing fallback
+
+**Research/Experimental (not in default chain):**
+    - HybridCowStrategy - Superseded by MultiPairCowStrategy
+    - RingTradeStrategy - Low ROI (0.12% match rate)
 
 StrategyResults can be composed - e.g., CoW matching fills part of an order,
 then AMM routing fills the remainder.
@@ -45,14 +54,19 @@ from solver.strategies.ring_trade import (
 )
 
 __all__ = [
+    # === Base Protocol ===
     "SolutionStrategy",
     "StrategyResult",
     "OrderFill",
     "PriceWorsened",
-    "CowMatchStrategy",
-    "HybridCowStrategy",
-    "AmmRoutingStrategy",
-    # Double auction (Phase 4)
+    # === Production Strategies ===
+    "CowMatchStrategy",  # 2-order matching
+    "MultiPairCowStrategy",  # N-order joint optimization (Slice 4.6)
+    "AmmRoutingStrategy",  # AMM routing fallback
+    # === Research/Experimental Strategies ===
+    "HybridCowStrategy",  # DEPRECATED: superseded by MultiPairCowStrategy
+    "RingTradeStrategy",  # Research: cyclic trades (Slice 4.4)
+    # === Double Auction Utilities ===
     "DoubleAuctionMatch",
     "DoubleAuctionResult",
     "AMMRoute",
@@ -60,8 +74,7 @@ __all__ = [
     "run_double_auction",
     "run_hybrid_auction",
     "calculate_surplus",
-    # Multi-pair coordination (Slice 4.6)
-    "MultiPairCowStrategy",
+    # === Multi-Pair Utilities (Slice 4.6) ===
     "UnionFind",
     "find_token_components",
     "PriceCandidates",
@@ -71,9 +84,8 @@ __all__ = [
     "enumerate_price_combinations",
     "LPResult",
     "solve_fills_at_prices",
-    # Ring trades (Slice 4.4)
+    # === Ring Trade Utilities (Slice 4.4) ===
     "OrderGraph",
     "CycleViability",
     "RingTrade",
-    "RingTradeStrategy",
 ]

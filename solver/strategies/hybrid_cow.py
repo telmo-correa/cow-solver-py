@@ -1,5 +1,13 @@
 """Hybrid CoW+AMM matching strategy.
 
+.. deprecated::
+    This strategy has been **superseded by MultiPairCowStrategy** (Slice 4.6).
+    MultiPairCowStrategy provides joint optimization across overlapping token
+    pairs, which HybridCowStrategy cannot do. This module is kept for reference
+    and research purposes but is NOT part of the default solver chain.
+
+    Use MultiPairCowStrategy for production.
+
 This strategy extends simple 2-order CoW matching to handle N orders
 by using AMM reference prices to unlock more matches.
 

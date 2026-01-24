@@ -15,11 +15,13 @@ This project implements a solver for [CoW Protocol](https://cow.fi/) batch aucti
 
 ## Status
 
-- **Phase 1 Complete** — Single order routing via UniswapV2 (direct + multi-hop)
-- **Phase 2 Complete** — CoW matching (2-order peer-to-peer, partial fills)
-- **Phase 3 Complete** — Liquidity expansion (V3, Balancer weighted, Balancer stable, 0x limit orders)
-- **750 tests passing** — Full coverage with Rust baseline parity
+- **Phase 1-3 Complete** — Single order routing, CoW matching, liquidity expansion
+- **Phase 4 Complete** — Multi-order optimization with EBBO validation
+- **992 tests passing** — Full coverage with Rust baseline parity
 - **Complete liquidity parity** — All 5 Rust baseline liquidity types supported
+- **EBBO compliant** — Zero tolerance enforcement on all strategies
+
+**Production Strategy Chain:** CowMatch → MultiPair → AmmRouting
 
 See [PLAN.md](PLAN.md) for the detailed implementation roadmap.
 

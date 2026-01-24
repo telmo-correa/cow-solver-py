@@ -459,7 +459,7 @@ Despite multi-pair coordination, significant gap remains:
 - [ ] Test: large orders (>10% of pool liquidity)
 - [ ] Benchmark: slippage reduction vs single-venue
 
-### Slice 4.6: Flash Loan Integration (Future)
+### Slice 4.8: Flash Loan Integration (Future)
 **Goal:** Use flash loans to enable better user fills (not solver profit)
 
 > **Design Doc:** See `docs/research/flash-loans.md` for full research and design decisions.
@@ -488,6 +488,23 @@ Flash loans provide temporary capital within a single transaction, enabling:
 3. Aave (0.05% fee, ~70k gas) - fallback for large amounts
 
 **Exit Criteria:** Solver finds globally optimal (or near-optimal) solutions across all mechanisms.
+
+### Phase 4 Status Summary
+
+| Slice | Status | Notes |
+|-------|--------|-------|
+| 4.1 Problem Formulation | ✅ Complete | Double auction prototype |
+| 4.2 Hybrid CoW+AMM | ✅ Complete | HybridCowStrategy (superseded) |
+| 4.3 Evaluation | ✅ Complete | Data-driven direction choice |
+| 4.4 Ring Trade Detection | ✅ Complete | RingTradeStrategy (research) |
+| 4.5 Settlement Optimization | ✅ Complete | MIBLP formulation + LP solver |
+| 4.6 Multi-Pair Coordination | ✅ Complete | MultiPairCowStrategy + EBBO |
+| 4.7 Split Routing | Deferred | Lower priority than token overlap |
+| 4.8 Flash Loans | Future | Requires 4.7 first |
+
+**Current Production Chain:** CowMatch → MultiPair → AmmRouting (992 tests passing)
+
+**Gap Under Investigation:** 36.53% CoW potential vs 0.12% actual match rate
 
 ---
 
