@@ -59,7 +59,7 @@ def get_token_info(auction: AuctionInstance, token_address: str) -> Token | None
     Returns:
         Token info if found, None otherwise
     """
-    token_lower = token_address.lower()
+    token_norm = normalize_address(token_address)
 
     # Try direct lookup first (most common case)
     token_info = auction.tokens.get(token_address)
@@ -68,7 +68,7 @@ def get_token_info(auction: AuctionInstance, token_address: str) -> Token | None
 
     # Try case-insensitive lookup
     for addr, info in auction.tokens.items():
-        if addr.lower() == token_lower:
+        if normalize_address(addr) == token_norm:
             return info
 
     return None

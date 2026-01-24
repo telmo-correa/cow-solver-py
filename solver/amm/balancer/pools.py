@@ -9,6 +9,8 @@ from dataclasses import dataclass
 from decimal import Decimal
 from typing import Literal
 
+from solver.models.types import normalize_address
+
 
 @dataclass(frozen=True)
 class WeightedTokenReserve:
@@ -52,9 +54,9 @@ class BalancerWeightedPool:
 
     def get_reserve(self, token: str) -> WeightedTokenReserve | None:
         """Get reserve for a specific token."""
-        token_lower = token.lower()
+        token_norm = normalize_address(token)
         for reserve in self.reserves:
-            if reserve.token.lower() == token_lower:
+            if normalize_address(reserve.token) == token_norm:
                 return reserve
         return None
 
@@ -107,9 +109,9 @@ class BalancerStablePool:
 
     def get_reserve(self, token: str) -> StableTokenReserve | None:
         """Get reserve for a specific token."""
-        token_lower = token.lower()
+        token_norm = normalize_address(token)
         for reserve in self.reserves:
-            if reserve.token.lower() == token_lower:
+            if normalize_address(reserve.token) == token_norm:
                 return reserve
         return None
 

@@ -283,7 +283,10 @@ class Solver:
         interaction_index: dict[tuple[str, str], list[tuple[int, Interaction]]] = {}
         for j, interaction in enumerate(result.interactions):
             if hasattr(interaction, "input_token") and hasattr(interaction, "output_token"):
-                key = (interaction.input_token.lower(), interaction.output_token.lower())
+                key = (
+                    normalize_address(interaction.input_token),
+                    normalize_address(interaction.output_token),
+                )
                 if key not in interaction_index:
                     interaction_index[key] = []
                 interaction_index[key].append((j, interaction))
@@ -297,7 +300,7 @@ class Solver:
 
             # Find interactions for this order using pre-built index
             order_interactions = []
-            key = (order.sell_token.lower(), order.buy_token.lower())
+            key = (normalize_address(order.sell_token), normalize_address(order.buy_token))
             for j, interaction in interaction_index.get(key, []):
                 if j not in assigned_interactions:
                     order_interactions.append(interaction)

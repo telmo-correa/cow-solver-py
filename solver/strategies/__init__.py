@@ -23,6 +23,7 @@ from solver.strategies.base import (
     SolutionStrategy,
     StrategyResult,
 )
+from solver.strategies.base_amm import AMMBackedStrategy
 
 # Import from new modular files
 from solver.strategies.components import find_token_components
@@ -59,6 +60,7 @@ __all__ = [
     "StrategyResult",
     "OrderFill",
     "PriceWorsened",
+    "AMMBackedStrategy",  # Base class for AMM-backed strategies
     # === Production Strategies ===
     "CowMatchStrategy",  # 2-order matching
     "MultiPairCowStrategy",  # N-order joint optimization (Slice 4.6)

@@ -5,6 +5,7 @@ Uses Newton-Raphson iteration for invariant calculation.
 """
 
 from solver.math.fixed_point import AMP_PRECISION, Bfp
+from solver.models.types import normalize_address
 
 from .errors import StableGetBalanceDidNotConverge, StableInvariantDidNotConverge, ZeroBalanceError
 from .pools import BalancerStablePool
@@ -336,8 +337,10 @@ def filter_bpt_token(pool: BalancerStablePool) -> BalancerStablePool:
     Returns:
         A new pool with BPT token removed from reserves (if present)
     """
-    pool_address_lower = pool.address.lower()
-    filtered_reserves = tuple(r for r in pool.reserves if r.token.lower() != pool_address_lower)
+    pool_address_norm = normalize_address(pool.address)
+    filtered_reserves = tuple(
+        r for r in pool.reserves if normalize_address(r.token) != pool_address_norm
+    )
 
     # If nothing was filtered, return original pool
     if len(filtered_reserves) == len(pool.reserves):

@@ -16,13 +16,13 @@ from typing import TYPE_CHECKING
 
 import structlog
 
-from solver.amm.uniswap_v2 import UniswapV2, uniswap_v2
 from solver.models.auction import AuctionInstance, Order
 from solver.models.order_groups import OrderGroup, find_cow_opportunities
 from solver.models.types import normalize_address
-from solver.pools import PoolRegistry, build_registry_from_liquidity
+from solver.pools import build_registry_from_liquidity
 from solver.routing.router import SingleOrderRouter
 from solver.strategies.base import OrderFill, StrategyResult
+from solver.strategies.base_amm import AMMBackedStrategy
 from solver.strategies.components import find_token_components
 from solver.strategies.ebbo_bounds import get_ebbo_bounds, verify_fills_against_ebbo
 from solver.strategies.graph import OrderGraph, find_spanning_tree
@@ -38,12 +38,13 @@ from solver.strategies.settlement import solve_cycle
 if TYPE_CHECKING:
     from solver.amm.balancer import BalancerStableAMM, BalancerWeightedAMM
     from solver.amm.limit_order import LimitOrderAMM
+    from solver.amm.uniswap_v2 import UniswapV2
     from solver.amm.uniswap_v3 import UniswapV3AMM
 
 logger = structlog.get_logger()
 
 
-class MultiPairCowStrategy:
+class MultiPairCowStrategy(AMMBackedStrategy):
     """Strategy that coordinates prices across multiple overlapping token pairs.
 
     When use_generalized=True (default), this strategy:
@@ -79,29 +80,18 @@ class MultiPairCowStrategy:
         use_generalized: bool = True,
     ) -> None:
         """Initialize with optional AMM components for price queries."""
-        self.amm = amm if amm is not None else uniswap_v2
-        self._injected_router = router
-        self.v3_amm = v3_amm
-        self.weighted_amm = weighted_amm
-        self.stable_amm = stable_amm
-        self.limit_order_amm = limit_order_amm
+        super().__init__(
+            amm=amm,
+            router=router,
+            v3_amm=v3_amm,
+            weighted_amm=weighted_amm,
+            stable_amm=stable_amm,
+            limit_order_amm=limit_order_amm,
+        )
         self.max_combinations = max_combinations
         self.max_components = max_components
         self.max_tokens = max_tokens
         self.use_generalized = use_generalized
-
-    def _get_router(self, pool_registry: PoolRegistry) -> SingleOrderRouter:
-        """Get the router to use for AMM price queries."""
-        if self._injected_router is not None:
-            return self._injected_router
-        return SingleOrderRouter(
-            amm=self.amm,
-            pool_registry=pool_registry,
-            v3_amm=self.v3_amm,
-            weighted_amm=self.weighted_amm,
-            stable_amm=self.stable_amm,
-            limit_order_amm=self.limit_order_amm,
-        )
 
     def try_solve(self, auction: AuctionInstance) -> StrategyResult | None:
         """Try to find CoW matches using multi-pair optimization.

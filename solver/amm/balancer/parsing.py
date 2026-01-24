@@ -11,6 +11,8 @@ from typing import TYPE_CHECKING, Any, Literal
 
 import structlog
 
+from solver.models.types import normalize_address
+
 from .pools import (
     BalancerStablePool,
     BalancerWeightedPool,
@@ -38,8 +40,8 @@ def _get_liquidity_extra(liquidity: Liquidity, key: str, default: Any = None) ->
 
 
 def _normalize_dict_keys(d: dict[str, Any]) -> dict[str, Any]:
-    """Normalize dictionary keys to lowercase for case-insensitive lookup."""
-    return {k.lower(): v for k, v in d.items()}
+    """Normalize dictionary keys for case-insensitive lookup."""
+    return {normalize_address(k): v for k, v in d.items()}
 
 
 def _parse_balance(
@@ -94,8 +96,8 @@ def _parse_scaling_factor(
 
     Falls back to 1 if not found or invalid.
     """
-    token_addr_lower = token_addr.lower()
-    scaling_raw: Any = scaling_factors_dict.get(token_addr_lower)
+    token_addr_norm = normalize_address(token_addr)
+    scaling_raw: Any = scaling_factors_dict.get(token_addr_norm)
     if scaling_raw is None and token_data is not None:
         # Try per-token data (Rust auction format uses "scalingFactor")
         scaling_raw = token_data.get("scalingFactor", "1")
@@ -197,10 +199,10 @@ def parse_weighted_pool(liquidity: Liquidity) -> BalancerWeightedPool | None:
             )
             return None
 
-        token_addr_lower = token_addr.lower()
+        token_addr_norm = normalize_address(token_addr)
 
         # Get weight: first try top-level dict, then try per-token data (Rust format)
-        weight_raw: str | None = weights_dict.get(token_addr_lower)
+        weight_raw: str | None = weights_dict.get(token_addr_norm)
         if weight_raw is None:
             # Try to get weight from token data (Rust auction format)
             weight_from_data = token_data.get("weight")
@@ -272,7 +274,7 @@ def parse_weighted_pool(liquidity: Liquidity) -> BalancerWeightedPool | None:
         return None
 
     # Sort reserves by token address (required for Balancer)
-    reserves.sort(key=lambda r: r.token.lower())
+    reserves.sort(key=lambda r: normalize_address(r.token))
 
     # Parse fee (default 0.3%)
     fee = _parse_fee(liquidity.fee, "0.003", liquidity.id, "weighted_pool")
@@ -352,14 +354,14 @@ def parse_stable_pool(liquidity: Liquidity) -> BalancerStablePool | None:
         _normalize_dict_keys(scaling_factors_raw) if isinstance(scaling_factors_raw, dict) else {}
     )
 
-    # Pool address (lowercase) for BPT filtering
-    pool_address_lower = liquidity.address.lower()
+    # Pool address (normalized) for BPT filtering
+    pool_address_norm = normalize_address(liquidity.address)
 
     # Parse token reserves
     reserves: list[StableTokenReserve] = []
     for token_addr, token_data in liquidity.tokens.items():
         # Skip BPT token (pool's own token in composable stable pools)
-        if token_addr.lower() == pool_address_lower:
+        if normalize_address(token_addr) == pool_address_norm:
             continue
 
         if not isinstance(token_data, dict):
@@ -397,7 +399,7 @@ def parse_stable_pool(liquidity: Liquidity) -> BalancerStablePool | None:
         return None
 
     # Sort reserves by token address (required for Balancer)
-    reserves.sort(key=lambda r: r.token.lower())
+    reserves.sort(key=lambda r: normalize_address(r.token))
 
     # Parse fee (default 0.01% for stable pools)
     fee = _parse_fee(liquidity.fee, "0.0001", liquidity.id, "stable_pool")

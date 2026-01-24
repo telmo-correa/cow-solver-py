@@ -8,21 +8,18 @@ from typing import TYPE_CHECKING
 import structlog
 
 from solver.amm.uniswap_v2 import (
-    UniswapV2,
     UniswapV2Pool,
-    uniswap_v2,
 )
-from solver.fees import DefaultFeeCalculator, PoolBasedPriceEstimator
 from solver.models.auction import AuctionInstance, Order
 from solver.models.solution import Interaction, Solution
+from solver.models.types import normalize_address
 from solver.pools import PoolRegistry, build_registry_from_liquidity
-from solver.routing.router import RoutingResult, SingleOrderRouter
+from solver.routing.router import RoutingResult
 from solver.strategies.base import OrderFill, StrategyResult
+from solver.strategies.base_amm import AMMBackedStrategy
 
 if TYPE_CHECKING:
-    from solver.amm.balancer import BalancerStableAMM, BalancerWeightedAMM
-    from solver.amm.limit_order import LimitOrderAMM
-    from solver.amm.uniswap_v3 import UniswapV3AMM
+    pass
 
 logger = structlog.get_logger()
 
@@ -36,7 +33,7 @@ class _OrderRoutingResult:
     routing_result: RoutingResult
 
 
-class AmmRoutingStrategy:
+class AmmRoutingStrategy(AMMBackedStrategy):
     """Strategy that routes orders through AMM liquidity pools.
 
     This strategy handles:
@@ -55,74 +52,19 @@ class AmmRoutingStrategy:
 
     It builds a PoolRegistry from the auction's liquidity data and uses
     the SingleOrderRouter to find routes through available pools.
+
+    Args:
+        amm: AMM implementation for swap math. Defaults to UniswapV2.
+        router: Injected router for testing. If provided, used directly
+                instead of creating one from auction liquidity. Note that
+                injected routers are stateless - reserve updates between
+                orders won't affect the injected router's pool finder.
+                This is acceptable for unit tests with mocked behavior.
+        v3_amm: UniswapV3 AMM for V3 pool routing. If None, V3 pools are skipped.
+        weighted_amm: Balancer weighted AMM. If None, weighted pools are skipped.
+        stable_amm: Balancer stable AMM. If None, stable pools are skipped.
+        limit_order_amm: 0x limit order AMM. If None, limit orders are skipped.
     """
-
-    def __init__(
-        self,
-        amm: UniswapV2 | None = None,
-        router: SingleOrderRouter | None = None,
-        v3_amm: UniswapV3AMM | None = None,
-        weighted_amm: BalancerWeightedAMM | None = None,
-        stable_amm: BalancerStableAMM | None = None,
-        limit_order_amm: LimitOrderAMM | None = None,
-    ) -> None:
-        """Initialize the AMM routing strategy.
-
-        Args:
-            amm: AMM implementation for swap math. Defaults to UniswapV2.
-            router: Injected router for testing. If provided, used directly
-                    instead of creating one from auction liquidity. Note that
-                    injected routers are stateless - reserve updates between
-                    orders won't affect the injected router's pool finder.
-                    This is acceptable for unit tests with mocked behavior.
-            v3_amm: UniswapV3 AMM for V3 pool routing. If None, V3 pools are skipped.
-            weighted_amm: Balancer weighted AMM. If None, weighted pools are skipped.
-            stable_amm: Balancer stable AMM. If None, stable pools are skipped.
-            limit_order_amm: 0x limit order AMM. If None, limit orders are skipped.
-        """
-        self.amm = amm if amm is not None else uniswap_v2
-        self._injected_router = router
-        self.v3_amm = v3_amm
-        self.weighted_amm = weighted_amm
-        self.stable_amm = stable_amm
-        self.limit_order_amm = limit_order_amm
-
-    def _get_router(self, pool_registry: PoolRegistry) -> SingleOrderRouter:
-        """Get the router to use for routing orders.
-
-        Returns the injected router if available, otherwise creates a new one.
-
-        Args:
-            pool_registry: Registry of available liquidity pools
-
-        Returns:
-            Router instance to use for routing
-        """
-        if self._injected_router is not None:
-            return self._injected_router
-        return SingleOrderRouter(
-            amm=self.amm,
-            pool_registry=pool_registry,
-            v3_amm=self.v3_amm,
-            weighted_amm=self.weighted_amm,
-            stable_amm=self.stable_amm,
-            limit_order_amm=self.limit_order_amm,
-        )
-
-    def _create_fee_calculator(self, router: SingleOrderRouter) -> DefaultFeeCalculator:
-        """Create a fee calculator with pool-based price estimation.
-
-        This enables fee calculation for limit orders when reference prices
-        are missing, by estimating prices through pool routing to native token.
-
-        Args:
-            router: Router for simulating price estimation swaps
-
-        Returns:
-            Fee calculator with price estimator configured
-        """
-        price_estimator = PoolBasedPriceEstimator(router=router)
-        return DefaultFeeCalculator(price_estimator=price_estimator)
 
     def _route_and_build(
         self, order: Order, pool_registry: PoolRegistry
@@ -302,8 +244,8 @@ class AmmRoutingStrategy:
         Returns:
             New UniswapV2Pool with updated reserves
         """
-        token_in_norm = token_in.lower()
-        is_token0 = token_in_norm == pool.token0.lower()
+        token_in_norm = normalize_address(token_in)
+        is_token0 = token_in_norm == normalize_address(pool.token0)
 
         if is_token0:
             new_reserve0 = pool.reserve0 + amount_in

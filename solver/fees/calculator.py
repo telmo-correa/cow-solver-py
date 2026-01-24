@@ -15,6 +15,7 @@ from solver.fees.config import DEFAULT_FEE_CONFIG, FeeConfig
 from solver.fees.price_estimation import get_token_info
 from solver.fees.result import FeeError, FeeResult
 from solver.models.auction import AuctionInstance, Order, OrderClass
+from solver.models.types import normalize_address
 from solver.safe_int import S, Uint256Overflow
 
 if TYPE_CHECKING:
@@ -153,7 +154,7 @@ class DefaultFeeCalculator:
             return FeeResult.zero_fee()
 
         # Get reference price for sell token
-        sell_token = order.sell_token.lower()
+        sell_token = normalize_address(order.sell_token)
         reference_price, price_source = self._get_reference_price(sell_token, auction)
 
         if reference_price is None:

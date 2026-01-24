@@ -130,7 +130,7 @@ def _get_weighted_reserves(
         Tuple of (reserve_in, reserve_out), or None if tokens not found or same
     """
     # Reject self-swaps
-    if token_in.lower() == token_out.lower():
+    if normalize_address(token_in) == normalize_address(token_out):
         logger.debug(
             "weighted_amm_self_swap",
             pool_id=pool.id,
@@ -201,15 +201,15 @@ def _get_stable_reserves(
     reserve_out = None
     index_out = None
 
-    token_in_lower = token_in.lower()
-    token_out_lower = token_out.lower()
+    token_in_norm = normalize_address(token_in)
+    token_out_norm = normalize_address(token_out)
 
     for i, reserve in enumerate(pool.reserves):
-        token_lower = reserve.token.lower()
-        if token_lower == token_in_lower:
+        token_norm = normalize_address(reserve.token)
+        if token_norm == token_in_norm:
             reserve_in = reserve
             index_in = i
-        elif token_lower == token_out_lower:
+        elif token_norm == token_out_norm:
             reserve_out = reserve
             index_out = i
 

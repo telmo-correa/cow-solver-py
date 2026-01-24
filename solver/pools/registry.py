@@ -188,7 +188,7 @@ class PoolRegistry:
 
         self._weighted_pool_ids.add(pool.id)
 
-        tokens = [r.token.lower() for r in pool.reserves]
+        tokens = [normalize_address(r.token) for r in pool.reserves]
         for i, t1 in enumerate(tokens):
             for t2 in tokens[i + 1 :]:
                 # Canonical pair ordering
@@ -215,7 +215,7 @@ class PoolRegistry:
 
         self._stable_pool_ids.add(pool.id)
 
-        tokens = [r.token.lower() for r in pool.reserves]
+        tokens = [normalize_address(r.token) for r in pool.reserves]
         for i, t1 in enumerate(tokens):
             for t2 in tokens[i + 1 :]:
                 # Canonical pair ordering

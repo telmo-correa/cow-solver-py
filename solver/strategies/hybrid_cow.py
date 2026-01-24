@@ -31,25 +31,22 @@ from typing import TYPE_CHECKING
 
 import structlog
 
-from solver.amm.uniswap_v2 import UniswapV2, uniswap_v2
 from solver.models.auction import AuctionInstance
 from solver.models.order_groups import find_cow_opportunities
 from solver.models.types import normalize_address
-from solver.pools import PoolRegistry, build_registry_from_liquidity
-from solver.routing.router import SingleOrderRouter
+from solver.pools import build_registry_from_liquidity
 from solver.strategies.base import OrderFill, StrategyResult
+from solver.strategies.base_amm import AMMBackedStrategy
 from solver.strategies.double_auction import run_hybrid_auction
 from solver.strategies.ebbo_bounds import get_ebbo_bounds
 
 if TYPE_CHECKING:
-    from solver.amm.balancer import BalancerStableAMM, BalancerWeightedAMM
-    from solver.amm.limit_order import LimitOrderAMM
-    from solver.amm.uniswap_v3 import UniswapV3AMM
+    pass
 
 logger = structlog.get_logger()
 
 
-class HybridCowStrategy:
+class HybridCowStrategy(AMMBackedStrategy):
     """Strategy that matches orders using hybrid CoW+AMM auction.
 
     For each token pair with orders in both directions:
@@ -71,39 +68,6 @@ class HybridCowStrategy:
         stable_amm: Balancer stable AMM. If None, stable pools are skipped.
         limit_order_amm: 0x limit order AMM. If None, limit orders are skipped.
     """
-
-    def __init__(
-        self,
-        amm: UniswapV2 | None = None,
-        router: SingleOrderRouter | None = None,
-        v3_amm: UniswapV3AMM | None = None,
-        weighted_amm: BalancerWeightedAMM | None = None,
-        stable_amm: BalancerStableAMM | None = None,
-        limit_order_amm: LimitOrderAMM | None = None,
-    ) -> None:
-        """Initialize with optional AMM components for price queries."""
-        self.amm = amm if amm is not None else uniswap_v2
-        self._injected_router = router
-        self.v3_amm = v3_amm
-        self.weighted_amm = weighted_amm
-        self.stable_amm = stable_amm
-        self.limit_order_amm = limit_order_amm
-
-    def _get_router(self, pool_registry: PoolRegistry) -> SingleOrderRouter:
-        """Get the router to use for AMM price queries.
-
-        Returns the injected router if available, otherwise creates a new one.
-        """
-        if self._injected_router is not None:
-            return self._injected_router
-        return SingleOrderRouter(
-            amm=self.amm,
-            pool_registry=pool_registry,
-            v3_amm=self.v3_amm,
-            weighted_amm=self.weighted_amm,
-            stable_amm=self.stable_amm,
-            limit_order_amm=self.limit_order_amm,
-        )
 
     def try_solve(self, auction: AuctionInstance) -> StrategyResult | None:
         """Try to find CoW matches using hybrid auction.

@@ -51,18 +51,20 @@ class UniswapV2Pool:
 
     def get_reserves(self, token_in: str) -> tuple[int, int]:
         """Get reserves ordered as (reserve_in, reserve_out)."""
-        if token_in.lower() == self.token0.lower():
+        token_in_norm = normalize_address(token_in)
+        if token_in_norm == normalize_address(self.token0):
             return self.reserve0, self.reserve1
-        elif token_in.lower() == self.token1.lower():
+        elif token_in_norm == normalize_address(self.token1):
             return self.reserve1, self.reserve0
         else:
             raise ValueError(f"Token {token_in} not in pool")
 
     def get_token_out(self, token_in: str) -> str:
         """Get the output token for a given input token."""
-        if token_in.lower() == self.token0.lower():
+        token_in_norm = normalize_address(token_in)
+        if token_in_norm == normalize_address(self.token0):
             return self.token1
-        elif token_in.lower() == self.token1.lower():
+        elif token_in_norm == normalize_address(self.token1):
             return self.token0
         else:
             raise ValueError(f"Token {token_in} not in pool")
