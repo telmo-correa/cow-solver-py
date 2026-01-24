@@ -300,6 +300,17 @@ class AmmRoutingStrategy(AMMBackedStrategy):
             if result is not None:
                 all_fills.append(result.fill)
                 all_interactions.extend(result.solution.interactions)
+
+                # Detect price conflicts before updating
+                for token, price in result.solution.prices.items():
+                    if token in all_prices and all_prices[token] != price:
+                        logger.warning(
+                            "amm_routing_price_conflict",
+                            token=token[-8:],
+                            existing_price=all_prices[token],
+                            new_price=price,
+                            order_uid=order.uid[:18] + "...",
+                        )
                 all_prices.update(result.solution.prices)
                 total_gas += result.solution.gas or 0
 

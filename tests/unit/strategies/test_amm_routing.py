@@ -394,3 +394,208 @@ class TestAmmRoutingMultipleOrders:
         assert result is not None
         assert len(result.fills) == 1
         assert result.fills[0].order.uid == order_a.uid
+
+
+class TestAmmRoutingPriceConflict:
+    """Tests for price conflict detection in AmmRoutingStrategy.
+
+    When multiple orders for the same token pair are routed independently,
+    they may produce different clearing prices due to price impact.
+    The strategy logs a warning when this happens.
+    """
+
+    def test_same_prices_no_conflict(self, caplog):
+        """Two orders with same prices don't trigger conflict warning."""
+        import logging
+
+        order_a = make_order(
+            uid="0x" + "01" * 56,
+            sell_amount="1000000000000000000",  # 1 WETH
+            buy_amount="2500000000",  # 2500 USDC
+        )
+        order_b = make_order(
+            uid="0x" + "02" * 56,
+            sell_amount="1000000000000000000",  # 1 WETH
+            buy_amount="2500000000",  # 2500 USDC
+        )
+
+        # Both orders get same prices
+        mock_router = Mock()
+        mock_solution_a = Mock()
+        mock_solution_a.prices = {WETH.lower(): "2500000000", USDC.lower(): "1000000000000000000"}
+        mock_solution_a.interactions = []
+        mock_solution_a.gas = 100000
+
+        mock_solution_b = Mock()
+        mock_solution_b.prices = {
+            WETH.lower(): "2500000000",
+            USDC.lower(): "1000000000000000000",
+        }  # Same prices
+        mock_solution_b.interactions = []
+        mock_solution_b.gas = 100000
+
+        call_count = [0]
+
+        def route_order_side_effect(order):
+            call_count[0] += 1
+            return RoutingResult(
+                order=order,
+                amount_in=1000000000000000000,
+                amount_out=2500000000,
+                pool=None,
+                success=True,
+            )
+
+        def build_solution_side_effect(_result, **_kwargs):
+            if call_count[0] == 1:
+                return mock_solution_a
+            return mock_solution_b
+
+        mock_router.route_order.side_effect = route_order_side_effect
+        mock_router.build_solution.side_effect = build_solution_side_effect
+
+        strategy = AmmRoutingStrategy()
+        strategy._get_router = Mock(return_value=mock_router)
+        strategy._create_fee_calculator = Mock(return_value=None)
+
+        with caplog.at_level(logging.WARNING):
+            auction = make_auction([order_a, order_b])
+            result = strategy.try_solve(auction)
+
+        # Should succeed with both orders
+        assert result is not None
+        assert len(result.fills) == 2
+
+        # No price conflict warning
+        assert "price_conflict" not in caplog.text
+
+    def test_different_prices_logs_conflict(self, capsys):
+        """Two orders with different prices trigger conflict warning."""
+        order_a = make_order(
+            uid="0x" + "01" * 56,
+            sell_amount="1000000000000000000",  # 1 WETH
+            buy_amount="2400000000",  # 2400 USDC limit
+        )
+        order_b = make_order(
+            uid="0x" + "02" * 56,
+            sell_amount="2000000000000000000",  # 2 WETH (larger order = more price impact)
+            buy_amount="4800000000",  # 4800 USDC limit (4800/2 = 2400)
+        )
+
+        # Order A gets 2500 USDC/WETH, Order B gets 2450 USDC/WETH (price impact)
+        mock_router = Mock()
+        mock_solution_a = Mock()
+        mock_solution_a.prices = {WETH.lower(): "2500000000", USDC.lower(): "1000000000000000000"}
+        mock_solution_a.interactions = []
+        mock_solution_a.gas = 100000
+
+        mock_solution_b = Mock()
+        mock_solution_b.prices = {
+            WETH.lower(): "2450000000",
+            USDC.lower(): "1000000000000000000",
+        }  # Different WETH price
+        mock_solution_b.interactions = []
+        mock_solution_b.gas = 100000
+
+        call_count = [0]
+
+        def route_order_side_effect(order):
+            call_count[0] += 1
+            if order.uid == order_a.uid:
+                return RoutingResult(
+                    order=order,
+                    amount_in=1000000000000000000,
+                    amount_out=2500000000,
+                    pool=None,
+                    success=True,
+                )
+            else:
+                return RoutingResult(
+                    order=order,
+                    amount_in=2000000000000000000,
+                    amount_out=4900000000,  # 2450 per WETH
+                    pool=None,
+                    success=True,
+                )
+
+        def build_solution_side_effect(_result, **_kwargs):
+            if call_count[0] == 1:
+                return mock_solution_a
+            return mock_solution_b
+
+        mock_router.route_order.side_effect = route_order_side_effect
+        mock_router.build_solution.side_effect = build_solution_side_effect
+
+        strategy = AmmRoutingStrategy()
+        strategy._get_router = Mock(return_value=mock_router)
+        strategy._create_fee_calculator = Mock(return_value=None)
+
+        auction = make_auction([order_a, order_b])
+        result = strategy.try_solve(auction)
+
+        # Should still succeed (conflict is logged, not rejected)
+        assert result is not None
+        assert len(result.fills) == 2
+
+        # But conflict is logged (structlog outputs to stdout)
+        captured = capsys.readouterr()
+        assert "price_conflict" in captured.out
+        assert "3c756cc2" in captured.out  # WETH address suffix
+
+    def test_conflict_uses_last_price(self):
+        """When prices conflict, the last order's price is used."""
+        order_a = make_order(
+            uid="0x" + "01" * 56,
+            sell_amount="1000000000000000000",
+            buy_amount="2400000000",
+        )
+        order_b = make_order(
+            uid="0x" + "02" * 56,
+            sell_amount="2000000000000000000",
+            buy_amount="4800000000",
+        )
+
+        mock_router = Mock()
+
+        # Order A: WETH price = 2500
+        mock_solution_a = Mock()
+        mock_solution_a.prices = {WETH.lower(): "2500000000", USDC.lower(): "1000000000000000000"}
+        mock_solution_a.interactions = []
+        mock_solution_a.gas = 100000
+
+        # Order B: WETH price = 2450 (this should be the final price)
+        mock_solution_b = Mock()
+        mock_solution_b.prices = {WETH.lower(): "2450000000", USDC.lower(): "1000000000000000000"}
+        mock_solution_b.interactions = []
+        mock_solution_b.gas = 100000
+
+        call_count = [0]
+
+        def route_order_side_effect(order):
+            call_count[0] += 1
+            return RoutingResult(
+                order=order,
+                amount_in=int(order.sell_amount),
+                amount_out=int(order.buy_amount) + 100000000,  # Above limit
+                pool=None,
+                success=True,
+            )
+
+        def build_solution_side_effect(_result, **_kwargs):
+            if call_count[0] == 1:
+                return mock_solution_a
+            return mock_solution_b
+
+        mock_router.route_order.side_effect = route_order_side_effect
+        mock_router.build_solution.side_effect = build_solution_side_effect
+
+        strategy = AmmRoutingStrategy()
+        strategy._get_router = Mock(return_value=mock_router)
+        strategy._create_fee_calculator = Mock(return_value=None)
+
+        auction = make_auction([order_a, order_b])
+        result = strategy.try_solve(auction)
+
+        # Final prices should be from Order B (last order)
+        assert result is not None
+        assert result.prices[WETH.lower()] == "2450000000"  # Order B's price
