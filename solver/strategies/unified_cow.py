@@ -22,7 +22,7 @@ from solver.models.types import normalize_address
 from solver.pools import build_registry_from_liquidity
 from solver.routing.router import SingleOrderRouter
 from solver.strategies.base import OrderFill, StrategyResult
-from solver.strategies.ebbo_bounds import get_ebbo_bounds
+from solver.strategies.ebbo_bounds import get_ebbo_bounds, verify_fills_against_ebbo
 from solver.strategies.settlement import (
     CycleViability,
     calculate_cycle_settlement,
@@ -229,33 +229,7 @@ class UnifiedCowStrategy:
         auction: AuctionInstance,
     ) -> bool:
         """Verify cycle fills satisfy EBBO constraint."""
-        for fill in fills:
-            order = fill.order
-            sell_token = normalize_address(order.sell_token)
-            buy_token = normalize_address(order.buy_token)
-
-            sell_price = clearing_prices.get(sell_token, 0)
-            buy_price = clearing_prices.get(buy_token, 0)
-
-            if sell_price == 0 or buy_price == 0:
-                continue
-
-            ring_rate = Decimal(sell_price) / Decimal(buy_price)
-
-            token_info = auction.tokens.get(sell_token)
-            decimals = (
-                18 if token_info is None or token_info.decimals is None else token_info.decimals
-            )
-
-            amm_rate = router.get_reference_price(sell_token, buy_token, token_in_decimals=decimals)
-
-            if amm_rate is None:
-                continue
-
-            if ring_rate < amm_rate:
-                return False
-
-        return True
+        return verify_fills_against_ebbo(fills, clearing_prices, router, auction)
 
     def _find_token_components(self, orders: list[Order]) -> list[tuple[set[str], list[Order]]]:
         """Find connected components of tokens using Union-Find.

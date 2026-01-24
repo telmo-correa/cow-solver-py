@@ -15,10 +15,12 @@ from decimal import Decimal
 from typing import TYPE_CHECKING
 
 from solver.fees.price_estimation import get_token_info
+from solver.models.types import normalize_address
 
 if TYPE_CHECKING:
     from solver.models.auction import AuctionInstance
     from solver.routing.router import SingleOrderRouter
+    from solver.strategies.base import OrderFill
 
 
 @dataclass
@@ -86,4 +88,61 @@ def get_ebbo_bounds(
     return EBBOBounds(ebbo_min=ebbo_min, ebbo_max=ebbo_max, amm_price=amm_price)
 
 
-__all__ = ["EBBOBounds", "get_ebbo_bounds"]
+def verify_fills_against_ebbo(
+    fills: list[OrderFill],
+    clearing_prices: dict[str, int],
+    router: SingleOrderRouter,
+    auction: AuctionInstance,
+) -> bool:
+    """Verify that all fills satisfy EBBO constraints.
+
+    This is a shared utility for verifying EBBO compliance across strategies.
+    Used by MultiPairCowStrategy, UnifiedCowStrategy, and RingTradeStrategy
+    for cycle/ring verification.
+
+    For each fill, checks that the clearing rate (buy_price / sell_price)
+    is at least as good as the AMM reference rate for that order's token pair.
+
+    Args:
+        fills: List of order fills to verify
+        clearing_prices: Token prices from the settlement (token -> price)
+        router: Router for AMM price queries
+        auction: Auction context for token decimals
+
+    Returns:
+        True if all fills satisfy EBBO, False if any violation found
+    """
+    for fill in fills:
+        order = fill.order
+        sell_token = normalize_address(order.sell_token)
+        buy_token = normalize_address(order.buy_token)
+
+        sell_price = clearing_prices.get(sell_token, 0)
+        buy_price = clearing_prices.get(buy_token, 0)
+
+        # Skip orders with missing prices - can't validate EBBO without both prices.
+        # This is consistent with ebbo.py:185-186 which also skips missing prices.
+        if sell_price <= 0 or buy_price <= 0:
+            continue
+
+        # User's rate: sell_price / buy_price (from conservation: sell*sell_price = buy*buy_price)
+        # This matches ebbo.py:188 and ring_trade.py:220
+        clearing_rate = Decimal(sell_price) / Decimal(buy_price)
+
+        # Get token decimals
+        token_info = auction.tokens.get(sell_token)
+        decimals = token_info.decimals if token_info and token_info.decimals else 18
+
+        # Get AMM reference rate
+        amm_rate = router.get_reference_price(sell_token, buy_token, token_in_decimals=decimals)
+        if amm_rate is None:
+            continue
+
+        # EBBO: user must get at least AMM rate
+        if clearing_rate < amm_rate:
+            return False
+
+    return True
+
+
+__all__ = ["EBBOBounds", "get_ebbo_bounds", "verify_fills_against_ebbo"]

@@ -24,7 +24,7 @@ from solver.pools import PoolRegistry, build_registry_from_liquidity
 from solver.routing.router import SingleOrderRouter
 from solver.strategies.base import OrderFill, StrategyResult
 from solver.strategies.components import find_token_components
-from solver.strategies.ebbo_bounds import get_ebbo_bounds
+from solver.strategies.ebbo_bounds import get_ebbo_bounds, verify_fills_against_ebbo
 from solver.strategies.graph import OrderGraph, find_spanning_tree
 from solver.strategies.pricing import (
     LPResult,
@@ -409,30 +409,7 @@ class MultiPairCowStrategy:
         auction: AuctionInstance,
     ) -> bool:
         """Verify that cycle settlement satisfies EBBO constraints."""
-        for fill in fills:
-            order = fill.order
-            sell_token = normalize_address(order.sell_token)
-            buy_token = normalize_address(order.buy_token)
-
-            sell_price = clearing_prices.get(sell_token, 0)
-            buy_price = clearing_prices.get(buy_token, 0)
-
-            if sell_price <= 0 or buy_price <= 0:
-                continue
-
-            clearing_rate = Decimal(buy_price) / Decimal(sell_price)
-
-            token_info = auction.tokens.get(sell_token)
-            decimals = token_info.decimals if token_info and token_info.decimals else 18
-
-            amm_rate = router.get_reference_price(sell_token, buy_token, token_in_decimals=decimals)
-            if amm_rate is None:
-                continue
-
-            if clearing_rate < amm_rate:
-                return False
-
-        return True
+        return verify_fills_against_ebbo(fills, clearing_prices, router, auction)
 
     def _collect_fills(
         self,

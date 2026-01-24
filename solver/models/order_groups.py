@@ -10,6 +10,7 @@ essential for Phase 4's unified optimization:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from functools import cached_property
 
 from solver.models.auction import Order
 from solver.models.types import normalize_address
@@ -31,6 +32,10 @@ class OrderGroup:
         token_b: Second token
         sellers_of_a: Orders selling token_a to buy token_b
         sellers_of_b: Orders selling token_b to buy token_a
+
+    Note:
+        Aggregate properties (total_*, all_orders) are cached for performance.
+        Do not mutate sellers_of_a/sellers_of_b after accessing cached properties.
     """
 
     token_a: str  # Canonical ordering: token_a < token_b
@@ -43,22 +48,22 @@ class OrderGroup:
         """True if orders exist in both directions (CoW matching possible)."""
         return bool(self.sellers_of_a) and bool(self.sellers_of_b)
 
-    @property
+    @cached_property
     def total_sell_a(self) -> int:
         """Total amount of token_a being sold across all orders."""
         return sum(o.sell_amount_int for o in self.sellers_of_a)
 
-    @property
+    @cached_property
     def total_buy_a(self) -> int:
         """Total amount of token_a being bought (by sellers of B)."""
         return sum(o.buy_amount_int for o in self.sellers_of_b)
 
-    @property
+    @cached_property
     def total_sell_b(self) -> int:
         """Total amount of token_b being sold across all orders."""
         return sum(o.sell_amount_int for o in self.sellers_of_b)
 
-    @property
+    @cached_property
     def total_buy_b(self) -> int:
         """Total amount of token_b being bought (by sellers of A)."""
         return sum(o.buy_amount_int for o in self.sellers_of_a)
@@ -68,7 +73,7 @@ class OrderGroup:
         """Total number of orders in this group."""
         return len(self.sellers_of_a) + len(self.sellers_of_b)
 
-    @property
+    @cached_property
     def all_orders(self) -> tuple[Order, ...]:
         """All orders in this group (immutable view)."""
         return tuple(self.sellers_of_a) + tuple(self.sellers_of_b)
@@ -92,7 +97,9 @@ def group_orders_by_pair(orders: list[Order]) -> dict[tuple[str, str], OrderGrou
         ...     if group.has_cow_potential:
         ...         print(f"{pair}: {group.order_count} orders with CoW potential")
     """
-    groups: dict[tuple[str, str], OrderGroup] = {}
+    # Build intermediate lists first to avoid mutating OrderGroup after construction
+    sellers_a: dict[tuple[str, str], list[Order]] = {}
+    sellers_b: dict[tuple[str, str], list[Order]] = {}
 
     for order in orders:
         sell = normalize_address(order.sell_token)
@@ -101,20 +108,22 @@ def group_orders_by_pair(orders: list[Order]) -> dict[tuple[str, str], OrderGrou
         # Canonical pair ordering (ensures consistent grouping)
         if sell < buy:
             pair = (sell, buy)
-            is_selling_a = True
+            sellers_a.setdefault(pair, []).append(order)
         else:
             pair = (buy, sell)
-            is_selling_a = False
+            sellers_b.setdefault(pair, []).append(order)
 
-        if pair not in groups:
-            groups[pair] = OrderGroup(token_a=pair[0], token_b=pair[1])
-
-        if is_selling_a:
-            groups[pair].sellers_of_a.append(order)
-        else:
-            groups[pair].sellers_of_b.append(order)
-
-    return groups
+    # Construct OrderGroups with complete lists (safe for cached_property)
+    all_pairs = set(sellers_a.keys()) | set(sellers_b.keys())
+    return {
+        pair: OrderGroup(
+            token_a=pair[0],
+            token_b=pair[1],
+            sellers_of_a=sellers_a.get(pair, []),
+            sellers_of_b=sellers_b.get(pair, []),
+        )
+        for pair in all_pairs
+    }
 
 
 def find_cow_opportunities(orders: list[Order]) -> list[OrderGroup]:
