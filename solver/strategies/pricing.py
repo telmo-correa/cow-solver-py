@@ -181,7 +181,9 @@ def build_price_candidates_from_orders(
         buy_amt = order.buy_amount_int
 
         if sell_amt > 0 and buy_amt > 0:
-            limit_price = Decimal(buy_amt) / Decimal(sell_amt)
+            # Use high-precision context for exact division
+            with decimal.localcontext(_DECIMAL_HIGH_PREC_CONTEXT):
+                limit_price = Decimal(buy_amt) / Decimal(sell_amt)
             candidates.add_ratio(sell_token, buy_token, limit_price)
 
         # Add AMM spot price if available (only once per pair)
@@ -234,7 +236,9 @@ def enumerate_price_combinations(
             # Try reverse ordering and invert
             reverse_ratios = candidates.get_ratios(child, parent)
             if reverse_ratios:
-                ratios = [Decimal(1) / r for r in reverse_ratios if r > 0]
+                # Invert ratios using high-precision context for exact arithmetic
+                with decimal.localcontext(_DECIMAL_HIGH_PREC_CONTEXT):
+                    ratios = [Decimal(1) / r for r in reverse_ratios if r > 0]
 
         if not ratios:
             # No candidates - use a default ratio of 1
@@ -350,7 +354,9 @@ def solve_fills_at_prices(
             continue
 
         # Current price ratio B/A at given prices
-        current_ratio = price_b / price_a
+        # Use high-precision context for exact division
+        with decimal.localcontext(_DECIMAL_HIGH_PREC_CONTEXT):
+            current_ratio = price_b / price_a
 
         # Check if order's limit is satisfied using integer comparison
         # Sellers of A want at least `limit` B per A -> current_ratio >= limit
@@ -530,7 +536,9 @@ def solve_fills_at_prices_v2(
         if sell_amt <= 0 or buy_amt <= 0:
             continue
 
-        limit_price = Decimal(buy_amt) / Decimal(sell_amt)
+        # Use high-precision context for exact division
+        with decimal.localcontext(_DECIMAL_HIGH_PREC_CONTEXT):
+            limit_price = Decimal(buy_amt) / Decimal(sell_amt)
 
         # Get prices for both tokens
         price_sell = prices.get(sell_token)
@@ -539,7 +547,9 @@ def solve_fills_at_prices_v2(
             continue
 
         # Current price ratio: buy_token/sell_token at given prices
-        current_ratio = price_buy / price_sell
+        # Use high-precision context for exact division
+        with decimal.localcontext(_DECIMAL_HIGH_PREC_CONTEXT):
+            current_ratio = price_buy / price_sell
 
         # Check if order's limit is satisfied (gets at least limit price)
         if _decimal_ge(current_ratio, limit_price):

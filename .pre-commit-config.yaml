@@ -36,3 +36,12 @@ repos:
         args: [--ignore-missing-imports]
         pass_filenames: false
         entry: mypy solver
+
+  - repo: local
+    hooks:
+      - id: safe-math-lint
+        name: safe-math-lint
+        entry: python3 scripts/check_safe_math.py
+        language: system
+        pass_filenames: false
+        always_run: true

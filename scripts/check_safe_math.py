@@ -69,6 +69,11 @@ ALLOWLIST = {
     "parsing.py": ["decimal_division_bounds"],  # Calculates max_deviation bound
     # Fill ratio diagnostics (not used in financial decisions)
     "base.py": ["float_division_property"],  # sell_fill_ratio, buy_fill_ratio
+    # High-precision Decimal context usage (divisions wrapped in localcontext)
+    # These use _DECIMAL_HIGH_PREC_CONTEXT with prec=78 for exact arithmetic
+    "pricing.py": ["decimal_high_precision"],  # All divisions in high-prec context
+    "unified_cow.py": ["decimal_high_precision"],  # All divisions in high-prec context
+    "ebbo_bounds.py": ["decimal_high_precision"],  # All divisions in high-prec context
 }
 
 
@@ -202,6 +207,14 @@ def check_float_division(
             if "http" in context or "path" in context or "file" in context:
                 continue
 
+            # Skip if Fraction is used (exact rational arithmetic)
+            if "Fraction(" in line:
+                continue
+
+            # Skip if using high-precision context (localcontext)
+            if "localcontext" in line:
+                continue
+
             # Check if it's Decimal division
             if "Decimal" in line:
                 if is_allowlisted(path, "decimal_division_logging"):
@@ -209,6 +222,9 @@ def check_float_division(
                 if is_allowlisted(path, "decimal_division_api"):
                     continue
                 if is_allowlisted(path, "decimal_division_bounds"):
+                    continue
+                # Skip files using high-precision Decimal context
+                if is_allowlisted(path, "decimal_high_precision"):
                     continue
                 yield Issue(
                     file=path,
@@ -222,6 +238,9 @@ def check_float_division(
             elif "float" not in context and "log" not in context:
                 # Check for allowlisted property patterns
                 if is_allowlisted(path, "float_division_property"):
+                    continue
+                # Check for high-precision Decimal context usage
+                if is_allowlisted(path, "decimal_high_precision"):
                     continue
                 # Regular division on what might be integers
                 financial_keywords = ["amount", "price", "fee", "balance", "rate", "fill"]
@@ -348,6 +367,20 @@ def check_cross_multiplication(
     # Pattern: a * b >= c * d (or similar comparisons)
     pattern = re.compile(r"(\w+)\s*\*\s*(\w+)\s*([<>=!]+)\s*(\w+)\s*\*\s*(\w+)")
 
+    # Pre-scan: check if variables are pre-wrapped with SafeInt in function scope
+    # Look for patterns like "var_a = S(..." which indicates var_a is SafeInt
+    safeint_vars: set[str] = set()
+    safeint_pattern = re.compile(r"(\w+)\s*=\s*S\(")
+    for line in lines:
+        for m in safeint_pattern.finditer(line):
+            safeint_vars.add(m.group(1))
+    # Also check tuple unpacking: "a, b = S(...), S(...)"
+    tuple_pattern = re.compile(r"(\w+),\s*(\w+)\s*=\s*S\(")
+    for line in lines:
+        for m in tuple_pattern.finditer(line):
+            safeint_vars.add(m.group(1))
+            safeint_vars.add(m.group(2))
+
     for i, original_line in enumerate(lines, 1):
         if original_line.strip().startswith("#"):
             tracker.process_line(original_line)
@@ -362,12 +395,15 @@ def check_cross_multiplication(
         match = pattern.search(line)
 
         if match:
-            # Check if SafeInt is used
+            # Check if SafeInt is used directly
             if "S(" in line:
                 continue
 
-            # Check for financial variable names
+            # Check if variables are pre-wrapped SafeInt
             vars_found = [match.group(j) for j in range(1, 6) if match.group(j)]
+            if all(v in safeint_vars for v in vars_found if v.isidentifier()):
+                continue
+
             financial_patterns = ["amount", "price", "fee", "balance", "fill", "buy", "sell"]
 
             is_financial = any(

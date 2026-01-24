@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING
 import structlog
 
 from solver.models.types import normalize_address
+from solver.safe_int import S
 
 if TYPE_CHECKING:
     from solver.models.auction import AuctionInstance, Order
@@ -197,7 +198,8 @@ class EBBOValidator:
             # EBBO check using cross-multiplication (exact integer arithmetic):
             # clearing_rate >= ebbo_rate means sell_price/buy_price >= ebbo_num/ebbo_denom
             # Cross-multiply: sell_price * ebbo_denom >= buy_price * ebbo_num
-            if sell_price * ebbo_denom < buy_price * ebbo_num:
+            # Use SafeInt for overflow protection on large amounts
+            if S(sell_price) * S(ebbo_denom) < S(buy_price) * S(ebbo_num):
                 # Violation - compute Decimal values for logging only
                 clearing_rate = Decimal(sell_price) / Decimal(buy_price)
                 ebbo_rate = Decimal(ebbo_num) / Decimal(ebbo_denom)

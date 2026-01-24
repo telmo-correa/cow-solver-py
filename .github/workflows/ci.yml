@@ -29,6 +29,9 @@ jobs:
       - name: Run ruff formatter check
         run: ruff format --check solver tests benchmarks scripts
 
+      - name: Run safe math linting
+        run: python scripts/check_safe_math.py
+
   typecheck:
     name: Type Check
     runs-on: ubuntu-latest

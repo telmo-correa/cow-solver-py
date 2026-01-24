@@ -95,7 +95,12 @@ def get_ebbo_bounds(
     # ebbo_max: rate buyers of A can pay (derived from B→A direction)
     # If B→A rate is R, then max A→B rate is 1/R
     ebbo_b_to_a = router.get_reference_price(token_b, token_a, token_in_decimals=decimals_b)
-    ebbo_max = Decimal(1) / ebbo_b_to_a if ebbo_b_to_a and ebbo_b_to_a > 0 else None
+    # Use high-precision context for exact inversion
+    if ebbo_b_to_a and ebbo_b_to_a > 0:
+        with decimal.localcontext(_DECIMAL_HIGH_PREC_CONTEXT):
+            ebbo_max = Decimal(1) / ebbo_b_to_a
+    else:
+        ebbo_max = None
 
     # Use ebbo_min as the clearing price (standard approach)
     amm_price = ebbo_min
@@ -165,8 +170,9 @@ def verify_fills_against_ebbo(
             if amm_rate is None:
                 continue
 
-            # Use high-precision Decimal comparison
-            raw_rate = Decimal(sell_price) / Decimal(buy_price)
+            # Use high-precision context for exact division
+            with decimal.localcontext(_DECIMAL_HIGH_PREC_CONTEXT):
+                raw_rate = Decimal(sell_price) / Decimal(buy_price)
             decimal_scale = Decimal(10) ** (sell_decimals - buy_decimals)
             clearing_rate = raw_rate * decimal_scale
 

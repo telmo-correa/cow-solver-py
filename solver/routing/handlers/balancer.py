@@ -16,6 +16,7 @@ from solver.amm.balancer import (
 from solver.models.auction import Order
 from solver.routing.handlers.base import BaseHandler
 from solver.routing.types import RoutingResult
+from solver.safe_int import S
 
 logger = structlog.get_logger()
 
@@ -341,14 +342,18 @@ class BalancerHandler(BaseHandler):
         actual_out: int | None = None  # For buy orders, tracks actual forward-simulated output
         if is_sell:
             # Sell: output/input >= buy_amount/sell_amount
-            limit_satisfied = result.amount_out * sell_amount >= buy_amount * max_fill
+            # Use SafeInt for overflow protection on large amounts
+            limit_satisfied = S(result.amount_out) * S(sell_amount) >= S(buy_amount) * S(max_fill)
             final_in, final_out = max_fill, result.amount_out
             log_key = "partial_sell"
             fill_ratio = f"{max_fill * 100 // sell_amount}%"
         else:
             # Buy: input/output <= sell_amount/buy_amount
             # Use result.amount_out for limit check (actual forward-simulated output)
-            limit_satisfied = result.amount_in * buy_amount <= sell_amount * result.amount_out
+            # Use SafeInt for overflow protection on large amounts
+            limit_satisfied = S(result.amount_in) * S(buy_amount) <= S(sell_amount) * S(
+                result.amount_out
+            )
             # For trade/prices: use requested max_fill
             # For interaction: use actual result.amount_out
             final_in, final_out = result.amount_in, max_fill

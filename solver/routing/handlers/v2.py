@@ -9,6 +9,7 @@ from solver.constants import POOL_SWAP_GAS_COST
 from solver.models.auction import Order
 from solver.routing.handlers.base import BaseHandler
 from solver.routing.types import RoutingResult
+from solver.safe_int import S
 
 logger = structlog.get_logger()
 
@@ -188,7 +189,8 @@ class UniswapV2Handler(BaseHandler):
 
         # Verify the partial fill satisfies the limit (defensive check)
         # Limit: output/input >= min_buy_amount/sell_amount
-        if swap_result.amount_out * sell_amount < min_buy_amount * max_input:
+        # Use SafeInt for overflow protection on large amounts
+        if S(swap_result.amount_out) * S(sell_amount) < S(min_buy_amount) * S(max_input):
             logger.warning(
                 "partial_fill_limit_check_failed",
                 order_uid=order.uid[:18] + "...",
@@ -271,7 +273,8 @@ class UniswapV2Handler(BaseHandler):
 
         # Verify the partial fill satisfies the limit (defensive check)
         # Limit: input/output <= max_sell_amount/buy_amount
-        if swap_result.amount_in * buy_amount > max_sell_amount * max_output:
+        # Use SafeInt for overflow protection on large amounts
+        if S(swap_result.amount_in) * S(buy_amount) > S(max_sell_amount) * S(max_output):
             logger.warning(
                 "partial_fill_limit_check_failed",
                 order_uid=order.uid[:18] + "...",

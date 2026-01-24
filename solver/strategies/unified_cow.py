@@ -452,7 +452,9 @@ class UnifiedCowStrategy:
             if sell_amt == 0:
                 continue
 
-            limit_rate = buy_amt / sell_amt
+            # Use high-precision context for exact division
+            with decimal.localcontext(_DECIMAL_HIGH_PREC_CONTEXT):
+                limit_rate = buy_amt / sell_amt
 
             price_sell = prices.get(sell_token)
             price_buy = prices.get(buy_token)
@@ -460,7 +462,9 @@ class UnifiedCowStrategy:
             if price_sell is None or price_buy is None or price_sell <= 0:
                 continue
 
-            clearing_rate = price_buy / price_sell
+            # Use high-precision context for exact division
+            with decimal.localcontext(_DECIMAL_HIGH_PREC_CONTEXT):
+                clearing_rate = price_buy / price_sell
 
             # Surplus = sell_filled × (clearing_rate - limit_rate)
             surplus = Decimal(fill.sell_filled) * (clearing_rate - limit_rate)
@@ -488,7 +492,9 @@ class UnifiedCowStrategy:
             buy_amt = order.buy_amount_int
 
             if sell_amt > 0 and buy_amt > 0:
-                limit_price = Decimal(buy_amt) / Decimal(sell_amt)
+                # Use high-precision context for exact division
+                with decimal.localcontext(_DECIMAL_HIGH_PREC_CONTEXT):
+                    limit_price = Decimal(buy_amt) / Decimal(sell_amt)
                 key = (sell_token, buy_token)
                 if limit_price not in candidates[key]:
                     candidates[key].append(limit_price)
@@ -563,10 +569,11 @@ class UnifiedCowStrategy:
             # Try both orderings
             ratios = candidates.get((parent, child), [])
             if not ratios:
-                # Try reverse and invert
+                # Try reverse and invert using high-precision context for exact arithmetic
                 reverse_ratios = candidates.get((child, parent), [])
                 if reverse_ratios:
-                    ratios = [Decimal(1) / r for r in reverse_ratios if r > 0]
+                    with decimal.localcontext(_DECIMAL_HIGH_PREC_CONTEXT):
+                        ratios = [Decimal(1) / r for r in reverse_ratios if r > 0]
             if not ratios:
                 ratios = [Decimal(1)]  # Default
 
@@ -639,7 +646,9 @@ class UnifiedCowStrategy:
             if sell_amt <= 0 or buy_amt <= 0:
                 continue
 
-            limit_rate = Decimal(buy_amt) / Decimal(sell_amt)
+            # Use high-precision context for exact division
+            with decimal.localcontext(_DECIMAL_HIGH_PREC_CONTEXT):
+                limit_rate = Decimal(buy_amt) / Decimal(sell_amt)
 
             price_sell = prices.get(sell_token)
             price_buy = prices.get(buy_token)
@@ -648,7 +657,9 @@ class UnifiedCowStrategy:
                 continue
 
             # Clearing rate at these prices (buy tokens per sell token)
-            clearing_rate = price_buy / price_sell
+            # Use high-precision context for exact division
+            with decimal.localcontext(_DECIMAL_HIGH_PREC_CONTEXT):
+                clearing_rate = price_buy / price_sell
 
             # Order is eligible if it gets at least its limit price
             # Use integer comparison for exactness
@@ -734,7 +745,9 @@ class UnifiedCowStrategy:
             if price_sell is None or price_buy is None or price_sell <= 0:
                 continue
 
-            clearing_rate = price_buy / price_sell
+            # Use high-precision context for exact division
+            with decimal.localcontext(_DECIMAL_HIGH_PREC_CONTEXT):
+                clearing_rate = price_buy / price_sell
 
             token_info = auction.tokens.get(sell_token)
             decimals = (

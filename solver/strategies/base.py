@@ -535,7 +535,8 @@ class StrategyResult:
             if order.is_sell_order:
                 # Sell order: actual rate must be >= limit rate
                 # buy_filled * sell_amount >= buy_amount * sell_filled
-                if fill.buy_filled * sell_amount < buy_amount * fill.sell_filled:
+                # Use SafeInt for overflow protection on large amounts
+                if S(fill.buy_filled) * S(sell_amount) < S(buy_amount) * S(fill.sell_filled):
                     actual_rate = fill.buy_filled / fill.sell_filled
                     limit_rate = buy_amount / sell_amount
                     logger.error(
@@ -557,7 +558,7 @@ class StrategyResult:
                 if (
                     buy_amount > 0
                     and fill.buy_filled > 0
-                    and fill.sell_filled * buy_amount > sell_amount * fill.buy_filled
+                    and S(fill.sell_filled) * S(buy_amount) > S(sell_amount) * S(fill.buy_filled)
                 ):
                     actual_rate = fill.sell_filled / fill.buy_filled
                     limit_rate = sell_amount / buy_amount

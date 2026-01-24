@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 import structlog
 
 from solver.models.types import normalize_address
+from solver.safe_int import S
 
 from .encoding import encode_exact_input_single, encode_exact_output_single
 from .pool import UniswapV3Pool
@@ -241,7 +242,8 @@ class UniswapV3AMM:
                 continue
 
             # Check limit: output/input >= buy_amount/sell_amount
-            if result.amount_out * sell_amount >= buy_amount * mid:
+            # Use SafeInt for overflow protection on large amounts
+            if S(result.amount_out) * S(sell_amount) >= S(buy_amount) * S(mid):
                 lo = mid
             else:
                 hi = mid - 1
@@ -249,7 +251,7 @@ class UniswapV3AMM:
         # Verify the final result
         if lo > 0:
             result = self.simulate_swap(pool, token_in, lo)
-            if result is None or result.amount_out * sell_amount < buy_amount * lo:
+            if result is None or S(result.amount_out) * S(sell_amount) < S(buy_amount) * S(lo):
                 return 0
 
         return lo
@@ -291,7 +293,8 @@ class UniswapV3AMM:
                 continue
 
             # Check limit: input/output <= sell_amount/buy_amount
-            if result.amount_in * buy_amount <= sell_amount * mid:
+            # Use SafeInt for overflow protection on large amounts
+            if S(result.amount_in) * S(buy_amount) <= S(sell_amount) * S(mid):
                 lo = mid
             else:
                 hi = mid - 1
@@ -299,7 +302,7 @@ class UniswapV3AMM:
         # Verify the final result
         if lo > 0:
             result = self.simulate_swap_exact_output(pool, token_in, lo)
-            if result is None or result.amount_in * buy_amount > sell_amount * lo:
+            if result is None or S(result.amount_in) * S(buy_amount) > S(sell_amount) * S(lo):
                 return 0
 
         return lo
