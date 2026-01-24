@@ -29,14 +29,12 @@ from solver.strategies.double_auction.types import (
     DoubleAuctionMatch,
     DoubleAuctionResult,
     HybridAuctionResult,
-    MatchingAtPriceResult,
 )
 
 __all__ = [
     # Types
     "DoubleAuctionMatch",
     "DoubleAuctionResult",
-    "MatchingAtPriceResult",
     "AMMRoute",
     "HybridAuctionResult",
     # Core functions

@@ -64,10 +64,11 @@ class DoubleAuctionResult:
 
 
 @dataclass
-class MatchingAtPriceResult:
+class _MatchingAtPriceResult:
     """Result of executing matches at a specific clearing price.
 
     Internal dataclass used by _execute_matches_at_price helper.
+    Not part of public API - prefixed with underscore.
 
     Attributes:
         matches: List of matches executed at this price
@@ -123,7 +124,7 @@ class HybridAuctionResult:
 __all__ = [
     "DoubleAuctionMatch",
     "DoubleAuctionResult",
-    "MatchingAtPriceResult",
     "AMMRoute",
     "HybridAuctionResult",
+    # _MatchingAtPriceResult is internal (not exported)
 ]

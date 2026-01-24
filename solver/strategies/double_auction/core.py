@@ -28,7 +28,7 @@ from solver.models.order_groups import OrderGroup
 from .types import (
     DoubleAuctionMatch,
     DoubleAuctionResult,
-    MatchingAtPriceResult,
+    _MatchingAtPriceResult,
 )
 
 logger = structlog.get_logger()
@@ -74,7 +74,7 @@ def _execute_matches_at_price(
     asks: list[tuple[Order, Decimal, int]],
     bids: list[tuple[Order, Decimal, int]],
     respect_fill_or_kill: bool,
-) -> MatchingAtPriceResult:
+) -> _MatchingAtPriceResult:
     """Execute matching at a given clearing price.
 
     This is a helper function for run_double_auction that tries to match
@@ -87,7 +87,7 @@ def _execute_matches_at_price(
         respect_fill_or_kill: If True, skip orders that would be partially filled
 
     Returns:
-        MatchingAtPriceResult with matches and remaining amounts
+        _MatchingAtPriceResult with matches and remaining amounts
     """
     ask_remaining = {order.uid: amount for order, _, amount in asks}
     bid_remaining = {order.uid: amount for order, _, amount in bids}
@@ -195,7 +195,7 @@ def _execute_matches_at_price(
         if bid_remaining[bid_order.uid] <= 0:
             bid_idx += 1
 
-    return MatchingAtPriceResult(
+    return _MatchingAtPriceResult(
         matches=matches,
         ask_remaining=ask_remaining,
         bid_remaining=bid_remaining,
@@ -455,7 +455,7 @@ def run_double_auction(
 
     # Try each candidate price and track the best result
     # Initialize with original amounts (used when no matches happen)
-    best_result = MatchingAtPriceResult(
+    best_result = _MatchingAtPriceResult(
         matches=[],
         ask_remaining={order.uid: amount for order, _, amount in asks},
         bid_remaining={order.uid: amount for order, _, amount in bids},

@@ -8,7 +8,8 @@ if it can handle the auction (even partially), or None to pass to the next strat
     2. MultiPairCowStrategy - N-order joint optimization across overlapping pairs
     3. AmmRoutingStrategy - AMM routing fallback
 
-**Research/Experimental (not in default chain):**
+**Research/Experimental (not exported here):**
+    Import from `solver.strategies.research` if needed:
     - HybridCowStrategy - Superseded by MultiPairCowStrategy
     - RingTradeStrategy - Low ROI (0.12% match rate)
 
@@ -46,13 +47,10 @@ from solver.strategies.pricing import (
     enumerate_price_combinations,
     solve_fills_at_prices,
 )
-from solver.strategies.research import (
-    HybridCowStrategy,
-    OrderGraph,
-    RingTrade,
-    RingTradeStrategy,
-)
 from solver.strategies.settlement import CycleViability
+
+# Research strategies are NOT re-exported here.
+# Import directly from solver.strategies.research if needed.
 
 __all__ = [
     # === Base Protocol ===
@@ -65,9 +63,6 @@ __all__ = [
     "CowMatchStrategy",  # 2-order matching
     "MultiPairCowStrategy",  # N-order joint optimization (Slice 4.6)
     "AmmRoutingStrategy",  # AMM routing fallback
-    # === Research/Experimental Strategies ===
-    "HybridCowStrategy",  # DEPRECATED: superseded by MultiPairCowStrategy
-    "RingTradeStrategy",  # Research: cyclic trades (Slice 4.4)
     # === Double Auction Utilities ===
     "DoubleAuctionMatch",
     "DoubleAuctionResult",
@@ -86,8 +81,8 @@ __all__ = [
     "enumerate_price_combinations",
     "LPResult",
     "solve_fills_at_prices",
-    # === Ring Trade Utilities (Slice 4.4) ===
-    "OrderGraph",
+    # === Settlement Utilities ===
     "CycleViability",
-    "RingTrade",
+    # NOTE: Research strategies (HybridCowStrategy, RingTradeStrategy, OrderGraph, RingTrade)
+    # are NOT exported here. Import from solver.strategies.research directly.
 ]

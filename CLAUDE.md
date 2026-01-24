@@ -2,6 +2,8 @@
 
 This file provides context for AI assistants working on this project. Read this first.
 
+> **IMPORTANT:** NEVER run `git push` without an explicit request from the user. Always wait for the user to ask you to push.
+
 ## Project Overview
 
 **What:** A Python implementation of a CoW Protocol solver, built as a learning project to explore AI-assisted development and benchmark Python vs Rust performance.

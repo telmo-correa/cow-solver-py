@@ -23,7 +23,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from solver.models.auction import AuctionInstance
 from solver.models.solution import SolverResponse
 from solver.solver import Solver
-from solver.strategies import AmmRoutingStrategy, CowMatchStrategy, HybridCowStrategy
+from solver.strategies import AmmRoutingStrategy, CowMatchStrategy
+from solver.strategies.research import HybridCowStrategy
 
 
 @dataclass
