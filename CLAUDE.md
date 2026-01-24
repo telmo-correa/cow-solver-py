@@ -172,6 +172,19 @@ Mock classes: `MockAMM`, `MockPoolFinder`, `MockRouter`, `MockSwapConfig`
 
 ## Important Context
 
+### Constraint Enforcement
+
+All strategies must enforce four constraints:
+
+| Constraint | Definition | Validation |
+|------------|------------|------------|
+| **Fill-or-Kill** | `partially_fillable=false` orders fully filled or not at all | Check fill amount = order amount |
+| **Limit Price** | Actual rate >= limit rate | `buy_filled * sell_amount >= buy_amount * sell_filled` |
+| **EBBO** | Clearing rate >= AMM rate | Zero tolerance integer comparison |
+| **Uniform Price** | All orders in a pair execute at same price | Single clearing price per token |
+
+Safety nets in `solver/strategies/base.py` and `solver/solver.py` catch violations, but strategies should validate internally.
+
 ### EBBO Validation
 EBBO (Ethereum Best Bid/Offer) ensures users get at least as good execution as AMMs:
 - Zero tolerance enforced (Slice 4.6)
