@@ -367,37 +367,74 @@ Ring trades find cycles (A→B→C→A) that direct CoW matching (A↔B) misses.
 - [x] Analyze ring trade potential (`scripts/analyze_ring_potential.py`)
 - [x] Update PLAN.md with chosen direction → **Ring Trades (Slice 4.4)**
 
-### Slice 4.4: Ring Trade Detection ⬅️ RECOMMENDED NEXT
+### Slice 4.4: Ring Trade Detection ✅ COMPLETE
 **Goal:** Find cyclic trading opportunities (A→B→C→A)
 
-> **Prerequisite:** Only pursue if Slice 4.3 shows CoW mechanisms add value.
->
-> **Result:** Ring trade analysis showed **5.41% match rate** (3.9x better than direct CoW).
-> 100% of auctions have viable 3-node cycles. **Proceeding with implementation.**
+**Implementation:**
+- [x] Build token graph from orders (`OrderGraph`)
+- [x] Find short cycles (3-4 tokens max)
+- [x] Calculate ring trade feasibility and surplus
+- [x] Implement `RingTradeStrategy`
+- [x] Test: auctions with ring trade potential
+- [x] Benchmark: measure actual surplus improvement
 
-**Analysis Results (from `scripts/analyze_ring_potential.py`):**
+**Results (50 auctions, 280,920 orders):**
 | Metric | Value |
 |--------|-------|
-| Auctions with viable cycles | 100% |
-| Viable 3-node cycles | 2,000 (57.8% of detected) |
-| Unique orders in cycles | 3,046 |
-| Ring match rate | 5.41% |
+| RingTrade matches | 467 orders (0.17%) |
+| HybridCow matches | 192 orders (0.07%) |
+| CowMatch matches | 0 orders (0.00%) |
 
-**Tasks:**
-- [ ] Build token graph from orders
-- [ ] Find short cycles (3-4 tokens max)
-- [ ] Calculate ring trade feasibility and surplus
-- [ ] Implement `RingTradeStrategy`
-- [ ] Test: auctions with ring trade potential
-- [ ] Benchmark: measure actual surplus improvement vs AMM-only
+### Slice 4.5: Settlement Optimization Analysis ✅ COMPLETE
+**Goal:** Formalize the problem and evaluate optimization approaches
 
-### Slice 4.5: Split Routing (Conditional)
+**Comprehensive Analysis:**
+- [x] Formalize as Mixed-Integer Bilinear Program (MIBLP)
+- [x] Benchmark existing strategies on 50 historical auctions
+- [x] Characterize matching gap (40,521 crossing orders vs 467 matched)
+- [x] Prototype price enumeration approach
+- [x] Evaluate LP solver (scipy HIGHS) performance
+
+**Key Findings (see `docs/design/settlement-optimization-formulation.md`):**
+
+| Metric | Value |
+|--------|-------|
+| Orders on crossing pairs | 40,521 (14.4%) |
+| Orders matched by strategies | ~420-520 (0.15-0.19%) |
+| **Gap factor** | **~100x** |
+
+**Root Causes of Gap:**
+1. **Token overlap**: Processing pairs independently prevents matching when pairs share tokens
+2. **Volume imbalance**: Many pairs have 100x more sell than buy pressure (or vice versa)
+3. **Problem structure**: Uniform clearing price constraint is bilinear (NP-hard)
+
+**LP Solver Results:**
+- scipy HIGHS is fast: ~8ms per auction
+- Token overlap is the blocker, not solver performance
+- Multi-pair coordination needed to capture more value
+
+### Slice 4.6: Multi-Pair Price Coordination ⬅️ RECOMMENDED NEXT
+**Goal:** Optimize prices across token-connected pairs
+
+> **Finding from 4.5:** Token overlap is the main blocker. When pairs share tokens,
+> independent processing leaves value on the table.
+
+**Approach:**
+1. Group pairs by connected component (shared tokens)
+2. For each component, jointly optimize prices
+3. Use LP for fills once prices are fixed
+
+- [ ] Build token connectivity graph
+- [ ] Partition pairs into independent components
+- [ ] Implement joint price optimization within components
+- [ ] Test: auctions with overlapping pairs
+- [ ] Benchmark: improvement over independent pair processing
+
+### Slice 4.7: Split Routing (Deferred)
 **Goal:** Split large orders across multiple venues for better execution
 
-> **Prerequisite:** Pursue if large orders dominate value or ring trades underperform.
->
-> **Status:** Deferred pending Slice 4.4 (Ring Trades) results. Ring trade analysis showed
-> 5.41% match rate, so we'll evaluate ring trades first.
+> **Status:** Deferred. Analysis showed token overlap is a bigger gap than split routing.
+> Will revisit after multi-pair coordination.
 
 - [ ] Quote multiple venues for same order
 - [ ] Convex optimization for split ratios
