@@ -104,6 +104,7 @@ Individual session logs are preserved in the `archive/` directory for reference.
 | [55](archive/session-55-ebbo-price-consistency.md) | 2026-01-24 | EBBO Price Consistency Fixes |
 | [56](archive/session-56-refactoring.md) | 2026-01-24 | Priority 1 Refactoring |
 | [57](archive/session-57-priority2-refactoring.md) | 2026-01-24 | Priority 2 Refactoring |
+| [58](archive/session-58-priority3-refactoring.md) | 2026-01-24 | Priority 3 Refactoring |
 
 ## Session Template
 
