@@ -23,6 +23,9 @@ from solver.strategies.base import (
     SolutionStrategy,
     StrategyResult,
 )
+
+# Import from new modular files
+from solver.strategies.components import find_token_components
 from solver.strategies.cow_match import CowMatchStrategy
 from solver.strategies.double_auction import (
     AMMRoute,
@@ -33,25 +36,22 @@ from solver.strategies.double_auction import (
     run_double_auction,
     run_hybrid_auction,
 )
+from solver.strategies.graph import UnionFind, build_token_graph, find_spanning_tree
 from solver.strategies.hybrid_cow import HybridCowStrategy
-from solver.strategies.multi_pair import (
+from solver.strategies.multi_pair import MultiPairCowStrategy
+from solver.strategies.pricing import (
     LPResult,
-    MultiPairCowStrategy,
     PriceCandidates,
-    UnionFind,
     build_price_candidates,
-    build_token_graph,
     enumerate_price_combinations,
-    find_spanning_tree,
-    find_token_components,
     solve_fills_at_prices,
 )
 from solver.strategies.ring_trade import (
-    CycleViability,
     OrderGraph,
     RingTrade,
     RingTradeStrategy,
 )
+from solver.strategies.settlement import CycleViability
 
 __all__ = [
     # === Base Protocol ===

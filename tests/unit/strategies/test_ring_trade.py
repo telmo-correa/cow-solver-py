@@ -3,15 +3,16 @@
 from __future__ import annotations
 
 from solver.models.auction import AuctionInstance, Order, Token
-from solver.strategies.ring_trade import (
-    NEAR_VIABLE_THRESHOLD,
+from solver.strategies.graph import OrderGraph
+from solver.strategies.ring_trade import RingTrade, RingTradeStrategy
+from solver.strategies.settlement import (
     CycleViability,
-    OrderGraph,
-    RingTrade,
-    RingTradeStrategy,
     check_cycle_viability,
     find_viable_cycle_direction,
 )
+
+# Near viable threshold from CycleViability dataclass
+NEAR_VIABLE_THRESHOLD = CycleViability.NEAR_VIABLE_THRESHOLD
 
 # --- Fixtures ---
 
@@ -277,7 +278,7 @@ class TestCheckCycleViability:
         graph = OrderGraph.from_orders([o1, o2, o3])
 
         cycle = (WETH.lower(), USDC.lower(), DAI.lower())
-        result = check_cycle_viability(cycle, graph)
+        result = check_cycle_viability(cycle, graph.get_orders)
 
         assert result.viable is True
         assert result.product <= 1.0
@@ -297,7 +298,7 @@ class TestCheckCycleViability:
         graph = OrderGraph.from_orders([o1, o2, o3])
 
         cycle = (WETH.lower(), USDC.lower(), DAI.lower())
-        result = check_cycle_viability(cycle, graph)
+        result = check_cycle_viability(cycle, graph.get_orders)
 
         assert result.viable is False
         assert result.near_viable is False
@@ -316,7 +317,7 @@ class TestCheckCycleViability:
         graph = OrderGraph.from_orders([o1, o2, o3])
 
         cycle = (WETH.lower(), USDC.lower(), DAI.lower())
-        result = check_cycle_viability(cycle, graph)
+        result = check_cycle_viability(cycle, graph.get_orders)
 
         assert result.viable is False
         assert result.near_viable is True
@@ -331,7 +332,7 @@ class TestCheckCycleViability:
         graph = OrderGraph.from_orders([o1, o2])
 
         cycle = (WETH.lower(), USDC.lower(), DAI.lower())
-        result = check_cycle_viability(cycle, graph)
+        result = check_cycle_viability(cycle, graph.get_orders)
 
         assert result.viable is False
         assert result.product == float("inf")  # Indicates missing edge
@@ -345,7 +346,7 @@ class TestCheckCycleViability:
         graph = OrderGraph.from_orders([o1, o2, o3])
 
         cycle = (WETH.lower(), USDC.lower(), DAI.lower())
-        result = check_cycle_viability(cycle, graph)
+        result = check_cycle_viability(cycle, graph.get_orders)
 
         assert result.viable is False
 
@@ -360,7 +361,7 @@ class TestCheckCycleViability:
         graph = OrderGraph.from_orders([o1_greedy, o1_generous, o2, o3])
 
         cycle = (WETH.lower(), USDC.lower(), DAI.lower())
-        result = check_cycle_viability(cycle, graph)
+        result = check_cycle_viability(cycle, graph.get_orders)
 
         # Should use the more generous (lower rate) order
         assert result.orders[0].uid == make_uid("o1b")
@@ -383,7 +384,7 @@ class TestFindViableCycleDirection:
 
         # Sorted tuple may not match the viable direction
         sorted_tokens = tuple(sorted([WETH.lower(), USDC.lower(), DAI.lower()]))
-        result = find_viable_cycle_direction(sorted_tokens, graph)
+        result = find_viable_cycle_direction(sorted_tokens, graph.get_orders)
 
         assert result is not None
         assert result.viable is True
@@ -399,7 +400,7 @@ class TestFindViableCycleDirection:
         graph = OrderGraph.from_orders([o1, o2, o3])
 
         sorted_tokens = tuple(sorted([WETH.lower(), USDC.lower(), DAI.lower()]))
-        result = find_viable_cycle_direction(sorted_tokens, graph)
+        result = find_viable_cycle_direction(sorted_tokens, graph.get_orders)
 
         # No viable direction, and product too high for near-viable
         assert result is None
@@ -417,7 +418,7 @@ class TestFindViableCycleDirection:
         graph = OrderGraph.from_orders([o1, o2, o3])
 
         sorted_tokens = tuple(sorted([WETH.lower(), USDC.lower(), DAI.lower()]))
-        result = find_viable_cycle_direction(sorted_tokens, graph)
+        result = find_viable_cycle_direction(sorted_tokens, graph.get_orders)
 
         assert result is not None
         assert result.viable is False

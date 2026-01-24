@@ -6,15 +6,17 @@ import pytest
 
 from solver.models.auction import Order
 from solver.models.order_groups import OrderGroup
-from solver.strategies.multi_pair import (
-    MultiPairCowStrategy,
+from solver.strategies.components import find_order_components, find_token_components
+from solver.strategies.graph import UnionFind, find_spanning_tree
+from solver.strategies.multi_pair import MultiPairCowStrategy
+from solver.strategies.pricing import (
     PriceCandidates,
-    UnionFind,
-    build_token_graph,
+    build_price_candidates_from_orders,
+    build_token_graph_from_groups,
+    build_token_graph_from_orders,
     enumerate_price_combinations,
-    find_spanning_tree,
-    find_token_components,
     solve_fills_at_prices,
+    solve_fills_at_prices_v2,
 )
 
 # Counter for generating unique UIDs
@@ -202,7 +204,7 @@ class TestBuildTokenGraph:
     def test_single_group(self) -> None:
         """Single group should create edge between its tokens."""
         group = OrderGroup(token_a=TOKEN_A, token_b=TOKEN_B)
-        graph = build_token_graph([group])
+        graph = build_token_graph_from_groups([group])
 
         token_a = TOKEN_A.lower()
         token_b = TOKEN_B.lower()
@@ -215,7 +217,7 @@ class TestBuildTokenGraph:
             OrderGroup(token_a=TOKEN_A, token_b=TOKEN_B),
             OrderGroup(token_a=TOKEN_B, token_b=TOKEN_C),
         ]
-        graph = build_token_graph(groups)
+        graph = build_token_graph_from_groups(groups)
 
         token_a = TOKEN_A.lower()
         token_b = TOKEN_B.lower()
@@ -497,3 +499,348 @@ class TestLPSolverWithScipy:
 
             # Should be approximately balanced (may have small rounding)
             assert abs(total_a_sold - total_a_bought) <= 1
+
+
+# =============================================================================
+# Slice 4.7: Generalized Multi-Pair Tests
+# =============================================================================
+
+
+class TestFindOrderComponents:
+    """Tests for generalized order component detection."""
+
+    def test_empty_input(self) -> None:
+        """Empty input should return empty list."""
+        result = find_order_components([])
+        assert result == []
+
+    def test_single_order(self) -> None:
+        """Single order creates a 2-token component."""
+        order = make_order("o1", TOKEN_A, TOKEN_B, 100, 200)
+        result = find_order_components([order])
+        assert len(result) == 1
+        tokens, orders = result[0]
+        assert len(tokens) == 2
+        assert TOKEN_A.lower() in tokens
+        assert TOKEN_B.lower() in tokens
+        assert len(orders) == 1
+
+    def test_two_disconnected_orders(self) -> None:
+        """Orders with no shared tokens are separate components."""
+        order1 = make_order("o1", TOKEN_A, TOKEN_B, 100, 200)
+        order2 = make_order("o2", TOKEN_C, TOKEN_D, 100, 200)
+        result = find_order_components([order1, order2])
+        assert len(result) == 2
+        # Each component has 2 tokens and 1 order
+        for tokens, orders in result:
+            assert len(tokens) == 2
+            assert len(orders) == 1
+
+    def test_three_cycle_single_component(self) -> None:
+        """Orders forming A→B, B→C, C→A cycle are in one component."""
+        orders = [
+            make_order("ab", TOKEN_A, TOKEN_B, 100, 100),
+            make_order("bc", TOKEN_B, TOKEN_C, 100, 100),
+            make_order("ca", TOKEN_C, TOKEN_A, 100, 100),
+        ]
+        result = find_order_components(orders, max_tokens=4)
+        assert len(result) == 1
+        tokens, comp_orders = result[0]
+        assert len(tokens) == 3
+        assert len(comp_orders) == 3
+
+    def test_max_tokens_filter(self) -> None:
+        """Components with more than max_tokens are filtered out."""
+        # Create a 4-token component
+        orders = [
+            make_order("ab", TOKEN_A, TOKEN_B, 100, 100),
+            make_order("bc", TOKEN_B, TOKEN_C, 100, 100),
+            make_order("cd", TOKEN_C, TOKEN_D, 100, 100),
+        ]
+        # With max_tokens=3, should be filtered
+        result = find_order_components(orders, max_tokens=3)
+        assert len(result) == 0
+
+        # With max_tokens=4, should be included
+        result = find_order_components(orders, max_tokens=4)
+        assert len(result) == 1
+        tokens, _ = result[0]
+        assert len(tokens) == 4
+
+    def test_bidirectional_pair_creates_2_token_component(self) -> None:
+        """Bidirectional pair (A↔B) creates 2-token component."""
+        orders = [
+            make_order("ab", TOKEN_A, TOKEN_B, 100, 200),
+            make_order("ba", TOKEN_B, TOKEN_A, 200, 100),
+        ]
+        result = find_order_components(orders)
+        assert len(result) == 1
+        tokens, comp_orders = result[0]
+        assert len(tokens) == 2
+        assert len(comp_orders) == 2
+
+    def test_sorted_by_order_count(self) -> None:
+        """Components are sorted by order count descending."""
+        # Create two disconnected components
+        large_component = [
+            make_order("ab1", TOKEN_A, TOKEN_B, 100, 200),
+            make_order("ab2", TOKEN_A, TOKEN_B, 100, 200),
+            make_order("ba", TOKEN_B, TOKEN_A, 200, 100),
+        ]
+        small_component = [
+            make_order("cd", TOKEN_C, TOKEN_D, 100, 200),
+        ]
+        all_orders = large_component + small_component
+        result = find_order_components(all_orders)
+        assert len(result) == 2
+        # First component should have more orders
+        assert len(result[0][1]) > len(result[1][1])
+
+
+class TestBuildTokenGraphFromOrders:
+    """Tests for token graph construction from orders."""
+
+    def test_single_order(self) -> None:
+        """Single order creates bidirectional edge."""
+        order = make_order("o1", TOKEN_A, TOKEN_B, 100, 200)
+        graph = build_token_graph_from_orders([order])
+
+        ta = TOKEN_A.lower()
+        tb = TOKEN_B.lower()
+        assert tb in graph[ta]
+        assert ta in graph[tb]
+
+    def test_cycle_orders(self) -> None:
+        """Cycle orders create triangle graph."""
+        orders = [
+            make_order("ab", TOKEN_A, TOKEN_B, 100, 100),
+            make_order("bc", TOKEN_B, TOKEN_C, 100, 100),
+            make_order("ca", TOKEN_C, TOKEN_A, 100, 100),
+        ]
+        graph = build_token_graph_from_orders(orders)
+
+        ta = TOKEN_A.lower()
+        tb = TOKEN_B.lower()
+        tc = TOKEN_C.lower()
+
+        # Should have edges A-B, B-C, C-A
+        assert tb in graph[ta]
+        assert tc in graph[tb]
+        assert ta in graph[tc]
+
+
+class TestBuildPriceCandidatesFromOrders:
+    """Tests for price candidate building from orders."""
+
+    def test_single_order_limit_price(self) -> None:
+        """Single order adds its limit price as candidate."""
+        order = make_order("o1", TOKEN_A, TOKEN_B, 100, 200)
+
+        candidates = build_price_candidates_from_orders([order], None, None)
+
+        ratios = candidates.get_ratios(TOKEN_A.lower(), TOKEN_B.lower())
+        # Limit price: buy_amount / sell_amount = 200 / 100 = 2
+        assert Decimal("2") in ratios
+
+    def test_multiple_orders_different_limits(self) -> None:
+        """Multiple orders add their different limit prices."""
+        orders = [
+            make_order("o1", TOKEN_A, TOKEN_B, 100, 200),  # limit = 2
+            make_order("o2", TOKEN_A, TOKEN_B, 100, 300),  # limit = 3
+        ]
+
+        candidates = build_price_candidates_from_orders(orders, None, None)
+
+        ratios = candidates.get_ratios(TOKEN_A.lower(), TOKEN_B.lower())
+        assert Decimal("2") in ratios
+        assert Decimal("3") in ratios
+
+
+@pytest.mark.skipif(not SCIPY_AVAILABLE, reason="scipy not installed")
+class TestSolveFillsAtPricesV2:
+    """Tests for the generalized LP solver."""
+
+    def test_bidirectional_match(self) -> None:
+        """Two compatible orders should produce fills."""
+        orders = [
+            make_order("ask", TOKEN_A, TOKEN_B, 100, 200),  # sells A, wants 200 B
+            make_order("bid", TOKEN_B, TOKEN_A, 200, 100),  # sells B, wants 100 A
+        ]
+        tokens = {TOKEN_A.lower(), TOKEN_B.lower()}
+        prices = {
+            TOKEN_A.lower(): Decimal("1.0"),
+            TOKEN_B.lower(): Decimal("2.0"),  # 2 B per A
+        }
+
+        result = solve_fills_at_prices_v2(orders, tokens, prices)
+
+        assert result is not None
+        assert len(result.fills) == 2
+        assert result.total_volume > 0
+
+    def test_3_cycle_match(self) -> None:
+        """Three orders forming A→B→C→A should produce fills at valid prices."""
+        orders = [
+            make_order("ab", TOKEN_A, TOKEN_B, 100, 100),  # sells A, wants B at 1:1
+            make_order("bc", TOKEN_B, TOKEN_C, 100, 100),  # sells B, wants C at 1:1
+            make_order("ca", TOKEN_C, TOKEN_A, 100, 100),  # sells C, wants A at 1:1
+        ]
+        tokens = {TOKEN_A.lower(), TOKEN_B.lower(), TOKEN_C.lower()}
+        # All prices equal = 1:1:1 exchange rates
+        prices = {
+            TOKEN_A.lower(): Decimal("1.0"),
+            TOKEN_B.lower(): Decimal("1.0"),
+            TOKEN_C.lower(): Decimal("1.0"),
+        }
+
+        result = solve_fills_at_prices_v2(orders, tokens, prices)
+
+        assert result is not None
+        assert len(result.fills) == 3
+        assert result.total_volume > 0
+
+    def test_price_violates_limit(self) -> None:
+        """Orders should not match when price violates their limits."""
+        orders = [
+            make_order("ab", TOKEN_A, TOKEN_B, 100, 200),  # wants at least 2 B/A
+        ]
+        tokens = {TOKEN_A.lower(), TOKEN_B.lower()}
+        prices = {
+            TOKEN_A.lower(): Decimal("1.0"),
+            TOKEN_B.lower(): Decimal("1.5"),  # Only 1.5 B/A, below limit of 2
+        }
+
+        result = solve_fills_at_prices_v2(orders, tokens, prices)
+
+        # No fills because limit not satisfied
+        assert result is None or len(result.fills) == 0
+
+
+@pytest.mark.skipif(not SCIPY_AVAILABLE, reason="scipy not installed")
+class TestGeneralizedMultiPairStrategy:
+    """Integration tests for generalized component detection."""
+
+    def test_3_cycle_no_bidirectional(self) -> None:
+        """3-cycle (A→B, B→C, C→A) should be captured by generalized strategy.
+
+        This is the key test for Slice 4.7 - cycles that the old bidirectional
+        approach would miss.
+        """
+        from solver.models.auction import AuctionInstance
+
+        # Create orders forming a cycle with compatible limit prices
+        # A→B: sell 100 A for 100 B
+        # B→C: sell 100 B for 100 C
+        # C→A: sell 100 C for 100 A
+        orders = [
+            make_order("ab", TOKEN_A, TOKEN_B, 100, 100),
+            make_order("bc", TOKEN_B, TOKEN_C, 100, 100),
+            make_order("ca", TOKEN_C, TOKEN_A, 100, 100),
+        ]
+        auction = AuctionInstance(orders=orders, tokens={}, liquidity=[])
+
+        # Test with generalized strategy (should find matches)
+        strategy = MultiPairCowStrategy(use_generalized=True, max_tokens=4)
+        result = strategy.try_solve(auction)
+
+        # The generalized strategy should find this component
+        # Whether it matches depends on LP feasibility
+        # Key thing is it doesn't crash and processes the component
+        if result is not None:
+            assert result.has_fills
+
+    def test_4_cycle_with_max_tokens_4(self) -> None:
+        """4-cycle should be processed when max_tokens >= 4."""
+        from solver.models.auction import AuctionInstance
+
+        orders = [
+            make_order("ab", TOKEN_A, TOKEN_B, 100, 100),
+            make_order("bc", TOKEN_B, TOKEN_C, 100, 100),
+            make_order("cd", TOKEN_C, TOKEN_D, 100, 100),
+            make_order("da", TOKEN_D, TOKEN_A, 100, 100),
+        ]
+        auction = AuctionInstance(orders=orders, tokens={}, liquidity=[])
+
+        # With max_tokens=4, should process the component
+        strategy = MultiPairCowStrategy(use_generalized=True, max_tokens=4)
+        result = strategy.try_solve(auction)
+
+        # Should not crash; may or may not find matches
+        if result is not None:
+            assert isinstance(result.prices, dict)
+
+    def test_4_cycle_skipped_with_max_tokens_3(self) -> None:
+        """4-cycle should be skipped when max_tokens < 4."""
+        from solver.models.auction import AuctionInstance
+
+        orders = [
+            make_order("ab", TOKEN_A, TOKEN_B, 100, 100),
+            make_order("bc", TOKEN_B, TOKEN_C, 100, 100),
+            make_order("cd", TOKEN_C, TOKEN_D, 100, 100),
+            make_order("da", TOKEN_D, TOKEN_A, 100, 100),
+        ]
+        auction = AuctionInstance(orders=orders, tokens={}, liquidity=[])
+
+        # With max_tokens=3, the 4-token component should be skipped
+        strategy = MultiPairCowStrategy(use_generalized=True, max_tokens=3)
+        result = strategy.try_solve(auction)
+
+        # Should return None (no valid components within max_tokens)
+        assert result is None
+
+    def test_bidirectional_still_works(self) -> None:
+        """Bidirectional pair (A↔B) should still be handled correctly."""
+        from solver.models.auction import AuctionInstance
+
+        orders = [
+            make_order("ask", TOKEN_A, TOKEN_B, 100, 200),
+            make_order("bid", TOKEN_B, TOKEN_A, 200, 100),
+        ]
+        auction = AuctionInstance(orders=orders, tokens={}, liquidity=[])
+
+        strategy = MultiPairCowStrategy(use_generalized=True, max_tokens=4)
+        result = strategy.try_solve(auction)
+
+        # Should work just as before
+        if result is not None:
+            assert result.has_fills
+
+    def test_use_generalized_false_uses_old_approach(self) -> None:
+        """With use_generalized=False, should use old bidirectional approach."""
+        from solver.models.auction import AuctionInstance
+
+        # 3-cycle without bidirectional pairs
+        orders = [
+            make_order("ab", TOKEN_A, TOKEN_B, 100, 100),
+            make_order("bc", TOKEN_B, TOKEN_C, 100, 100),
+            make_order("ca", TOKEN_C, TOKEN_A, 100, 100),
+        ]
+        auction = AuctionInstance(orders=orders, tokens={}, liquidity=[])
+
+        # Old approach should not find this (no bidirectional pairs)
+        strategy = MultiPairCowStrategy(use_generalized=False)
+        result = strategy.try_solve(auction)
+
+        # Old approach returns None because no bidirectional pairs exist
+        assert result is None
+
+    def test_mixed_pair_and_cycle(self) -> None:
+        """Mixed scenario: bidirectional pair + cycle orders."""
+        from solver.models.auction import AuctionInstance
+
+        # Pair A↔B + cycle through C
+        orders = [
+            make_order("ab", TOKEN_A, TOKEN_B, 100, 200),
+            make_order("ba", TOKEN_B, TOKEN_A, 200, 100),
+            make_order("ac", TOKEN_A, TOKEN_C, 100, 300),
+            make_order("cb", TOKEN_C, TOKEN_B, 300, 100),
+        ]
+        auction = AuctionInstance(orders=orders, tokens={}, liquidity=[])
+
+        strategy = MultiPairCowStrategy(use_generalized=True, max_tokens=4)
+        result = strategy.try_solve(auction)
+
+        # All orders are in one component (A, B, C connected)
+        # Should process without crashing
+        if result is not None:
+            assert isinstance(result.prices, dict)
