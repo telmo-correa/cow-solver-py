@@ -8,21 +8,34 @@ in matching_rules.py as data structures, making the logic:
 - Easy to audit and verify
 - Self-documenting
 - Testable in isolation
+
+Constraints enforced:
+- Fill-or-kill: Orders with partially_fillable=false must be fully filled
+- Limit price: Both orders' limit prices must be satisfied
+- EBBO: Clearing price must be >= AMM reference price (when router provided)
+- Uniform price: Both orders execute at the same clearing price
 """
 
+from __future__ import annotations
+
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import structlog
 
 from solver.models.auction import AuctionInstance, Order
 from solver.models.types import normalize_address
 from solver.strategies.base import OrderFill, StrategyResult
+from solver.strategies.ebbo_bounds import verify_fills_against_ebbo
 from solver.strategies.matching_rules import (
     ExecutionAmounts,
     OrderAmounts,
     evaluate_partial_match,
     evaluate_perfect_match,
 )
+
+if TYPE_CHECKING:
+    from solver.routing.router import SingleOrderRouter
 
 logger = structlog.get_logger()
 
@@ -48,7 +61,7 @@ class CowMatch:
     exec_buy_b: int
 
     @classmethod
-    def from_execution(cls, order_a: Order, order_b: Order, exec: ExecutionAmounts) -> "CowMatch":
+    def from_execution(cls, order_a: Order, order_b: Order, exec: ExecutionAmounts) -> CowMatch:
         """Create a CowMatch from execution amounts."""
         return cls(
             order_a=order_a,
@@ -67,6 +80,7 @@ class CowMatchStrategy:
     - Order A sells token X, wants token Y
     - Order B sells token Y, wants token X
     - Both orders' limit prices are satisfied
+    - EBBO compliance: clearing price >= AMM reference price (when router provided)
 
     CoW matching is preferred over AMM routing because:
     - No swap fees for users
@@ -75,7 +89,22 @@ class CowMatchStrategy:
 
     The matching logic is defined in matching_rules.py as data structures,
     making it easy to audit and extend.
+
+    Args:
+        router: Optional router for EBBO validation. If provided, matches are
+                validated against AMM reference prices before being returned.
     """
+
+    def __init__(self, router: SingleOrderRouter | None = None) -> None:
+        """Initialize the strategy.
+
+        Args:
+            router: Optional router for EBBO validation. When provided, CoW matches
+                    are validated against AMM reference prices to ensure users get
+                    at least as good execution as they would from the AMM.
+        """
+        self.router = router
+        self._current_auction: AuctionInstance | None = None
 
     def try_solve(self, auction: AuctionInstance) -> StrategyResult | None:
         """Try to find a CoW match in the auction.
@@ -93,6 +122,9 @@ class CowMatchStrategy:
         Returns:
             A StrategyResult if a CoW match is found, None otherwise
         """
+        # Store auction for use in _build_result (for EBBO validation)
+        self._current_auction = auction
+
         # Currently only handle 2-order auctions
         if auction.order_count != 2:
             return None
@@ -222,8 +254,14 @@ class CowMatchStrategy:
 
         return CowMatch.from_execution(order_a, order_b, exec_amounts)
 
-    def _build_result(self, match: CowMatch) -> StrategyResult:
-        """Build a StrategyResult from a CoW match."""
+    def _build_result(self, match: CowMatch) -> StrategyResult | None:
+        """Build a StrategyResult from a CoW match.
+
+        Validates EBBO compliance if a router is configured.
+
+        Returns:
+            StrategyResult if match is valid, None if EBBO violated.
+        """
         # Normalize token addresses
         token_x = normalize_address(match.order_a.sell_token)  # A sells, B buys
         token_y = normalize_address(match.order_a.buy_token)  # A buys, B sells
@@ -246,6 +284,26 @@ class CowMatchStrategy:
             buy_filled=match.exec_buy_b,
         )
 
+        fills = [fill_a, fill_b]
+
+        # EBBO validation: ensure clearing price >= AMM reference price
+        if self.router is not None and self._current_auction is not None:
+            # Convert string prices to int for verification
+            clearing_prices_int = {token_x: int(prices[token_x]), token_y: int(prices[token_y])}
+
+            if not verify_fills_against_ebbo(
+                fills, clearing_prices_int, self.router, self._current_auction
+            ):
+                logger.debug(
+                    "cow_match_ebbo_violation",
+                    reason="Clearing price worse than AMM reference price",
+                    token_x=token_x[-8:],
+                    token_y=token_y[-8:],
+                    price_x=prices[token_x],
+                    price_y=prices[token_y],
+                )
+                return None
+
         # Compute remainder orders for any unfilled portions
         remainder_orders = []
         remainder_a = fill_a.get_remainder_order()
@@ -257,7 +315,7 @@ class CowMatchStrategy:
 
         # No AMM interactions needed - pure peer-to-peer settlement
         return StrategyResult(
-            fills=[fill_a, fill_b],
+            fills=fills,
             interactions=[],
             prices=prices,
             gas=0,  # No on-chain swaps, just transfers

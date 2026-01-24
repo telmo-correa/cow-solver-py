@@ -125,16 +125,26 @@ def verify_fills_against_ebbo(
         if sell_price <= 0 or buy_price <= 0:
             continue
 
+        # Get token decimals for both tokens
+        sell_info = auction.tokens.get(sell_token)
+        buy_info = auction.tokens.get(buy_token)
+        sell_decimals = sell_info.decimals if sell_info and sell_info.decimals else 18
+        buy_decimals = buy_info.decimals if buy_info and buy_info.decimals else 18
+
         # User's rate: sell_price / buy_price (from conservation: sell*sell_price = buy*buy_price)
-        # This matches ebbo.py:188 and ring_trade.py:220
-        clearing_rate = Decimal(sell_price) / Decimal(buy_price)
+        # This gives a raw ratio that needs decimal scaling to match get_reference_price units.
+        # Example: For WETH (18 dec) -> USDC (6 dec) trade:
+        #   - prices = {WETH: 3e9, USDC: 1e18}
+        #   - raw_rate = 3e9 / 1e18 = 3e-9
+        #   - human_rate = 3e-9 * 10^(18-6) = 3000 USDC/WETH
+        raw_rate = Decimal(sell_price) / Decimal(buy_price)
+        decimal_scale = Decimal(10) ** (sell_decimals - buy_decimals)
+        clearing_rate = raw_rate * decimal_scale
 
-        # Get token decimals
-        token_info = auction.tokens.get(sell_token)
-        decimals = token_info.decimals if token_info and token_info.decimals else 18
-
-        # Get AMM reference rate
-        amm_rate = router.get_reference_price(sell_token, buy_token, token_in_decimals=decimals)
+        # Get AMM reference rate (returns human-readable rate like 2500 USDC/WETH)
+        amm_rate = router.get_reference_price(
+            sell_token, buy_token, token_in_decimals=sell_decimals
+        )
         if amm_rate is None:
             continue
 

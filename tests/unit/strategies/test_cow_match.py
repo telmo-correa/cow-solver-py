@@ -1,6 +1,6 @@
 """Tests for the CowMatchStrategy."""
 
-from solver.models.auction import AuctionInstance, Order
+from solver.models.auction import AuctionInstance, Order, Token
 from solver.strategies.cow_match import CowMatchStrategy
 
 
@@ -1786,3 +1786,211 @@ class TestRemainderOrderUidGeneration:
         # But have a different UID from both original and first remainder
         assert remainder2.uid != root_uid
         assert remainder2.uid != remainder1.uid
+
+
+class TestCowMatchEBBO:
+    """Tests for EBBO (Ethereum Best Bid/Offer) validation in CowMatchStrategy."""
+
+    def _make_auction_with_tokens(self, orders: list[Order]) -> AuctionInstance:
+        """Create auction with token decimals for EBBO validation."""
+        weth_lower = WETH.lower()
+        usdc_lower = USDC.lower()
+        return AuctionInstance(
+            id="test",
+            orders=orders,
+            tokens={
+                weth_lower: Token(decimals=18, available_balance="0"),
+                usdc_lower: Token(decimals=6, available_balance="0"),
+            },
+        )
+
+    def test_cow_match_rejects_when_clearing_below_amm(self):
+        """CoW match rejected when clearing rate < AMM rate."""
+        from decimal import Decimal
+        from unittest.mock import Mock
+
+        # Order A: sells 1 WETH, wants 2000 USDC (limit: 2000 USDC/WETH)
+        # Order B: sells 2000 USDC, wants 1 WETH (limit: 2000 USDC/WETH)
+        # Clearing rate: 2000 USDC/WETH
+        # AMM rate: 2500 USDC/WETH (better than clearing - EBBO violation!)
+        order_a = make_order(
+            uid="0x" + "01" * 56,
+            sell_token=WETH,
+            buy_token=USDC,
+            sell_amount="1000000000000000000",  # 1 WETH
+            buy_amount="2000000000",  # 2000 USDC
+        )
+        order_b = make_order(
+            uid="0x" + "02" * 56,
+            sell_token=USDC,
+            buy_token=WETH,
+            sell_amount="2000000000",  # 2000 USDC
+            buy_amount="1000000000000000000",  # 1 WETH
+        )
+
+        # Mock router that returns AMM rate better than clearing
+        mock_router = Mock()
+        mock_router.get_reference_price.return_value = Decimal("2500")  # AMM offers 2500 USDC/WETH
+
+        strategy = CowMatchStrategy(router=mock_router)
+        auction = self._make_auction_with_tokens([order_a, order_b])
+        result = strategy.try_solve(auction)
+
+        # Match should be rejected due to EBBO violation
+        assert result is None
+
+    def test_cow_match_accepts_when_clearing_above_amm(self):
+        """CoW match accepted when clearing rate >= AMM rate for BOTH parties.
+
+        For a CoW match to pass EBBO for both parties:
+        - Order A (sells WETH): must get >= AMM rate for selling WETH
+        - Order B (sells USDC): must get >= AMM rate for selling USDC
+
+        This requires the clearing rate to be between the AMM's bid-ask spread.
+        In practice, AMMs have fees (~0.3%), so there's room for CoW to benefit both.
+
+        Example with AMM having 4% spread:
+        - Selling WETH on AMM gets 2400 USDC/WETH (after fees)
+        - Selling USDC on AMM gets 0.000385 WETH/USDC (= 1/2600, after fees)
+        - CoW match at 2500 USDC/WETH benefits both parties
+        """
+        from decimal import Decimal
+        from unittest.mock import Mock
+
+        # Order A: sells 1 WETH, wants 2500 USDC
+        # Order B: sells 2500 USDC, wants 1 WETH
+        # Clearing rate: 2500 USDC/WETH
+        order_a = make_order(
+            uid="0x" + "01" * 56,
+            sell_token=WETH,
+            buy_token=USDC,
+            sell_amount="1000000000000000000",  # 1 WETH
+            buy_amount="2500000000",  # 2500 USDC
+        )
+        order_b = make_order(
+            uid="0x" + "02" * 56,
+            sell_token=USDC,
+            buy_token=WETH,
+            sell_amount="2500000000",  # 2500 USDC
+            buy_amount="1000000000000000000",  # 1 WETH
+        )
+
+        weth_lower = WETH.lower()
+        usdc_lower = USDC.lower()
+
+        # Mock router with realistic AMM spread (~4%):
+        # - Selling WETH: get 2400 USDC/WETH
+        # - Selling USDC: get 0.000385 WETH/USDC (= 1/2600)
+        def mock_get_ref_price(sell_token, buy_token, **_kwargs):
+            if sell_token == weth_lower and buy_token == usdc_lower:
+                return Decimal("2400")  # Selling WETH gets 2400 USDC
+            elif sell_token == usdc_lower and buy_token == weth_lower:
+                return Decimal("0.000385")  # Selling USDC gets 0.000385 WETH (= 1/2600)
+            return None
+
+        mock_router = Mock()
+        mock_router.get_reference_price.side_effect = mock_get_ref_price
+
+        strategy = CowMatchStrategy(router=mock_router)
+        auction = self._make_auction_with_tokens([order_a, order_b])
+        result = strategy.try_solve(auction)
+
+        # Match should be accepted:
+        # - Order A clearing rate: 2500 >= AMM 2400 ✓
+        # - Order B clearing rate: 0.0004 >= AMM 0.000385 ✓
+        assert result is not None
+        assert len(result.fills) == 2
+
+    def test_cow_match_accepts_when_no_amm_liquidity(self):
+        """CoW match accepted when no AMM price available (no EBBO constraint)."""
+        from unittest.mock import Mock
+
+        # Standard CoW match
+        order_a = make_order(
+            uid="0x" + "01" * 56,
+            sell_token=WETH,
+            buy_token=USDC,
+            sell_amount="1000000000000000000",
+            buy_amount="2000000000",
+        )
+        order_b = make_order(
+            uid="0x" + "02" * 56,
+            sell_token=USDC,
+            buy_token=WETH,
+            sell_amount="2000000000",
+            buy_amount="1000000000000000000",
+        )
+
+        # Mock router that returns None (no AMM liquidity)
+        mock_router = Mock()
+        mock_router.get_reference_price.return_value = None
+
+        strategy = CowMatchStrategy(router=mock_router)
+        auction = self._make_auction_with_tokens([order_a, order_b])
+        result = strategy.try_solve(auction)
+
+        # Match should be accepted - no EBBO constraint when no AMM
+        assert result is not None
+        assert len(result.fills) == 2
+
+    def test_cow_match_ebbo_zero_tolerance(self):
+        """EBBO uses zero tolerance (clearing must be >= AMM exactly)."""
+        from decimal import Decimal
+        from unittest.mock import Mock
+
+        # Order A: sells 1 WETH, wants 1999 USDC
+        # Order B: sells 1999 USDC, wants 1 WETH
+        # Clearing rate: 1999 USDC/WETH
+        # AMM rate: 2000 USDC/WETH (just slightly better)
+        order_a = make_order(
+            uid="0x" + "01" * 56,
+            sell_token=WETH,
+            buy_token=USDC,
+            sell_amount="1000000000000000000",  # 1 WETH
+            buy_amount="1999000000",  # 1999 USDC (6 decimals)
+        )
+        order_b = make_order(
+            uid="0x" + "02" * 56,
+            sell_token=USDC,
+            buy_token=WETH,
+            sell_amount="1999000000",  # 1999 USDC
+            buy_amount="1000000000000000000",  # 1 WETH
+        )
+
+        # Mock router - AMM offers 2000 (just 0.05% better)
+        mock_router = Mock()
+        mock_router.get_reference_price.return_value = Decimal("2000")
+
+        strategy = CowMatchStrategy(router=mock_router)
+        auction = self._make_auction_with_tokens([order_a, order_b])
+        result = strategy.try_solve(auction)
+
+        # Match should be rejected - even tiny deficit fails with zero tolerance
+        assert result is None
+
+    def test_cow_match_without_router_skips_ebbo(self):
+        """CoW match without router configured skips EBBO validation."""
+        # Standard CoW match
+        order_a = make_order(
+            uid="0x" + "01" * 56,
+            sell_token=WETH,
+            buy_token=USDC,
+            sell_amount="1000000000000000000",
+            buy_amount="2000000000",
+        )
+        order_b = make_order(
+            uid="0x" + "02" * 56,
+            sell_token=USDC,
+            buy_token=WETH,
+            sell_amount="2000000000",
+            buy_amount="1000000000000000000",
+        )
+
+        # Strategy without router (default behavior)
+        strategy = CowMatchStrategy()
+        auction = make_auction([order_a, order_b])
+        result = strategy.try_solve(auction)
+
+        # Match should be accepted - no EBBO check without router
+        assert result is not None
+        assert len(result.fills) == 2
