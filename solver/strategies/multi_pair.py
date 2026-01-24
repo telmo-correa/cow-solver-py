@@ -157,7 +157,7 @@ class MultiPairCowStrategy:
         if not all_fills:
             return None
 
-        return self._build_result(all_fills, auction)
+        return self._build_result(all_fills, auction, all_prices)
 
     def _solve_bidirectional_only(
         self,
@@ -182,7 +182,7 @@ class MultiPairCowStrategy:
         if not all_fills:
             return None
 
-        return self._build_result(all_fills, auction)
+        return self._build_result(all_fills, auction, all_prices)
 
     def _solve_component(
         self,
@@ -226,14 +226,31 @@ class MultiPairCowStrategy:
         router: SingleOrderRouter,
         auction: AuctionInstance,
     ) -> LPResult | None:
-        """Handle large components by processing top pairs individually."""
+        """Handle large components by processing non-overlapping pairs individually.
+
+        For components with >500 orders, we can't do full LP optimization.
+        Instead, we process the largest pairs that don't share tokens with
+        already-processed pairs. This ensures clearing prices are consistent.
+        """
         sorted_groups = sorted(component, key=lambda g: g.order_count, reverse=True)
         combined_fills: list[OrderFill] = []
         combined_volume = 0
         combined_prices: dict[str, Decimal] = {}
         matched_uids: set[str] = set()
+        priced_tokens: set[str] = set()  # Tokens that already have prices
 
         for group in sorted_groups[:10]:
+            # Skip pairs that would create inconsistent prices
+            token_a = normalize_address(group.token_a)
+            token_b = normalize_address(group.token_b)
+            if token_a in priced_tokens or token_b in priced_tokens:
+                logger.debug(
+                    "multi_pair_skip_overlapping",
+                    pair=f"{token_a[-8:]}/{token_b[-8:]}",
+                    reason="tokens already have prices",
+                )
+                continue
+
             result = self._solve_single_pair(group, router, auction)
             if result:
                 for fill in result.fills:
@@ -242,6 +259,9 @@ class MultiPairCowStrategy:
                         matched_uids.add(fill.order.uid)
                         combined_volume += fill.sell_filled
                 combined_prices.update(result.prices)
+                # Mark these tokens as priced
+                priced_tokens.add(token_a)
+                priced_tokens.add(token_b)
 
         if not combined_fills:
             return None
@@ -421,7 +441,22 @@ class MultiPairCowStrategy:
         all_prices: dict[str, str],
         processed_uids: set[str],
     ) -> None:
-        """Collect fills from a result, avoiding duplicates."""
+        """Collect fills from a result, avoiding duplicates and price conflicts.
+
+        Only adds fills if their tokens don't already have prices set.
+        This ensures clearing prices remain consistent across all fills.
+        """
+        # Check for price conflicts before adding fills
+        for token in result.prices:
+            if token in all_prices:
+                # Token already has a price - skip this entire result to maintain consistency
+                logger.debug(
+                    "multi_pair_skip_conflicting_result",
+                    token=token[-8:],
+                    reason="price already set",
+                )
+                return
+
         for fill in result.fills:
             if fill.order.uid not in processed_uids:
                 all_fills.append(fill)
@@ -434,8 +469,15 @@ class MultiPairCowStrategy:
         self,
         all_fills: list[OrderFill],
         auction: AuctionInstance,
+        prices: dict[str, str] | None = None,
     ) -> StrategyResult:
-        """Build the final StrategyResult."""
+        """Build the final StrategyResult.
+
+        Args:
+            all_fills: All order fills
+            auction: The auction instance
+            prices: Pre-computed clearing prices. If None, falls back to _normalize_prices.
+        """
         filled_uids = {fill.order.uid for fill in all_fills}
         remainder_orders: list[Order] = []
 
@@ -448,12 +490,13 @@ class MultiPairCowStrategy:
             if remainder:
                 remainder_orders.append(remainder)
 
-        normalized_prices = self._normalize_prices(all_fills)
+        # Use provided prices if available, otherwise compute from fills
+        final_prices = prices if prices else self._normalize_prices(all_fills)
 
         return StrategyResult(
             fills=all_fills,
             interactions=[],
-            prices=normalized_prices,
+            prices=final_prices,
             gas=0,
             remainder_orders=remainder_orders,
         )

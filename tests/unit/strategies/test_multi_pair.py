@@ -844,3 +844,106 @@ class TestGeneralizedMultiPairStrategy:
         # Should process without crashing
         if result is not None:
             assert isinstance(result.prices, dict)
+
+
+class TestLargeComponentPriceConsistency:
+    """Tests for price consistency in large components.
+
+    When processing large components (>500 orders), the strategy falls back to
+    processing pairs individually. This must skip pairs that share tokens with
+    already-processed pairs to maintain consistent clearing prices.
+    """
+
+    def test_overlapping_pairs_skipped_in_large_component(self) -> None:
+        """Pairs with overlapping tokens should be skipped after first pair is processed."""
+        from solver.models.auction import AuctionInstance
+        from solver.models.order_groups import OrderGroup
+
+        # Create two pairs that share TOKEN_A
+        # Pair 1: A/B (bigger, processed first)
+        # Pair 2: A/C (shares A, should be skipped)
+        group1 = OrderGroup(
+            token_a=TOKEN_A,
+            token_b=TOKEN_B,
+            sellers_of_a=[make_order("ab1", TOKEN_A, TOKEN_B, 100, 200)],
+            sellers_of_b=[make_order("ba1", TOKEN_B, TOKEN_A, 300, 100)],
+        )
+        group2 = OrderGroup(
+            token_a=TOKEN_A,
+            token_b=TOKEN_C,
+            sellers_of_a=[make_order("ac1", TOKEN_A, TOKEN_C, 50, 150)],
+            sellers_of_b=[make_order("ca1", TOKEN_C, TOKEN_A, 150, 50)],
+        )
+
+        # Build auction with mock router
+        from unittest.mock import MagicMock
+
+        auction = AuctionInstance(orders=[], tokens={}, liquidity=[])
+
+        strategy = MultiPairCowStrategy()
+
+        # Mock _solve_single_pair to return predictable results
+        def mock_solve(group, _router, _auction):
+            from solver.strategies.base import OrderFill
+            from solver.strategies.multi_pair import LPResult
+
+            fills = [
+                OrderFill(order=group.sellers_of_a[0], sell_filled=50, buy_filled=100),
+                OrderFill(order=group.sellers_of_b[0], sell_filled=100, buy_filled=50),
+            ]
+            prices = {
+                group.token_a: Decimal("100"),
+                group.token_b: Decimal("50"),
+            }
+            return LPResult(fills=fills, total_volume=150, prices=prices)
+
+        strategy._solve_single_pair = MagicMock(side_effect=mock_solve)
+
+        # Call _solve_large_component
+        mock_router = MagicMock()
+        result = strategy._solve_large_component([group1, group2], mock_router, auction)
+
+        # Should only process group1 (larger) and skip group2 (shares TOKEN_A)
+        assert result is not None
+        # Only 2 fills from group1
+        assert len(result.fills) == 2
+        # Only 2 tokens priced (A and B), not C
+        assert len(result.prices) == 2
+        assert TOKEN_A in result.prices
+        assert TOKEN_B in result.prices
+        assert TOKEN_C not in result.prices
+
+    def test_clearing_prices_match_fill_rates(self) -> None:
+        """Clearing prices should produce correct rates for all fills."""
+        from decimal import Decimal
+
+        from solver.models.auction import AuctionInstance
+
+        # Create a simple A/B pair
+        orders = [
+            make_order("seller", TOKEN_A, TOKEN_B, 100, 200),  # Sells A for B, rate >= 2
+            make_order("buyer", TOKEN_B, TOKEN_A, 250, 100),  # Sells B for A, rate <= 2.5
+        ]
+        auction = AuctionInstance(orders=orders, tokens={}, liquidity=[])
+
+        strategy = MultiPairCowStrategy()
+        result = strategy.try_solve(auction)
+
+        if result is not None and result.fills:
+            # Check that clearing rate matches fill rate for each order
+            for fill in result.fills:
+                order = fill.order
+                sell_price = int(result.prices.get(order.sell_token.lower(), "0"))
+                buy_price = int(result.prices.get(order.buy_token.lower(), "0"))
+
+                if sell_price > 0 and buy_price > 0:
+                    # Clearing rate = what you get per what you sell
+                    clearing_rate = Decimal(sell_price) / Decimal(buy_price)
+                    # Fill rate = buy_filled / sell_filled
+                    fill_rate = Decimal(fill.buy_filled) / Decimal(fill.sell_filled)
+
+                    # These should match (or be very close due to rounding)
+                    ratio = float(clearing_rate / fill_rate) if fill_rate > 0 else 0
+                    assert 0.99 <= ratio <= 1.01, (
+                        f"Rate mismatch: clearing={clearing_rate}, fill={fill_rate}"
+                    )

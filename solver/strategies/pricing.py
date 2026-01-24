@@ -403,7 +403,8 @@ def solve_fills_at_prices(
         if fill_ratio < 0.001:  # Skip negligible fills
             continue
 
-        # Calculate fill amounts
+        # Calculate fill amounts preserving the order's limit price
+        # The user gets at least their requested amount (the limit price)
         sell_filled = int(order.sell_amount_int * fill_ratio)
         buy_filled = int(order.buy_amount_int * fill_ratio)
 
@@ -604,7 +605,7 @@ def solve_fills_at_prices_v2(
         if fill_ratio < 0.001:  # Skip negligible fills
             continue
 
-        # Calculate fill amounts
+        # Calculate fill amounts preserving the order's limit price
         sell_filled = int(order.sell_amount_int * fill_ratio)
         buy_filled = int(order.buy_amount_int * fill_ratio)
 

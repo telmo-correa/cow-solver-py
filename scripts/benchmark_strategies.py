@@ -28,6 +28,8 @@ from pathlib import Path
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from solver.amm.balancer import BalancerStableAMM, BalancerWeightedAMM
+from solver.amm.limit_order import LimitOrderAMM
 from solver.ebbo import EBBOPrices, EBBOValidator, load_ebbo_prices
 from solver.models.auction import AuctionInstance
 from solver.models.types import normalize_address
@@ -241,11 +243,30 @@ def main():
         print("EBBO compliance checking enabled")
     print()
 
-    # Initialize strategies
+    # Initialize AMMs (same configuration as production solver)
+    weighted_amm = BalancerWeightedAMM()
+    stable_amm = BalancerStableAMM()
+    limit_order_amm = LimitOrderAMM()
+
+    # Initialize strategies with full AMM suite
     strategies = [
         ("CowMatch", CowMatchStrategy()),
-        ("HybridCow", HybridCowStrategy()),
-        ("MultiPair", MultiPairCowStrategy()),
+        (
+            "HybridCow",
+            HybridCowStrategy(
+                weighted_amm=weighted_amm,
+                stable_amm=stable_amm,
+                limit_order_amm=limit_order_amm,
+            ),
+        ),
+        (
+            "MultiPair",
+            MultiPairCowStrategy(
+                weighted_amm=weighted_amm,
+                stable_amm=stable_amm,
+                limit_order_amm=limit_order_amm,
+            ),
+        ),
         ("RingTrade", RingTradeStrategy(max_4_cycles=100)),
     ]
 
