@@ -71,6 +71,18 @@ class CycleViability:
             self.NEAR_VIABLE_DENOM
         )
 
+    def product_less_than(self, other: CycleViability) -> bool:
+        """Compare product ratios using exact integer cross-multiplication.
+
+        Returns True if self.product < other.product.
+        Uses: a/b < c/d  iff  a*d < c*b
+        """
+        # self.product_num / self.product_denom < other.product_num / other.product_denom
+        # iff self.product_num * other.product_denom < other.product_num * self.product_denom
+        return S(self.product_num) * S(other.product_denom) < S(other.product_num) * S(
+            self.product_denom
+        )
+
 
 @dataclass
 class CycleSettlement:
@@ -218,7 +230,7 @@ def find_viable_cycle_direction(
         if result.viable:
             return result
         if result.near_viable and (
-            best_near_viable is None or result.product < best_near_viable.product
+            best_near_viable is None or result.product_less_than(best_near_viable)
         ):
             best_near_viable = result
 
@@ -228,7 +240,7 @@ def find_viable_cycle_direction(
         if result.viable:
             return result
         if result.near_viable and (
-            best_near_viable is None or result.product < best_near_viable.product
+            best_near_viable is None or result.product_less_than(best_near_viable)
         ):
             best_near_viable = result
 

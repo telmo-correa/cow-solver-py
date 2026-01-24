@@ -327,17 +327,17 @@ class SolutionValidator:
 
         # Check: price[output] * input == price[input] * output
         # This is how CoW Protocol clearing prices work
+        # Use exact integer equality - no tolerance allowed for financial calculations
         lhs = price_output * input_amount
         rhs = price_input * output_amount
 
         if lhs != rhs:
-            # Allow small rounding (< 0.0001%)
-            diff_pct = abs(lhs - rhs) / max(lhs, rhs) * 100 if max(lhs, rhs) > 0 else 0
-            if diff_pct > 0.0001:
-                errors.append(
-                    f"Clearing price inconsistency: price[out]*in={lhs}, "
-                    f"price[in]*out={rhs} (diff={diff_pct:.6f}%)"
-                )
+            # Report as error - clearing prices must satisfy exact conservation
+            diff = abs(lhs - rhs)
+            errors.append(
+                f"Clearing price inconsistency: price[out]*in={lhs}, "
+                f"price[in]*out={rhs} (diff={diff})"
+            )
 
         return errors
 

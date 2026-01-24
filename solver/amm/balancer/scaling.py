@@ -2,11 +2,14 @@
 
 Functions for scaling token amounts between native decimals and 18-decimal
 fixed-point, and for applying swap fees.
+
+IMPORTANT: All financial calculations use SafeInt for overflow protection.
 """
 
 from decimal import Decimal
 
 from solver.math.fixed_point import Bfp
+from solver.safe_int import S
 
 from .errors import InvalidFeeError, InvalidScalingFactorError
 
@@ -26,7 +29,9 @@ def scale_up(amount: int, scaling_factor: int) -> Bfp:
     """
     if scaling_factor <= 0:
         raise InvalidScalingFactorError(f"Scaling factor must be positive, got {scaling_factor}")
-    return Bfp.from_wei(amount * scaling_factor)
+    # Use SafeInt for overflow protection in multiplication
+    scaled = S(amount) * S(scaling_factor)
+    return Bfp.from_wei(scaled.value)
 
 
 def scale_down_down(bfp: Bfp, scaling_factor: int) -> int:
@@ -44,7 +49,8 @@ def scale_down_down(bfp: Bfp, scaling_factor: int) -> int:
     """
     if scaling_factor <= 0:
         raise InvalidScalingFactorError(f"Scaling factor must be positive, got {scaling_factor}")
-    return bfp.value // scaling_factor
+    # Use SafeInt for consistent division handling
+    return (S(bfp.value) // S(scaling_factor)).value
 
 
 def scale_down_up(bfp: Bfp, scaling_factor: int) -> int:
@@ -64,7 +70,8 @@ def scale_down_up(bfp: Bfp, scaling_factor: int) -> int:
         raise InvalidScalingFactorError(f"Scaling factor must be positive, got {scaling_factor}")
     if bfp.value == 0:
         return 0
-    return (bfp.value - 1) // scaling_factor + 1
+    # Use SafeInt ceiling division for rounding up
+    return S(bfp.value).ceiling_div(S(scaling_factor)).value
 
 
 def subtract_swap_fee_amount(amount: int, swap_fee: Decimal) -> int:

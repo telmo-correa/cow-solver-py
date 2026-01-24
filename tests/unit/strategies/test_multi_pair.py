@@ -497,7 +497,10 @@ class TestLPSolverWithScipy:
                 else:
                     total_a_bought += fill.buy_filled
 
-            # Should be approximately balanced (may have small rounding)
+            # Token conservation check: total sold of A should equal total bought of A.
+            # 1 wei tolerance is allowed because scipy's LP solver uses floating-point
+            # arithmetic internally, and the integer rounding of fill amounts may cause
+            # up to 1 wei imbalance. This is acceptable for unit testing the LP solver.
             assert abs(total_a_sold - total_a_bought) <= 1
 
 

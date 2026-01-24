@@ -19,6 +19,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from decimal import Decimal
+from fractions import Fraction
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -186,16 +187,20 @@ class EBBOValidator:
             if sell_price == 0 or buy_price == 0:
                 continue
 
-            clearing_rate = Decimal(sell_price) / Decimal(buy_price)
-
-            # Get EBBO rate
-            ebbo_rate = self._get_ebbo_rate(sell, buy, auction)
-            if ebbo_rate is None:
+            # Get EBBO rate as integer ratio for exact comparison
+            ebbo_ratio = self._get_ebbo_rate_ratio(sell, buy, auction)
+            if ebbo_ratio is None:
                 continue
 
-            # Check if clearing rate is at least as good as EBBO
-            min_acceptable = ebbo_rate * (1 - self.tolerance)
-            if clearing_rate < min_acceptable:
+            ebbo_num, ebbo_denom = ebbo_ratio
+
+            # EBBO check using cross-multiplication (exact integer arithmetic):
+            # clearing_rate >= ebbo_rate means sell_price/buy_price >= ebbo_num/ebbo_denom
+            # Cross-multiply: sell_price * ebbo_denom >= buy_price * ebbo_num
+            if sell_price * ebbo_denom < buy_price * ebbo_num:
+                # Violation - compute Decimal values for logging only
+                clearing_rate = Decimal(sell_price) / Decimal(buy_price)
+                ebbo_rate = Decimal(ebbo_num) / Decimal(ebbo_denom)
                 deficit_pct = float((ebbo_rate - clearing_rate) / ebbo_rate * 100)
                 violations.append(
                     EBBOViolation(
@@ -227,6 +232,34 @@ class EBBOValidator:
             token_info = auction.tokens.get(sell_token)
             decimals = token_info.decimals if token_info and token_info.decimals else 18
             return self.router.get_reference_price(
+                sell_token, buy_token, token_in_decimals=decimals
+            )
+
+        return None
+
+    def _get_ebbo_rate_ratio(
+        self,
+        sell_token: str,
+        buy_token: str,
+        auction: AuctionInstance | None,
+    ) -> tuple[int, int] | None:
+        """Get EBBO rate as integer ratio for exact cross-multiplication comparison.
+
+        Returns (num, denom) where rate = num/denom, or None if unavailable.
+        """
+        # Try precomputed prices first
+        if self.ebbo_prices is not None:
+            rate = self.ebbo_prices.get_price(sell_token, buy_token)
+            if rate is not None:
+                # Convert Decimal to integer ratio - gives exact representation
+                frac = Fraction(rate)
+                return (frac.numerator, frac.denominator)
+
+        # Fall back to router's ratio method if available
+        if self.router is not None and auction is not None:
+            token_info = auction.tokens.get(sell_token)
+            decimals = token_info.decimals if token_info and token_info.decimals else 18
+            return self.router.get_reference_price_ratio(
                 sell_token, buy_token, token_in_decimals=decimals
             )
 

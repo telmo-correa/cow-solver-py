@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from decimal import ROUND_HALF_UP, Decimal
+from fractions import Fraction
 from typing import TYPE_CHECKING
 
 import structlog
@@ -378,11 +379,12 @@ class MultiPairCowStrategy(AMMBackedStrategy):
                         valid = False
                         break
 
+                    # Use Fraction for exact rational comparison (no float precision loss)
                     best = min(
                         available,
-                        key=lambda o: o.buy_amount_int / o.sell_amount_int
+                        key=lambda o: Fraction(o.buy_amount_int, o.sell_amount_int)
                         if o.sell_amount_int > 0
-                        else float("inf"),
+                        else Fraction(10**100, 1),
                     )
                     cycle_orders.append(best)
 

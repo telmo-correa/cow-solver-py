@@ -117,13 +117,16 @@ class TestRingTradeHistorical:
             # In a ring, what order i sells to order i-1 = what order i-1 buys
             # This is implicitly verified by the fill construction
             for fill in result.fills:
-                # Verify limit price is respected
+                # Verify limit price is respected using integer cross-multiplication
+                # (no tolerance - exact integer comparison)
+                # actual_rate >= limit_rate means:
+                # buy_filled / sell_filled >= buy_amount / sell_amount
+                # Cross-multiply: buy_filled * sell_amount >= sell_filled * buy_amount
                 order = fill.order
                 if fill.sell_filled > 0:
-                    limit_rate = int(order.buy_amount) / int(order.sell_amount)
-                    actual_rate = fill.buy_filled / fill.sell_filled
-                    # Allow 0.2% tolerance for rounding
-                    if actual_rate < limit_rate * 0.998:
+                    lhs = fill.buy_filled * int(order.sell_amount)
+                    rhs = fill.sell_filled * int(order.buy_amount)
+                    if lhs < rhs:
                         all_valid = False
 
         assert all_valid, "Some settlements violated limit prices"

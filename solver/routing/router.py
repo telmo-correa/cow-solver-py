@@ -408,6 +408,59 @@ class SingleOrderRouter:
 
         return best_price
 
+    def get_reference_price_ratio(
+        self,
+        token_in: str,
+        token_out: str,
+        probe_amount: int | None = None,
+        token_in_decimals: int = 18,
+    ) -> tuple[int, int] | None:
+        """Get AMM reference price as an integer ratio for exact comparisons.
+
+        Similar to get_reference_price but returns (amount_out, amount_in) tuple
+        for use in cross-multiplication comparisons. This avoids Decimal division
+        precision loss.
+
+        Args:
+            token_in: Token being sold (numerator token)
+            token_out: Token being bought (denominator token)
+            probe_amount: Amount to use for price discovery. If None,
+                         uses 0.001 tokens scaled to token_in_decimals.
+            token_in_decimals: Decimals of the input token.
+
+        Returns:
+            Tuple (amount_out, amount_in) representing the price ratio,
+            or None if no liquidity exists for the pair.
+        """
+        if probe_amount is None:
+            probe_amount = 10 ** max(0, token_in_decimals - 3)
+
+        pools = self._registry.get_pools_for_pair(token_in, token_out)
+        if not pools:
+            return None
+
+        best_ratio: tuple[int, int] | None = None
+
+        for pool in pools:
+            if not self._handler_registry.is_registered(pool):
+                continue
+
+            result = self._handler_registry.simulate_swap(pool, token_in, token_out, probe_amount)
+            if result is None or result.amount_out <= 0:
+                continue
+
+            # Keep the best price (highest output per input)
+            # Compare using cross-multiplication: a/b > c/d iff a*d > c*b
+            if best_ratio is None:
+                best_ratio = (result.amount_out, result.amount_in)
+            else:
+                # result.amount_out / result.amount_in > best_ratio[0] / best_ratio[1]
+                # iff result.amount_out * best_ratio[1] > best_ratio[0] * result.amount_in
+                if result.amount_out * best_ratio[1] > best_ratio[0] * result.amount_in:
+                    best_ratio = (result.amount_out, result.amount_in)
+
+        return best_ratio
+
     def _estimate_path(
         self,
         order: Order,

@@ -146,26 +146,56 @@ def verify_fills_against_ebbo(
         sell_decimals = sell_info.decimals if sell_info and sell_info.decimals else 18
         buy_decimals = buy_info.decimals if buy_info and buy_info.decimals else 18
 
-        # User's rate: sell_price / buy_price (from conservation: sell*sell_price = buy*buy_price)
-        # This gives a raw ratio that needs decimal scaling to match get_reference_price units.
-        # Example: For WETH (18 dec) -> USDC (6 dec) trade:
-        #   - prices = {WETH: 3e9, USDC: 1e18}
-        #   - raw_rate = 3e9 / 1e18 = 3e-9
-        #   - human_rate = 3e-9 * 10^(18-6) = 3000 USDC/WETH
-        raw_rate = Decimal(sell_price) / Decimal(buy_price)
-        decimal_scale = Decimal(10) ** (sell_decimals - buy_decimals)
-        clearing_rate = raw_rate * decimal_scale
+        # Get AMM reference rate as integer ratio for exact comparison
+        # Try the new ratio method first, with fallback to the Decimal method
+        try:
+            amm_ratio = router.get_reference_price_ratio(
+                sell_token, buy_token, token_in_decimals=sell_decimals
+            )
+        except AttributeError:
+            # Router doesn't have get_reference_price_ratio method
+            amm_ratio = None
 
-        # Get AMM reference rate (returns human-readable rate like 2500 USDC/WETH)
-        amm_rate = router.get_reference_price(
-            sell_token, buy_token, token_in_decimals=sell_decimals
-        )
-        if amm_rate is None:
+        # Validate that we got a proper tuple (not a Mock or other non-tuple)
+        if not isinstance(amm_ratio, tuple) or len(amm_ratio) != 2:
+            # Fall back to the Decimal method
+            amm_rate = router.get_reference_price(
+                sell_token, buy_token, token_in_decimals=sell_decimals
+            )
+            if amm_rate is None:
+                continue
+
+            # Use high-precision Decimal comparison
+            raw_rate = Decimal(sell_price) / Decimal(buy_price)
+            decimal_scale = Decimal(10) ** (sell_decimals - buy_decimals)
+            clearing_rate = raw_rate * decimal_scale
+
+            if _decimal_lt(clearing_rate, amm_rate):
+                return False
             continue
 
-        # EBBO: user must get at least AMM rate
-        # Use integer comparison for exactness
-        if _decimal_lt(clearing_rate, amm_rate):
+        amm_out, amm_in = amm_ratio
+
+        # EBBO check using cross-multiplication (exact integer arithmetic):
+        # clearing_rate = (sell_price / buy_price) * 10^(sell_decimals - buy_decimals)
+        # amm_rate = amm_out / amm_in
+        #
+        # Check: clearing_rate >= amm_rate
+        # (sell_price / buy_price) * decimal_scale >= amm_out / amm_in
+        # sell_price * decimal_scale * amm_in >= buy_price * amm_out
+        #
+        # Handle decimal_scale which can be positive or negative exponent:
+        decimal_diff = sell_decimals - buy_decimals
+        if decimal_diff >= 0:
+            # Multiply left side by 10^diff
+            lhs = sell_price * (10**decimal_diff) * amm_in
+            rhs = buy_price * amm_out
+        else:
+            # Multiply right side by 10^(-diff)
+            lhs = sell_price * amm_in
+            rhs = buy_price * amm_out * (10 ** (-decimal_diff))
+
+        if lhs < rhs:
             return False
 
     return True

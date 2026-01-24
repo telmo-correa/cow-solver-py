@@ -2,10 +2,14 @@
 
 Core math functions for stable (StableSwap/Curve-style) pools.
 Uses Newton-Raphson iteration for invariant calculation.
+
+IMPORTANT: All financial calculations use SafeInt for overflow protection
+and explicit bounds checking.
 """
 
 from solver.math.fixed_point import AMP_PRECISION, Bfp
 from solver.models.types import normalize_address
+from solver.safe_int import S
 
 from .errors import StableGetBalanceDidNotConverge, StableInvariantDidNotConverge, ZeroBalanceError
 from .pools import BalancerStablePool
@@ -46,15 +50,15 @@ def calculate_invariant(amp: int, balances: list[Bfp]) -> Bfp:
         if bal.value <= 0:
             raise ZeroBalanceError(f"Balance at index {i} must be positive")
 
-    # Calculate sum of balances
-    sum_balances = sum(b.value for b in balances)
+    # Calculate sum of balances using SafeInt for overflow protection
+    sum_balances = S(sum(b.value for b in balances))
 
     # Initial guess: D = sum(balances)
     d_prev = sum_balances
 
     # amp_times_n = A * n (Balancer convention, NOT A * n^n)
     # Note: amp already includes AMP_PRECISION factor
-    amp_times_n = amp * n_coins
+    amp_times_n = S(amp) * S(n_coins)
 
     for _ in range(_STABLE_MAX_ITERATIONS):
         # d_p = D^(n+1) / (n^n * prod(balances))
@@ -63,17 +67,17 @@ def calculate_invariant(amp: int, balances: list[Bfp]) -> Bfp:
         for bal in balances:
             # d_p = d_p * D / (n * balance)
             # Using integer division that rounds down
-            d_p = (d_p * d_prev) // (n_coins * bal.value)
+            d_p = (d_p * d_prev) // (S(n_coins) * S(bal.value))
 
         # Newton-Raphson numerator:
         # From Rust: ((ann * sum / AMP_PRECISION + d_p * n_coins) * d)
-        term1 = (amp_times_n * sum_balances) // AMP_PRECISION
-        numerator = (term1 + d_p * n_coins) * d_prev
+        term1 = (amp_times_n * sum_balances) // S(AMP_PRECISION)
+        numerator = (term1 + d_p * S(n_coins)) * d_prev
 
         # Newton-Raphson denominator:
         # From Rust: ((ann - AMP_PRECISION) * d / AMP_PRECISION + (n_coins + 1) * d_p)
-        term2 = ((amp_times_n - AMP_PRECISION) * d_prev) // AMP_PRECISION
-        denominator = term2 + (n_coins + 1) * d_p
+        term2 = ((amp_times_n - S(AMP_PRECISION)) * d_prev) // S(AMP_PRECISION)
+        denominator = term2 + S(n_coins + 1) * d_p
 
         # d_new = numerator / denominator
         d_new = numerator // denominator
@@ -81,10 +85,10 @@ def calculate_invariant(amp: int, balances: list[Bfp]) -> Bfp:
         # Check convergence: |d_new - d_prev| <= 1
         if d_new > d_prev:
             if d_new - d_prev <= 1:
-                return Bfp(d_new)
+                return Bfp(d_new.value)
         else:
             if d_prev - d_new <= 1:
-                return Bfp(d_new)
+                return Bfp(d_new.value)
 
         d_prev = d_new
 
@@ -124,22 +128,22 @@ def get_token_balance_given_invariant_and_all_other_balances(
     if token_index < 0 or token_index >= n_coins:
         raise IndexError(f"token_index {token_index} out of range for {n_coins} tokens")
 
-    d = invariant.value
-    amp_times_total = amp * n_coins
+    d = S(invariant.value)
+    amp_times_total = S(amp) * S(n_coins)
 
-    # Calculate P_D and sum
+    # Calculate P_D and sum using SafeInt for overflow protection
     # P_D starts as balance[0] * n
     # For each subsequent balance j: P_D = P_D * balance[j] * n / invariant
-    sum_balances = balances[0].value
-    p_d = balances[0].value * n_coins
+    sum_balances = S(balances[0].value)
+    p_d = S(balances[0].value) * S(n_coins)
 
     for j in range(1, n_coins):
         # P_D = Math.divDown(Math.mul(Math.mul(P_D, balances[j]), balances.length), invariant)
-        p_d = (p_d * balances[j].value * n_coins) // d
-        sum_balances += balances[j].value
+        p_d = (p_d * S(balances[j].value) * S(n_coins)) // d
+        sum_balances = sum_balances + S(balances[j].value)
 
     # sum = sum - balances[token_index]
-    sum_others = sum_balances - balances[token_index].value
+    sum_others = sum_balances - S(balances[token_index].value)
 
     inv2 = d * d
 
@@ -149,18 +153,18 @@ def get_token_balance_given_invariant_and_all_other_balances(
     # div_up: (inv2 + amp_times_p_d - 1) // amp_times_p_d
     if amp_times_p_d == 0:
         raise StableGetBalanceDidNotConverge("amp_times_p_d is zero")
-    c_step1 = (inv2 + amp_times_p_d - 1) // amp_times_p_d  # div_up
-    c = c_step1 * AMP_PRECISION * balances[token_index].value
+    c_step1 = (inv2 + amp_times_p_d - S(1)) // amp_times_p_d  # div_up
+    c = c_step1 * S(AMP_PRECISION) * S(balances[token_index].value)
 
     # b = sum_others + invariant / ampTimesTotal * AMP_PRECISION
     # Using div_down for the division
-    b = sum_others + (d // amp_times_total) * AMP_PRECISION
+    b = sum_others + (d // amp_times_total) * S(AMP_PRECISION)
 
     # Initial guess: tokenBalance = (inv2 + c) / (invariant + b)
     # Using div_up
     numerator_init = inv2 + c
     denominator_init = d + b
-    token_balance = (numerator_init + denominator_init - 1) // denominator_init  # div_up
+    token_balance = (numerator_init + denominator_init - S(1)) // denominator_init  # div_up
 
     for _ in range(_STABLE_MAX_ITERATIONS):
         prev_token_balance = token_balance
@@ -168,20 +172,20 @@ def get_token_balance_given_invariant_and_all_other_balances(
         # tokenBalance = (tokenBalance² + c) / (2*tokenBalance + b - invariant)
         # Using div_up
         numerator = token_balance * token_balance + c
-        denominator = 2 * token_balance + b - d
+        denominator = S(2) * token_balance + b - d
 
         if denominator <= 0:
             raise StableGetBalanceDidNotConverge("Denominator became non-positive")
 
-        token_balance = (numerator + denominator - 1) // denominator  # div_up
+        token_balance = (numerator + denominator - S(1)) // denominator  # div_up
 
         # Check convergence: |token_balance - prev_token_balance| <= 1
         if token_balance > prev_token_balance:
             if token_balance - prev_token_balance <= 1:
-                return Bfp(token_balance)
+                return Bfp(token_balance.value)
         else:
             if prev_token_balance - token_balance <= 1:
-                return Bfp(token_balance)
+                return Bfp(token_balance.value)
 
     raise StableGetBalanceDidNotConverge(
         f"Stable get_balance did not converge after {_STABLE_MAX_ITERATIONS} iterations"
