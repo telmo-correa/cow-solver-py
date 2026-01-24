@@ -623,10 +623,9 @@ class TestRingTradeSettlement:
             # Fill should not exceed order amounts
             assert fill.sell_filled <= sell_amt
             # Fill rate should be at least as good as limit price
+            # Use exact integer cross-multiplication: buy_filled * sell_amount >= buy_amount * sell_filled
             if fill.sell_filled > 0:
-                limit_rate = buy_amt / sell_amt
-                actual_rate = fill.buy_filled / fill.sell_filled
-                assert actual_rate >= limit_rate * 0.99  # Allow 1% rounding
+                assert fill.buy_filled * sell_amt >= buy_amt * fill.sell_filled
 
     def test_token_conservation(self):
         """Total tokens in = total tokens out for each token."""
@@ -661,3 +660,109 @@ class TestRingTradeSettlement:
         assert weth_sold == weth_bought
         assert usdc_sold == usdc_bought
         assert dai_sold == dai_bought
+
+
+class TestRingTradeEBBO:
+    """Tests for EBBO validation in RingTradeStrategy."""
+
+    def test_ebbo_rejects_ring_below_amm(self):
+        """Ring rejected when any leg's clearing rate < AMM rate."""
+        from decimal import Decimal
+        from unittest.mock import Mock
+
+        # Create viable ring with product = 1
+        # o1: sells 1 WETH for 2 USDC -> rate = 2
+        # o2: sells 2 USDC for 1 DAI -> rate = 0.5
+        # o3: sells 1 DAI for 1 WETH -> rate = 1
+        # Product = 2 * 0.5 * 1 = 1 (exactly viable)
+        o1 = make_order("o1", WETH, USDC, "1000000000000000000", "2000000000000000000")
+        o2 = make_order("o2", USDC, DAI, "2000000000000000000", "1000000000000000000")
+        o3 = make_order("o3", DAI, WETH, "1000000000000000000", "1000000000000000000")
+        auction = make_auction([o1, o2, o3])
+
+        # Mock router that returns AMM rate higher than ring clearing
+        # This should cause EBBO violation
+        mock_router = Mock()
+        mock_router.get_reference_price.return_value = Decimal("1000000")  # AMM offers much more
+        mock_router.get_reference_price_ratio.return_value = None
+
+        strategy = RingTradeStrategy(router=mock_router, enforce_ebbo=True)
+        result = strategy.try_solve(auction)
+
+        # Ring should be rejected due to EBBO violation
+        assert result is None
+
+    def test_ebbo_accepts_ring_above_amm(self):
+        """Ring accepted when all legs satisfy EBBO."""
+        from decimal import Decimal
+        from unittest.mock import Mock
+
+        # Create viable ring with product = 1
+        # o1: sells 1 WETH for 2 USDC -> rate = 2
+        # o2: sells 2 USDC for 1 DAI -> rate = 0.5
+        # o3: sells 1 DAI for 1 WETH -> rate = 1
+        # Product = 2 * 0.5 * 1 = 1 (exactly viable)
+        o1 = make_order("o1", WETH, USDC, "1000000000000000000", "2000000000000000000")
+        o2 = make_order("o2", USDC, DAI, "2000000000000000000", "1000000000000000000")
+        o3 = make_order("o3", DAI, WETH, "1000000000000000000", "1000000000000000000")
+        auction = make_auction([o1, o2, o3])
+
+        # Mock router returns AMM rate lower than ring clearing for all pairs
+        # The ring_rate = sell_price / buy_price, and we want ring_rate >= amm_rate
+        # Set very low AMM rate to ensure EBBO passes
+        mock_router = Mock()
+        mock_router.get_reference_price.return_value = Decimal("0.001")  # Very low AMM rate
+        mock_router.get_reference_price_ratio.return_value = None
+
+        strategy = RingTradeStrategy(router=mock_router, enforce_ebbo=True)
+        result = strategy.try_solve(auction)
+
+        # Ring should be accepted (clearing rate > AMM rate)
+        assert result is not None
+        assert len(result.fills) == 3
+
+    def test_ebbo_skipped_when_no_amm_liquidity(self):
+        """EBBO check skipped when router returns None."""
+        from unittest.mock import Mock
+
+        # Create viable ring with product = 1
+        o1 = make_order("o1", WETH, USDC, "1000000000000000000", "2000000000000000000")
+        o2 = make_order("o2", USDC, DAI, "2000000000000000000", "1000000000000000000")
+        o3 = make_order("o3", DAI, WETH, "1000000000000000000", "1000000000000000000")
+        auction = make_auction([o1, o2, o3])
+
+        # Mock router returns None (no AMM liquidity)
+        mock_router = Mock()
+        mock_router.get_reference_price.return_value = None
+        mock_router.get_reference_price_ratio.return_value = None
+
+        strategy = RingTradeStrategy(router=mock_router, enforce_ebbo=True)
+        result = strategy.try_solve(auction)
+
+        # Ring should be accepted - no EBBO constraint when no AMM
+        assert result is not None
+        assert len(result.fills) == 3
+
+    def test_enforce_ebbo_false_skips_validation(self):
+        """enforce_ebbo=False allows rings even with EBBO violations."""
+        from decimal import Decimal
+        from unittest.mock import Mock
+
+        # Create viable ring with product = 1
+        o1 = make_order("o1", WETH, USDC, "1000000000000000000", "2000000000000000000")
+        o2 = make_order("o2", USDC, DAI, "2000000000000000000", "1000000000000000000")
+        o3 = make_order("o3", DAI, WETH, "1000000000000000000", "1000000000000000000")
+        auction = make_auction([o1, o2, o3])
+
+        # Mock router returns high AMM rate (would violate EBBO)
+        mock_router = Mock()
+        mock_router.get_reference_price.return_value = Decimal("1000000")  # High AMM rate
+        mock_router.get_reference_price_ratio.return_value = None
+
+        # enforce_ebbo=False skips the check
+        strategy = RingTradeStrategy(router=mock_router, enforce_ebbo=False)
+        result = strategy.try_solve(auction)
+
+        # Ring should be accepted despite EBBO violation (enforcement disabled)
+        assert result is not None
+        assert len(result.fills) == 3

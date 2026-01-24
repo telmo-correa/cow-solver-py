@@ -54,6 +54,26 @@ class MultiPairCowStrategy(AMMBackedStrategy):
 
     When use_generalized=False, only Phase 1 (bidirectional pairs) is used.
 
+    **Constraint Enforcement:**
+
+    1. Fill-or-Kill: Partially enforced by double auction algorithm. FOK orders
+       that can't be fully matched are excluded. Cycle settlement may produce
+       partial fills that violate FOK - such cases should be filtered downstream.
+
+    2. Limit Price: Enforced via exact integer cross-multiplication in the double
+       auction algorithm and cycle settlement. The clearing price must satisfy:
+       buy_filled * sell_amount >= buy_amount * sell_filled.
+
+    3. EBBO: Two-sided validation via get_ebbo_bounds() and run_hybrid_auction().
+       - ebbo_min: Minimum clearing rate (protects sellers, from token_a→token_b)
+       - ebbo_max: Maximum clearing rate (protects buyers, from token_b→token_a)
+       Clearing rate must satisfy: ebbo_min <= rate <= ebbo_max. Zero tolerance.
+       Cycle EBBO is verified via verify_fills_against_ebbo().
+
+    4. Uniform Price: Enforced structurally. Each connected component uses
+       consistent prices. Price conflicts between components are avoided by
+       skipping results that would create inconsistent prices.
+
     Args:
         amm: AMM implementation for swap math. Defaults to UniswapV2.
         router: Injected router for testing. If provided, used directly.

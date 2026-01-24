@@ -70,6 +70,25 @@ class UnifiedCowStrategy:
        - LP with price enumeration for bidirectional pairs
     5. Validates EBBO compliance
 
+    **Constraint Enforcement:**
+
+    1. Fill-or-Kill: Explicitly validated in _validate_fok_fills(). FOK orders
+       (partially_fillable=False) must be fully filled or are excluded. The
+       hybrid auction also respects FOK via respect_fill_or_kill flag.
+
+    2. Limit Price: Enforced via exact integer cross-multiplication:
+       buy_filled * sell_amount >= buy_amount * sell_filled
+       No tolerance/epsilon - financial calculations are exact.
+
+    3. EBBO (Two-sided): Validated in _verify_ebbo() and via hybrid_auction's
+       ebbo_min/ebbo_max bounds. Zero tolerance - clearing rate must be
+       >= ebbo_min and <= ebbo_max for both trade directions.
+
+    4. Uniform Price: Enforced structurally. Single clearing price per token
+       derived from fill conservation (sell_filled * sell_price = buy_filled *
+       buy_price). Prices propagated through fill graph via BFS to ensure
+       consistency.
+
     Args:
         max_tokens: Maximum tokens per component (limits complexity)
         max_price_combos: Maximum price combinations to try per component
@@ -771,12 +790,64 @@ class UnifiedCowStrategy:
 
         return True
 
+    def _validate_fok_fills(self, fills: list[OrderFill]) -> list[OrderFill]:
+        """Filter fills that violate Fill-or-Kill constraint.
+
+        FOK orders (partially_fillable=False) must be fully filled or excluded.
+        This is a safety check - the double auction already respects FOK,
+        but we validate here for cycle settlements and LP solutions.
+
+        Args:
+            fills: List of order fills to validate
+
+        Returns:
+            List of valid fills (FOK orders either fully filled or removed)
+        """
+        valid_fills: list[OrderFill] = []
+
+        for fill in fills:
+            order = fill.order
+            if not order.partially_fillable:
+                # FOK order - must be fully filled
+                # For sell orders, check sell_filled == sell_amount
+                # For buy orders, check buy_filled == buy_amount
+                if order.kind == "sell":
+                    expected = int(order.sell_amount)
+                    actual = fill.sell_filled
+                else:
+                    expected = int(order.buy_amount)
+                    actual = fill.buy_filled
+
+                if actual < expected:
+                    logger.debug(
+                        "unified_cow_fok_rejected",
+                        order_uid=order.uid[:18],
+                        expected=expected,
+                        actual=actual,
+                        kind=order.kind,
+                    )
+                    continue  # Skip this fill
+
+            valid_fills.append(fill)
+
+        return valid_fills
+
     def _build_result(
         self,
         fills: list[OrderFill],
         auction: AuctionInstance,
     ) -> StrategyResult:
         """Build final StrategyResult."""
+        # Validate FOK constraint before building result
+        fills = self._validate_fok_fills(fills)
+        if not fills:
+            return StrategyResult(
+                fills=[],
+                interactions=[],
+                prices={},
+                gas=0,
+            )
+
         filled_uids = {f.order.uid for f in fills}
 
         # Remainder orders

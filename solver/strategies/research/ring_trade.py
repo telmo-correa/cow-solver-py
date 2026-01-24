@@ -73,7 +73,27 @@ class RingTrade:
 class RingTradeStrategy:
     """Strategy that finds and executes ring trades.
 
-    Ring trades match orders in cycles (A→B→C→A) without AMM interaction.
+    Ring trades match orders in cycles (A→B→C→A) without AMM interaction,
+    providing maximum gas savings when viable.
+
+    **Constraint Enforcement:**
+
+    1. Fill-or-Kill: Explicitly validated in _calculate_settlement(). FOK orders
+       (partially_fillable=False) must be fully filled or the entire ring is
+       rejected. Rings with surplus may partially fill some orders, so FOK
+       orders in such rings will be rejected.
+
+    2. Limit Price: Enforced via exact integer cross-multiplication during
+       settlement calculation. The rate product must be <= 1 for viability,
+       and each fill respects: buy_filled * sell_amount >= buy_amount * sell_filled.
+
+    3. EBBO: Validated in _verify_ebbo() for each leg of the ring. Clearing rate
+       (sell_price / buy_price) must be >= AMM reference rate. Zero tolerance.
+       Controlled by enforce_ebbo flag.
+
+    4. Uniform Price: Enforced structurally. Single clearing price per token
+       derived from cycle conservation constraints. All orders in the ring
+       clear at the same prices.
 
     Args:
         max_4_cycles: Maximum 4-node cycles to find
@@ -170,6 +190,27 @@ class RingTradeStrategy:
         settlement = calculate_cycle_settlement(viability)
         if not settlement:
             return None
+
+        # Validate FOK constraint: non-partially-fillable orders must be fully filled
+        for fill in settlement.fills:
+            order = fill.order
+            if not order.partially_fillable:
+                if order.kind == "sell":
+                    expected = int(order.sell_amount)
+                    actual = fill.sell_filled
+                else:
+                    expected = int(order.buy_amount)
+                    actual = fill.buy_filled
+
+                if actual < expected:
+                    logger.debug(
+                        "ring_trade_fok_violated",
+                        order_uid=order.uid[:18],
+                        expected=expected,
+                        actual=actual,
+                        kind=order.kind,
+                    )
+                    return None
 
         # Build cycle token order from orders
         cycle_tokens: list[str] = []

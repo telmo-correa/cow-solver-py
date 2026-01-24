@@ -359,8 +359,8 @@ class TestSolveFillsAtPrices:
         if result is not None:
             for fill in result.fills:
                 if not fill.order.partially_fillable:
-                    # Should be complete fill or no fill
-                    assert fill.sell_filled >= fill.order.sell_amount_int * 0.99
+                    # Should be complete fill or no fill (exact match for FOK)
+                    assert fill.sell_filled == fill.order.sell_amount_int
 
 
 class TestMultiPairCowStrategy:
@@ -939,14 +939,128 @@ class TestLargeComponentPriceConsistency:
                 sell_price = int(result.prices.get(order.sell_token.lower(), "0"))
                 buy_price = int(result.prices.get(order.buy_token.lower(), "0"))
 
-                if sell_price > 0 and buy_price > 0:
-                    # Clearing rate = what you get per what you sell
-                    clearing_rate = Decimal(sell_price) / Decimal(buy_price)
-                    # Fill rate = buy_filled / sell_filled
-                    fill_rate = Decimal(fill.buy_filled) / Decimal(fill.sell_filled)
+                if sell_price > 0 and buy_price > 0 and fill.sell_filled > 0:
+                    # Conservation invariant: sell_filled * sell_price = buy_filled * buy_price
+                    # Cross-multiply to avoid division: sell_price * sell_filled ≈ buy_price * buy_filled
+                    sell_value = sell_price * fill.sell_filled
+                    buy_value = buy_price * fill.buy_filled
 
-                    # These should match (or be very close due to rounding)
-                    ratio = float(clearing_rate / fill_rate) if fill_rate > 0 else 0
-                    assert 0.99 <= ratio <= 1.01, (
-                        f"Rate mismatch: clearing={clearing_rate}, fill={fill_rate}"
+                    # Allow error bounded by max price (for integer truncation)
+                    max_truncation_error = max(sell_price, buy_price)
+                    assert abs(sell_value - buy_value) <= max_truncation_error, (
+                        f"Conservation violated: {abs(sell_value - buy_value)} > {max_truncation_error}"
                     )
+
+
+class TestMultiPairEBBO:
+    """Tests for EBBO validation in MultiPairCowStrategy."""
+
+    def _make_auction_with_tokens(self, orders: list[Order]) -> "AuctionInstance":
+        """Create auction with token decimals for EBBO validation."""
+        from solver.models.auction import AuctionInstance, Token
+
+        tokens = {}
+        for order in orders:
+            for token in [order.sell_token, order.buy_token]:
+                token_lower = token.lower()
+                if token_lower not in tokens:
+                    tokens[token_lower] = Token(decimals=18, available_balance="0")
+        return AuctionInstance(id="test", orders=orders, tokens=tokens, liquidity=[])
+
+    def test_ebbo_rejects_clearing_below_amm(self) -> None:
+        """Pair rejected when clearing rate < AMM rate."""
+        from decimal import Decimal
+        from unittest.mock import Mock
+
+        # Order A: sells 100 A for 200 B (limit: 2 B/A)
+        # Order B: sells 200 B for 100 A (limit: 0.5 A/B = 2 B/A)
+        # Clearing rate: 2 B/A
+        # AMM rate: 3 B/A (better - EBBO violation)
+        order_a = make_order("ask", TOKEN_A, TOKEN_B, 100, 200)
+        order_b = make_order("bid", TOKEN_B, TOKEN_A, 200, 100)
+
+        # Mock router returns AMM rate better than clearing
+        mock_router = Mock()
+        mock_router.get_reference_price.return_value = Decimal("3.0")  # AMM offers 3 B/A
+        mock_router.get_reference_price_ratio.return_value = None
+
+        strategy = MultiPairCowStrategy(router=mock_router)
+        auction = self._make_auction_with_tokens([order_a, order_b])
+        result = strategy.try_solve(auction)
+
+        # Match should be rejected due to EBBO violation
+        assert result is None or len(result.fills) == 0
+
+    def test_ebbo_accepts_clearing_above_amm(self) -> None:
+        """Pair accepted when clearing rate >= AMM rate."""
+        from decimal import Decimal
+        from unittest.mock import Mock
+
+        # Order A: sells 100 A for 180 B (limit: 1.8 B/A - generous, below AMM)
+        # Order B: sells 200 B for 100 A (limit: 0.5 A/B = 2 B/A)
+        # With AMM at 2.0 B/A, CoW can match at 2.0:
+        # - Order A gets 200 B for 100 A (rate 2.0 >= limit 1.8)
+        # - Order B gets 100 A for 200 B (rate 0.5 >= limit 0.5)
+        order_a = make_order("ask", TOKEN_A, TOKEN_B, 100, 180)
+        order_b = make_order("bid", TOKEN_B, TOKEN_A, 200, 100)
+
+        token_a_lower = TOKEN_A.lower()
+        token_b_lower = TOKEN_B.lower()
+
+        # Mock router with AMM rate 2.0 B/A and spread
+        # - Selling A: get 2.0 B/A (ebbo_min)
+        # - Selling B: get 0.45 A/B → ebbo_max = 1/0.45 ≈ 2.22 B/A
+        def mock_get_ref_price(sell_token, buy_token, **_kwargs):
+            if sell_token == token_a_lower:
+                return Decimal("2.0")  # Selling A gets 2 B
+            elif sell_token == token_b_lower:
+                return Decimal("0.45")  # Selling B gets 0.45 A
+            return None
+
+        mock_router = Mock()
+        mock_router.get_reference_price.side_effect = mock_get_ref_price
+        mock_router.get_reference_price_ratio.return_value = None
+
+        strategy = MultiPairCowStrategy(router=mock_router)
+        auction = self._make_auction_with_tokens([order_a, order_b])
+        result = strategy.try_solve(auction)
+
+        # Match should be accepted (clearing rate within EBBO bounds)
+        assert result is not None
+        assert len(result.fills) >= 2
+
+    def test_ebbo_skipped_when_no_liquidity(self) -> None:
+        """EBBO check skipped when router returns None."""
+        from unittest.mock import Mock
+
+        # Standard matchable pair
+        order_a = make_order("ask", TOKEN_A, TOKEN_B, 100, 200)
+        order_b = make_order("bid", TOKEN_B, TOKEN_A, 200, 100)
+
+        # Mock router returns None (no AMM liquidity)
+        mock_router = Mock()
+        mock_router.get_reference_price.return_value = None
+        mock_router.get_reference_price_ratio.return_value = None
+
+        strategy = MultiPairCowStrategy(router=mock_router)
+        auction = self._make_auction_with_tokens([order_a, order_b])
+        result = strategy.try_solve(auction)
+
+        # Match should be accepted - no EBBO constraint when no AMM
+        assert result is not None
+        assert len(result.fills) >= 2
+
+    def test_ebbo_without_router_skips_validation(self) -> None:
+        """Strategy without router configured skips EBBO validation."""
+        # Standard matchable pair
+        order_a = make_order("ask", TOKEN_A, TOKEN_B, 100, 200)
+        order_b = make_order("bid", TOKEN_B, TOKEN_A, 200, 100)
+
+        # Strategy without router (default behavior)
+        strategy = MultiPairCowStrategy()
+        auction = self._make_auction_with_tokens([order_a, order_b])
+        result = strategy.try_solve(auction)
+
+        # Match should be accepted - no EBBO check without router
+        assert result is not None
+        assert len(result.fills) >= 2

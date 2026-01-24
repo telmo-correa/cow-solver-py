@@ -47,8 +47,27 @@ class AmmRoutingStrategy(AMMBackedStrategy):
     - Orders that can't be routed are skipped (partial success is OK)
     - Results are combined into a single StrategyResult
 
-    Note: This is not optimal for multi-order batches (no cross-order
-    optimization). Full batch optimization is future work (Slice 2.3+).
+    **Constraint Enforcement:**
+
+    1. Fill-or-Kill: Enforced via AMM math - orders that can't fully execute
+       are rejected by the router.
+
+    2. Limit Price: Enforced at routing time - the router only accepts routes
+       where output >= buy_amount (for sell orders) or input <= sell_amount
+       (for buy orders).
+
+    3. EBBO: Implicitly satisfied - prices are directly from AMM execution,
+       which by definition provides the AMM rate.
+
+    4. Uniform Price: **NOT ENFORCED**. Multi-order routing produces independent
+       prices per order due to AMM price impact. Each order's execution changes
+       pool reserves, affecting the price for subsequent orders. This means
+       tokens may have different clearing prices across orders, which technically
+       violates the uniform price constraint. For batches requiring uniform
+       pricing, use CowMatchStrategy or MultiPairCowStrategy instead.
+
+    This strategy is best used as a fallback for orders that can't be matched
+    peer-to-peer via CoW matching.
 
     It builds a PoolRegistry from the auction's liquidity data and uses
     the SingleOrderRouter to find routes through available pools.

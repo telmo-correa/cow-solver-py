@@ -28,6 +28,7 @@ def make_order(
     buy_token: str,
     sell_amount: str,
     buy_amount: str,
+    partially_fillable: bool = False,
 ) -> Order:
     """Create a test order with proper UID format."""
     valid_uid = make_uid(uid) if not uid.startswith("0x") or len(uid) != 114 else uid
@@ -38,7 +39,7 @@ def make_order(
         sell_amount=sell_amount,
         buy_amount=buy_amount,
         kind="sell",
-        partially_fillable=False,
+        partially_fillable=partially_fillable,
         fee_amount="0",
         **{
             "class": "limit",
@@ -113,18 +114,26 @@ class TestRingTradeIntegration:
         - Bob: sells 2000 USDC for 1900 DAI → rate = 0.95
         - Carol: sells 2000 DAI for 1 WETH → rate = 0.0005
         Product = 1900 * 0.95 * 0.0005 = 0.9025 < 1 (viable with surplus!)
+
+        Note: Uses partially_fillable=True because ring trades with surplus
+        may not fill all orders at their full amounts. FOK orders would be
+        rejected if settlement requires partial fills.
         """
         strategy = RingTradeStrategy()
 
         # Product < 1: traders are generous, surplus exists
+        # Use partially_fillable=True since surplus rings may partially fill
         alice = make_order(
-            "alice", WETH, USDC, "1000000000000000000", "1900000000"
+            "alice", WETH, USDC, "1000000000000000000", "1900000000",
+            partially_fillable=True,
         )  # Asking 1900 USDC
         bob = make_order(
-            "bob", USDC, DAI, "2000000000", "1900000000000000000000"
+            "bob", USDC, DAI, "2000000000", "1900000000000000000000",
+            partially_fillable=True,
         )  # Asking 1900 DAI
         carol = make_order(
-            "carol", DAI, WETH, "2000000000000000000000", "1000000000000000000"
+            "carol", DAI, WETH, "2000000000000000000000", "1000000000000000000",
+            partially_fillable=True,
         )  # Asking 1 WETH
 
         auction = make_auction([alice, bob, carol])
@@ -133,13 +142,14 @@ class TestRingTradeIntegration:
         assert result is not None
         assert len(result.fills) == 3
 
-        # Check that fills respect limit prices (buy_filled >= limit buy amount)
+        # Check that fills respect limit prices using exact integer cross-multiplication
+        # Constraint: buy_filled * sell_amount >= buy_amount * sell_filled
         for fill in result.fills:
             order = fill.order
             if fill.sell_filled > 0:
-                limit_rate = int(order.buy_amount) / int(order.sell_amount)
-                actual_rate = fill.buy_filled / fill.sell_filled
-                assert actual_rate >= limit_rate * 0.999  # Allow small rounding
+                sell_amount = int(order.sell_amount)
+                buy_amount = int(order.buy_amount)
+                assert fill.buy_filled * sell_amount >= buy_amount * fill.sell_filled
 
     def test_non_viable_ring_returns_none(self):
         """Test that non-viable cycles return None (product >> 1)."""

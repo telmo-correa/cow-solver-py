@@ -216,6 +216,218 @@ class TestUnifiedCowEBBO:
         assert len(result.fills) == 2
 
 
+class TestUnifiedCowEBBOEndToEnd:
+    """End-to-end EBBO tests that test actual _verify_ebbo calculation without mocking.
+
+    Two-sided EBBO: For a token pair A/B, both parties must get at least as good
+    a deal as the AMM. The valid clearing price range is [ebbo_min, ebbo_max].
+
+    Example with AMM spread (2400-2600 USDC/WETH):
+    - WETH sellers need >= 2400 USDC/WETH (ebbo_min in WETH→USDC direction)
+    - USDC sellers need <= 2600 USDC/WETH (ebbo_max from inverse)
+    - Valid clearing prices: 2400 to 2600 USDC/WETH
+    """
+
+    def test_ebbo_accepts_clearing_within_amm_spread(self):
+        """Clearing price within AMM bid-ask spread should be accepted."""
+        from unittest.mock import Mock, patch
+
+        weth_lower = WETH.lower()
+        usdc_lower = USDC.lower()
+
+        # Orders that clear at exactly 2500 USDC/WETH
+        # In WETH-per-USDC raw terms: 1e18 / 2.5e9 = 4e8
+        order_a = make_order(
+            uid="0x" + "01" * 56,
+            sell_token=WETH,
+            buy_token=USDC,
+            sell_amount="1000000000000000000",  # 1 WETH
+            buy_amount="2500000000",  # 2500 USDC
+        )
+        order_b = make_order(
+            uid="0x" + "02" * 56,
+            sell_token=USDC,
+            buy_token=WETH,
+            sell_amount="2500000000",  # 2500 USDC
+            buy_amount="1000000000000000000",  # 1 WETH
+        )
+
+        auction = make_auction([order_a, order_b])
+
+        # Mock AMM with spread that includes 2500 USDC/WETH (= 4e8 WETH/USDC)
+        # For orders to match at amm_price, their limits must be compatible:
+        # - Asks (sellers of A=USDC) limit must be <= amm_price
+        # - Bids (sellers of B=WETH) limit must be >= amm_price
+        # Both orders have limit = 4e8, so amm_price must be exactly 4e8 or lower
+        #
+        # Set amm_price (ebbo_min from USDC→WETH) = 4e8 (exactly at order limits)
+        # Set WETH→USDC = 2.5e-9 (inverse of 4e8)
+        mock_router = Mock()
+
+        def mock_get_reference_price(sell_token, buy_token, **kwargs):
+            if sell_token == weth_lower and buy_token == usdc_lower:
+                return Decimal("2.5e-9")  # WETH→USDC: 2500 USDC/WETH
+            elif sell_token == usdc_lower and buy_token == weth_lower:
+                return Decimal("4e8")  # USDC→WETH: 4e8 WETH per USDC (= 1/2500)
+            return None
+
+        mock_router.get_reference_price.side_effect = mock_get_reference_price
+
+        with patch(
+            "solver.strategies.unified_cow.SingleOrderRouter", return_value=mock_router
+        ):
+            strategy = UnifiedCowStrategy(enforce_ebbo=True)
+            result = strategy.try_solve(auction)
+
+        # Should accept - orders can match at amm_price = 4e8 (2500 USDC/WETH)
+        assert result is not None
+        assert len(result.fills) == 2
+
+    def test_ebbo_rejects_clearing_below_ebbo_min(self):
+        """Clearing price below ebbo_min should reject (WETH sellers get worse deal)."""
+        from unittest.mock import Mock, patch
+
+        weth_lower = WETH.lower()
+        usdc_lower = USDC.lower()
+
+        # Orders that clear at 2000 USDC/WETH
+        order_a = make_order(
+            uid="0x" + "01" * 56,
+            sell_token=WETH,
+            buy_token=USDC,
+            sell_amount="1000000000000000000",  # 1 WETH
+            buy_amount="2000000000",  # 2000 USDC (limit)
+        )
+        order_b = make_order(
+            uid="0x" + "02" * 56,
+            sell_token=USDC,
+            buy_token=WETH,
+            sell_amount="2000000000",  # 2000 USDC
+            buy_amount="1000000000000000000",  # 1 WETH
+        )
+
+        auction = make_auction([order_a, order_b])
+
+        # Mock AMM with spread [2400, 2600] - clearing at 2000 is below
+        mock_router = Mock()
+
+        def mock_get_reference_price(sell_token, buy_token, **kwargs):
+            if sell_token == weth_lower and buy_token == usdc_lower:
+                return Decimal("2.4e-9")  # 2400 USDC/WETH
+            elif sell_token == usdc_lower and buy_token == weth_lower:
+                return Decimal("3.85e8")  # 1/2600
+            return None
+
+        mock_router.get_reference_price.side_effect = mock_get_reference_price
+
+        with patch(
+            "solver.strategies.unified_cow.SingleOrderRouter", return_value=mock_router
+        ):
+            strategy = UnifiedCowStrategy(enforce_ebbo=True)
+            result = strategy.try_solve(auction)
+
+        # Should reject - clearing at 2000 < ebbo_min 2400
+        assert result is None or len(result.fills) == 0
+
+    def test_ebbo_rejects_clearing_above_ebbo_max(self):
+        """Clearing price above ebbo_max should reject (USDC sellers get worse deal)."""
+        from unittest.mock import Mock, patch
+
+        weth_lower = WETH.lower()
+        usdc_lower = USDC.lower()
+
+        # Orders that clear at 3000 USDC/WETH (above AMM spread)
+        order_a = make_order(
+            uid="0x" + "01" * 56,
+            sell_token=WETH,
+            buy_token=USDC,
+            sell_amount="1000000000000000000",  # 1 WETH
+            buy_amount="3000000000",  # 3000 USDC
+        )
+        order_b = make_order(
+            uid="0x" + "02" * 56,
+            sell_token=USDC,
+            buy_token=WETH,
+            sell_amount="3000000000",  # 3000 USDC
+            buy_amount="1000000000000000000",  # 1 WETH
+        )
+
+        auction = make_auction([order_a, order_b])
+
+        # Mock AMM with spread [2400, 2600] - clearing at 3000 is above
+        mock_router = Mock()
+
+        def mock_get_reference_price(sell_token, buy_token, **kwargs):
+            if sell_token == weth_lower and buy_token == usdc_lower:
+                return Decimal("2.4e-9")  # 2400 USDC/WETH (ebbo_min)
+            elif sell_token == usdc_lower and buy_token == weth_lower:
+                return Decimal("3.85e8")  # 1/2600 (gives ebbo_max of 2600)
+            return None
+
+        mock_router.get_reference_price.side_effect = mock_get_reference_price
+
+        with patch(
+            "solver.strategies.unified_cow.SingleOrderRouter", return_value=mock_router
+        ):
+            strategy = UnifiedCowStrategy(enforce_ebbo=True)
+            result = strategy.try_solve(auction)
+
+        # Should reject - clearing at 3000 > ebbo_max 2600
+        assert result is None or len(result.fills) == 0
+
+    def test_ebbo_boundary_at_ebbo_min(self):
+        """Clearing price exactly at ebbo_min should be accepted."""
+        from unittest.mock import Mock, patch
+
+        weth_lower = WETH.lower()
+        usdc_lower = USDC.lower()
+
+        # Orders that clear at exactly 2500 USDC/WETH (matching the other test)
+        # In WETH-per-USDC raw terms: 1e18 / 2.5e9 = 4e8
+        order_a = make_order(
+            uid="0x" + "01" * 56,
+            sell_token=WETH,
+            buy_token=USDC,
+            sell_amount="1000000000000000000",  # 1 WETH
+            buy_amount="2500000000",  # 2500 USDC
+        )
+        order_b = make_order(
+            uid="0x" + "02" * 56,
+            sell_token=USDC,
+            buy_token=WETH,
+            sell_amount="2500000000",  # 2500 USDC
+            buy_amount="1000000000000000000",  # 1 WETH
+        )
+
+        auction = make_auction([order_a, order_b])
+
+        # Mock AMM at exactly 2500 USDC/WETH (ebbo_min = order limits)
+        # In WETH-per-USDC raw: 1e18 / 2.5e9 = 4e8 (exact)
+        # Both directions return consistent inverse values
+        mock_router = Mock()
+
+        def mock_get_reference_price(sell_token, buy_token, **kwargs):
+            if sell_token == weth_lower and buy_token == usdc_lower:
+                # WETH→USDC: 2500 USDC/WETH = 2.5e-9 USDC per wei (exact)
+                return Decimal("2.5e-9")
+            elif sell_token == usdc_lower and buy_token == weth_lower:
+                # USDC→WETH: 4e8 WETH wei per USDC wei (exact 1/2.5e-9)
+                return Decimal("4e8")
+            return None
+
+        mock_router.get_reference_price.side_effect = mock_get_reference_price
+
+        with patch(
+            "solver.strategies.unified_cow.SingleOrderRouter", return_value=mock_router
+        ):
+            strategy = UnifiedCowStrategy(enforce_ebbo=True)
+            result = strategy.try_solve(auction)
+
+        # Should accept - clearing exactly at ebbo_min = 4e8
+        assert result is not None
+        assert len(result.fills) == 2
+
+
 class TestUnifiedCowFillOrKill:
     """Tests for fill-or-kill enforcement in UnifiedCowStrategy."""
 

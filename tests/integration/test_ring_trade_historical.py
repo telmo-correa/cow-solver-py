@@ -317,9 +317,12 @@ class TestBenchmarkComparison:
                     sell_value = fill.sell_filled * sell_price
                     buy_value = fill.buy_filled * buy_price
 
-                    # Allow 1% tolerance
-                    diff_pct = abs(sell_value - buy_value) / sell_value
-                    assert diff_pct < 0.01, f"Price invariant violated: {diff_pct:.2%} difference"
+                    # Conservation invariant: sell_value ≈ buy_value
+                    # Allow error bounded by max(sell_price, buy_price) for integer truncation
+                    max_truncation_error = max(sell_price, buy_price)
+                    assert abs(sell_value - buy_value) <= max_truncation_error, (
+                        f"Price invariant violated: {abs(sell_value - buy_value)} > {max_truncation_error}"
+                    )
 
 
 class TestEBBOCompliance:
