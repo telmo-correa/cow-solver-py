@@ -47,15 +47,12 @@ def mock_v3_quoter() -> MockUniswapV3Quoter:
     # amount_out_usdc = amount_in_weth * 2500 * 1e6 / 1e18 = amount_in_weth * 2.5e-9
     # But our mock uses a simple multiplier, so we need to adjust.
     #
-    # For simplicity: use a multiplier that makes 1e18 WETH → 2500e6 USDC
-    # That's 2500e6 / 1e18 = 2.5e-9
-    #
-    # Actually, the mock just does: amount_out = amount_in * default_rate
-    # So for WETH→USDC with 1e18 input wanting ~2500e6 output:
-    # default_rate = 2500e6 / 1e18 = 0.0000000025
-    #
-    # Let's use a rate that gives 2500 USDC for 1 WETH
-    return MockUniswapV3Quoter(default_rate=2500e6 / 1e18)
+    # For simplicity: use a ratio that makes 1e18 WETH → 2500e6 USDC
+    # amount_out = amount_in * numerator // denominator
+    # numerator = 2500e6 = 2_500_000_000
+    # denominator = 1e18
+    # So for 1 WETH (1e18): output = 1e18 * 2_500_000_000 // 1e18 = 2_500_000_000 USDC
+    return MockUniswapV3Quoter(default_rate=(2_500_000_000, 10**18))
 
 
 @pytest.fixture
@@ -157,7 +154,7 @@ class TestV3SingleOrderRouting:
         """V3 order should fail if quote doesn't meet limit price."""
         # Configure quoter to return low output (below limit)
         quoter = MockUniswapV3Quoter(
-            default_rate=1000e6 / 1e18  # Only 1000 USDC per WETH
+            default_rate=(1_000_000_000, 10**18)  # Only 1000 USDC per WETH
         )
         v3_amm = UniswapV3AMM(quoter=quoter)
         solver = Solver(v3_amm=v3_amm)
@@ -186,7 +183,7 @@ class TestV2V3PoolSelection:
         """
         # Configure mock V3 to return better rate than V2
         quoter = MockUniswapV3Quoter(
-            default_rate=2600e6 / 1e18  # 2600 USDC per WETH (better than V2's ~2500)
+            default_rate=(2_600_000_000, 10**18)  # 2600 USDC per WETH (better than V2's ~2500)
         )
         v3_amm = UniswapV3AMM(quoter=quoter)
         solver = Solver(v3_amm=v3_amm)
@@ -216,7 +213,7 @@ class TestV2V3PoolSelection:
         """Router should select V2 pool when it gives better quote."""
         # Configure V3 to return worse rate than V2
         quoter = MockUniswapV3Quoter(
-            default_rate=2000e6 / 1e18  # 2000 USDC per WETH (worse than V2's ~2500)
+            default_rate=(2_000_000_000, 10**18)  # 2000 USDC per WETH (worse than V2's ~2500)
         )
         v3_amm = UniswapV3AMM(quoter=quoter)
         solver = Solver(v3_amm=v3_amm)
@@ -431,7 +428,7 @@ class TestV3GasEstimates:
 
     def test_v3_gas_from_pool_config(self, client):
         """V3 gas estimate should come from pool configuration if provided."""
-        quoter = MockUniswapV3Quoter(default_rate=2500e6 / 1e18)
+        quoter = MockUniswapV3Quoter(default_rate=(2_500_000_000, 10**18))
         v3_amm = UniswapV3AMM(quoter=quoter)
         solver = Solver(v3_amm=v3_amm)
         app.dependency_overrides[get_solver] = lambda: solver

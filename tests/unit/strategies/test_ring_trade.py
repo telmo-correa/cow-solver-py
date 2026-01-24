@@ -234,6 +234,8 @@ class TestCycleViability:
             surplus_ratio=-0.02,  # Negative means deficit
             product=1.02,
             orders=[],
+            product_num=102,  # Integer ratio: 102/100 = 1.02
+            product_denom=100,
         )
         assert viability.near_viable is True
 
@@ -244,6 +246,8 @@ class TestCycleViability:
             surplus_ratio=0.0,  # No surplus at exact match
             product=1.0,
             orders=[],
+            product_num=1,  # Integer ratio: 1/1 = 1.0
+            product_denom=1,
         )
         assert viability.near_viable is False
 
@@ -256,6 +260,8 @@ class TestCycleViability:
             surplus_ratio=-0.5,  # 50% deficit
             product=1.5,
             orders=[],
+            product_num=3,  # Integer ratio: 3/2 = 1.5
+            product_denom=2,
         )
         assert viability.near_viable is False
 

@@ -182,7 +182,7 @@ class TestV3RouterIntegration:
         registry = PoolRegistry()
         registry.add_v3_pool(v3_pool)
 
-        mock_quoter = MockUniswapV3Quoter(default_rate=2500_000_000)
+        mock_quoter = MockUniswapV3Quoter(default_rate=(2_500_000_000, 10**18))
         v3_amm = UniswapV3AMM(quoter=mock_quoter)
         router = SingleOrderRouter(pool_registry=registry, v3_amm=v3_amm)
 
@@ -206,7 +206,7 @@ class TestV3RouterIntegration:
 
         # For buy orders, mock quoter needs to return input amount
         # For exact output of 2000 USDC, need ~0.8 WETH input
-        mock_quoter = MockUniswapV3Quoter(default_rate=2500_000_000)
+        mock_quoter = MockUniswapV3Quoter(default_rate=(2_500_000_000, 10**18))
         v3_amm = UniswapV3AMM(quoter=mock_quoter)
         router = SingleOrderRouter(pool_registry=registry, v3_amm=v3_amm)
 
@@ -230,7 +230,7 @@ class TestV3RouterIntegration:
         registry = PoolRegistry()
         registry.add_v3_pool(v3_pool)
 
-        mock_quoter = MockUniswapV3Quoter(default_rate=2500_000_000)
+        mock_quoter = MockUniswapV3Quoter(default_rate=(2_500_000_000, 10**18))
         v3_amm = UniswapV3AMM(quoter=mock_quoter)
         router = SingleOrderRouter(pool_registry=registry, v3_amm=v3_amm)
 

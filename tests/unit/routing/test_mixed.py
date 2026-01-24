@@ -627,8 +627,8 @@ class TestV3MixedMultiHopRouting:
             gas_estimate=100_000,
         )
 
-    def _make_v3_quoter(self, rate: float) -> MockUniswapV3Quoter:
-        """Create a mock V3 quoter with a fixed rate."""
+    def _make_v3_quoter(self, rate: tuple[int, int]) -> MockUniswapV3Quoter:
+        """Create a mock V3 quoter with a fixed rate as integer ratio (num, denom)."""
         return MockUniswapV3Quoter(default_rate=rate)
 
     def test_multihop_v2_then_v3(self):
@@ -643,7 +643,7 @@ class TestV3MixedMultiHopRouting:
         v3_pool = self._make_v3_pool(self.DAI, self.USDC)
 
         # V3 quoter: 1 DAI = 1 USDC (scaled for decimals)
-        quoter = self._make_v3_quoter(1e6 / 1e18)  # DAI (18) -> USDC (6)
+        quoter = self._make_v3_quoter((10**6, 10**18))  # DAI (18) -> USDC (6)
         v3_amm = UniswapV3AMM(quoter=quoter)
 
         registry = PoolRegistry()
@@ -681,7 +681,7 @@ class TestV3MixedMultiHopRouting:
         )
 
         # V3 quoter: 1 WETH = 2000 DAI
-        quoter = self._make_v3_quoter(2000e18 / 1e18)  # WETH -> DAI
+        quoter = self._make_v3_quoter((2000, 1))  # WETH -> DAI
         v3_amm = UniswapV3AMM(quoter=quoter)
 
         registry = PoolRegistry()
@@ -721,7 +721,7 @@ class TestV3MixedMultiHopRouting:
         )
 
         # V3 quoter: 1 WETH = 2000 DAI
-        quoter = self._make_v3_quoter(2000e18 / 1e18)
+        quoter = self._make_v3_quoter((2000, 1))
         v3_amm = UniswapV3AMM(quoter=quoter)
         weighted_amm = BalancerWeightedAMM()
 
@@ -762,7 +762,7 @@ class TestV3MixedMultiHopRouting:
         )
 
         # V3 quoter: 1 WETH = 2000 DAI
-        quoter = self._make_v3_quoter(2000e18 / 1e18)
+        quoter = self._make_v3_quoter((2000, 1))
         v3_amm = UniswapV3AMM(quoter=quoter)
         stable_amm = BalancerStableAMM()
 
@@ -803,7 +803,7 @@ class TestV3MixedMultiHopRouting:
         v3_pool = self._make_v3_pool(self.DAI, self.USDC)
 
         # V3 quoter: 1 DAI = 1 USDC (scaled for decimals)
-        quoter = self._make_v3_quoter(1e6 / 1e18)
+        quoter = self._make_v3_quoter((10**6, 10**18))
         v3_amm = UniswapV3AMM(quoter=quoter)
         weighted_amm = BalancerWeightedAMM()
 
@@ -845,7 +845,9 @@ class TestV3MixedMultiHopRouting:
         v3_pool_2 = self._make_v3_pool(self.DAI, self.USDC)
 
         # V3 quoter: 1 WBTC = 15 WETH, 1 DAI = 1 USDC
-        quoter = self._make_v3_quoter(15e18 / 1e8)  # WBTC->WETH: 15 WETH per WBTC (8 decimals)
+        quoter = self._make_v3_quoter(
+            (15 * 10**18, 10**8)
+        )  # WBTC->WETH: 15 WETH per WBTC (8 decimals)
         v3_amm = UniswapV3AMM(quoter=quoter)
         weighted_amm = BalancerWeightedAMM()
 
@@ -891,7 +893,7 @@ class TestV3MixedMultiHopRouting:
             100_000_000_000_000,  # 100M USDC
         )
 
-        quoter = self._make_v3_quoter(2500e18 / 1e18)  # V3 gives 2500 DAI per WETH
+        quoter = self._make_v3_quoter((2500, 1))  # V3 gives 2500 DAI per WETH
         v3_amm = UniswapV3AMM(quoter=quoter)
         weighted_amm = BalancerWeightedAMM()
 
@@ -1024,7 +1026,7 @@ class TestAllPoolTypesSelection:
         )
         # V3: 1 WETH = 2200 USDC (mock)
         v3_pool = self._make_v3_pool()
-        quoter = MockUniswapV3Quoter(default_rate=2200e6 / 1e18)
+        quoter = MockUniswapV3Quoter(default_rate=(2_200_000_000, 10**18))
         v3_amm = UniswapV3AMM(quoter=quoter)
 
         # Weighted: 1 WETH = 2500 USDC (best rate)
@@ -1079,7 +1081,7 @@ class TestAllPoolTypesSelection:
         )
         # V3: 1 WETH = 3000 USDC (best)
         v3_pool = self._make_v3_pool()
-        quoter = MockUniswapV3Quoter(default_rate=3000e6 / 1e18)
+        quoter = MockUniswapV3Quoter(default_rate=(3_000_000_000, 10**18))
         v3_amm = UniswapV3AMM(quoter=quoter)
 
         # Weighted: 1 WETH = 2500 USDC
@@ -1127,7 +1129,7 @@ class TestAllPoolTypesSelection:
 
         # V3: 1 WETH = 2000 USDC
         v3_pool = self._make_v3_pool()
-        quoter = MockUniswapV3Quoter(default_rate=2000e6 / 1e18)
+        quoter = MockUniswapV3Quoter(default_rate=(2_000_000_000, 10**18))
         v3_amm = UniswapV3AMM(quoter=quoter)
 
         # Weighted: 1 WETH = 2500 USDC (better)
@@ -1176,7 +1178,7 @@ class TestAllPoolTypesSelection:
             gas_estimate=150_000,
         )
         # V3 gives 0.998 USDC per DAI
-        quoter = MockUniswapV3Quoter(default_rate=0.998e6 / 1e18)
+        quoter = MockUniswapV3Quoter(default_rate=(998_000, 10**18))
         v3_amm = UniswapV3AMM(quoter=quoter)
 
         # Stable: near 1:1 (better for stablecoins)

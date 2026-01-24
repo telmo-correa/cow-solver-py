@@ -32,7 +32,8 @@ if TYPE_CHECKING:
 
 logger = structlog.get_logger()
 
-# Tolerance for EBBO comparison (zero tolerance - strict compliance required)
+# Tolerance for EBBO comparison (ZERO tolerance - strict compliance required)
+# Financial calculations must be exact - no tolerance/epsilon allowed
 EBBO_TOLERANCE = Decimal("0")
 
 
@@ -151,7 +152,7 @@ class EBBOValidator:
         Args:
             ebbo_prices: Precomputed EBBO prices (preferred)
             router: Router for computing prices on-the-fly (fallback)
-            tolerance: Allowed deviation from EBBO (default 0.1%)
+            tolerance: Allowed deviation from EBBO (default 0 - strict compliance)
         """
         self.ebbo_prices = ebbo_prices
         self.router = router

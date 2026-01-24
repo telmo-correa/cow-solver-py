@@ -445,7 +445,7 @@ class TestMockUniswapV3Quoter:
         """Test mock quoter tracks all calls."""
         from solver.amm.uniswap_v3 import MockUniswapV3Quoter
 
-        quoter = MockUniswapV3Quoter(default_rate=3000.0)
+        quoter = MockUniswapV3Quoter(default_rate=(3000, 1))
 
         token_in = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
         token_out = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
@@ -471,24 +471,28 @@ class TestMockUniswapV3Quoter:
         """Test mock quoter uses default_rate for unconfigured exact input quotes."""
         from solver.amm.uniswap_v3 import MockUniswapV3Quoter
 
-        quoter = MockUniswapV3Quoter(default_rate=2500.0)  # 1 token_in = 2500 token_out
+        # Rate as integer ratio: (2500, 1) means output = input * 2500 // 1
+        quoter = MockUniswapV3Quoter(default_rate=(2500, 1))
 
         amount_in = 2 * 10**18
         result = quoter.quote_exact_input("0xAAAA", "0xBBBB", 3000, amount_in)
 
-        assert result == int(amount_in * 2500.0)
+        # output = amount_in * 2500 // 1
+        assert result == amount_in * 2500
 
     def test_uses_default_rate_for_exact_output(self):
         """Test mock quoter uses default_rate for unconfigured exact output quotes."""
         from solver.amm.uniswap_v3 import MockUniswapV3Quoter
 
-        quoter = MockUniswapV3Quoter(default_rate=2500.0)  # 1 token_in = 2500 token_out
+        # Rate as integer ratio: (2500, 1) means output = input * 2500 // 1
+        quoter = MockUniswapV3Quoter(default_rate=(2500, 1))
 
         amount_out = 5000 * 10**6
         result = quoter.quote_exact_output("0xAAAA", "0xBBBB", 3000, amount_out)
 
-        # amount_in = amount_out / rate
-        assert result == int(amount_out / 2500.0)
+        # amount_in = (amount_out * denom + num - 1) // num = (5000e6 * 1 + 2500 - 1) // 2500
+        # = ceiling(5000e6 / 2500) = 2_000_000
+        assert result == (amount_out * 1 + 2500 - 1) // 2500
 
     def test_quote_key_address_normalization(self):
         """Test QuoteKey normalizes addresses for comparison."""
@@ -791,7 +795,7 @@ class TestUniswapV3AMM:
         from solver.amm.uniswap_v3 import MockUniswapV3Quoter, UniswapV3AMM
 
         # Configure mock quoter: 1 WETH -> 3000 USDC
-        quoter = MockUniswapV3Quoter(default_rate=3000.0)
+        quoter = MockUniswapV3Quoter(default_rate=(3000, 1))
         amm = UniswapV3AMM(quoter=quoter)
 
         result = amm.simulate_swap(pool, pool.token1, 10**18)  # 1 WETH in
@@ -807,7 +811,7 @@ class TestUniswapV3AMM:
         from solver.amm.uniswap_v3 import MockUniswapV3Quoter, UniswapV3AMM
 
         # Configure mock quoter: 1 WETH = 3000 USDC
-        quoter = MockUniswapV3Quoter(default_rate=3000.0)
+        quoter = MockUniswapV3Quoter(default_rate=(3000, 1))
         amm = UniswapV3AMM(quoter=quoter)
 
         result = amm.simulate_swap_exact_output(pool, pool.token1, 3000 * 10**6)  # Want 3000 USDC
@@ -833,7 +837,7 @@ class TestUniswapV3AMM:
         """Test AMM returns pool's gas estimate in result."""
         from solver.amm.uniswap_v3 import MockUniswapV3Quoter, UniswapV3AMM
 
-        quoter = MockUniswapV3Quoter(default_rate=3000.0)
+        quoter = MockUniswapV3Quoter(default_rate=(3000, 1))
         amm = UniswapV3AMM(quoter=quoter)
 
         # Default gas estimate
@@ -851,7 +855,7 @@ class TestUniswapV3AMM:
         """Test AMM normalizes token addresses in SwapResult."""
         from solver.amm.uniswap_v3 import MockUniswapV3Quoter, UniswapV3AMM
 
-        quoter = MockUniswapV3Quoter(default_rate=3000.0)
+        quoter = MockUniswapV3Quoter(default_rate=(3000, 1))
         amm = UniswapV3AMM(quoter=quoter)
 
         # Use uppercase token address
@@ -900,7 +904,7 @@ class TestUniswapV3AMM:
         """Test AMM passes pool fee to quoter."""
         from solver.amm.uniswap_v3 import MockUniswapV3Quoter, UniswapV3AMM
 
-        quoter = MockUniswapV3Quoter(default_rate=3000.0)
+        quoter = MockUniswapV3Quoter(default_rate=(3000, 1))
         amm = UniswapV3AMM(quoter=quoter)
 
         # Use a pool with 0.05% fee

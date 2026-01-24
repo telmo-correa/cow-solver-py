@@ -85,8 +85,11 @@ class TestOrder:
             "class": "limit",
         }
         order = Order.model_validate(data)
-        # limit_price = buy / sell = 2.5e9 / 1e18 = 2.5e-9
-        assert order.limit_price == pytest.approx(2.5e-9)
+        # limit_price = buy / sell = 2500000000 / 1000000000000000000
+        from decimal import Decimal
+
+        expected = Decimal("2500000000") / Decimal("1000000000000000000")
+        assert order.limit_price == expected
 
 
 class TestAuctionInstance:

@@ -5,6 +5,7 @@ https://github.com/cowprotocol/services/blob/main/crates/solvers/openapi.yml
 """
 
 from datetime import datetime
+from decimal import Decimal
 from enum import Enum
 from typing import Any
 
@@ -184,13 +185,19 @@ class Order(BaseModel):
         return self.kind == OrderKind.BUY
 
     @property
-    def limit_price(self) -> float:
-        """Return the limit price (buy_amount / sell_amount for sell orders)."""
+    def limit_price(self) -> Decimal:
+        """Return the limit price as Decimal (buy_amount / sell_amount).
+
+        Note: For financial calculations requiring exact integer arithmetic,
+        use get_limit_price_ratio() from solver.strategies.double_auction.core
+        which returns an integer ratio (numerator, denominator) instead.
+        """
         sell = self.sell_amount_int
         buy = self.buy_amount_int
         if sell == 0:
-            return float("inf")
-        return buy / sell
+            # Return a very large Decimal to represent infinity
+            return Decimal("Infinity")
+        return Decimal(buy) / Decimal(sell)
 
 
 class Liquidity(BaseModel):

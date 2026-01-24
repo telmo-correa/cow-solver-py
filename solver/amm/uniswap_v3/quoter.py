@@ -103,15 +103,16 @@ class MockUniswapV3Quoter:
     def __init__(
         self,
         quotes: dict[QuoteKey, int] | None = None,
-        default_rate: float | None = None,
+        default_rate: tuple[int, int] | None = None,
     ):
         """Initialize mock quoter.
 
         Args:
             quotes: Mapping of QuoteKey -> result amount for specific quotes
-            default_rate: If set, return amount * rate for any unconfigured quote.
-                         For exact_input: amount_out = amount_in * rate
-                         For exact_output: amount_in = amount_out / rate
+            default_rate: If set, (numerator, denominator) ratio for any unconfigured quote.
+                         For exact_input: amount_out = amount_in * num // denom
+                         For exact_output: amount_in = (amount_out * denom + num - 1) // num
+                         Example: (1, 1) for 1:1 rate, (3, 2) for 1.5x rate
         """
         self.quotes = quotes or {}
         self.default_rate = default_rate
@@ -132,7 +133,9 @@ class MockUniswapV3Quoter:
             return self.quotes[key]
 
         if self.default_rate is not None:
-            return int(amount_in * self.default_rate)
+            num, denom = self.default_rate
+            # Floor division for output amount (conservative for receiver)
+            return amount_in * num // denom
 
         return None
 
@@ -150,8 +153,11 @@ class MockUniswapV3Quoter:
         if key in self.quotes:
             return self.quotes[key]
 
-        if self.default_rate is not None and self.default_rate > 0:
-            return int(amount_out / self.default_rate)
+        if self.default_rate is not None:
+            num, denom = self.default_rate
+            if num > 0:
+                # Ceiling division for input amount (conservative for payer)
+                return (amount_out * denom + num - 1) // num
 
         return None
 

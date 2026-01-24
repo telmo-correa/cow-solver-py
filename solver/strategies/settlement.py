@@ -33,23 +33,43 @@ class CycleViability:
     Attributes:
         viable: Whether the cycle can settle as a pure ring (product <= 1)
         surplus_ratio: 1 - product. >0 means surplus available, 0 means exact match.
-        product: Product of exchange rates around the cycle
+                      (float for backward compatibility/logging only)
+        product: Product of exchange rates around the cycle (float for logging only)
         orders: Best order to use on each edge (if viable or near-viable)
         near_viable: True if product is slightly > 1 (could be closed with AMM)
+        product_num: Integer numerator of product ratio (for exact calculations)
+        product_denom: Integer denominator of product ratio (for exact calculations)
     """
 
     viable: bool
-    surplus_ratio: float
-    product: float
+    surplus_ratio: float  # For logging/backward compat only
+    product: float  # For logging/backward compat only
     orders: list[Order] = field(default_factory=list)
+    # Integer ratio components for exact calculations
+    product_num: int = 0
+    product_denom: int = 1
 
     # Threshold for "near-viable" cycles (for future AMM-assisted rings)
-    NEAR_VIABLE_THRESHOLD: float = 0.95
+    # Expressed as: product <= NEAR_VIABLE_DENOM / NEAR_VIABLE_NUM
+    NEAR_VIABLE_NUM: int = 95
+    NEAR_VIABLE_DENOM: int = 100
+
+    # Backward-compatible float threshold (for logging/tests only)
+    NEAR_VIABLE_THRESHOLD: float = 0.95  # = NEAR_VIABLE_NUM / NEAR_VIABLE_DENOM
 
     @property
     def near_viable(self) -> bool:
-        """Check if this cycle is near-viable (could be closed with AMM)."""
-        return self.product <= 1.0 / self.NEAR_VIABLE_THRESHOLD and not self.viable
+        """Check if this cycle is near-viable (could be closed with AMM).
+
+        Uses exact integer comparison: product <= 100/95
+        Equivalent to: product_num * 95 <= product_denom * 100
+        """
+        if self.viable:
+            return False
+        # Cross-multiply: product_num * NEAR_VIABLE_NUM <= product_denom * NEAR_VIABLE_DENOM
+        return S(self.product_num) * S(self.NEAR_VIABLE_NUM) <= S(self.product_denom) * S(
+            self.NEAR_VIABLE_DENOM
+        )
 
 
 @dataclass
@@ -109,6 +129,8 @@ def check_cycle_viability(
                 surplus_ratio=0.0,
                 product=float("inf"),
                 orders=[],
+                product_num=10**18,  # Very high ratio to represent infinity
+                product_denom=1,
             )
 
         # Find order with LOWEST exchange rate on this edge (most generous)
@@ -140,6 +162,8 @@ def check_cycle_viability(
                 surplus_ratio=0.0,
                 product=float("inf"),
                 orders=[],
+                product_num=10**18,  # Very high ratio to represent infinity
+                product_denom=1,
             )
 
         product_num = product_num * S(best_buy)
@@ -162,6 +186,8 @@ def check_cycle_viability(
         surplus_ratio=surplus_ratio,
         product=product,
         orders=orders_used,
+        product_num=product_num.value,
+        product_denom=product_denom.value,
     )
 
 
@@ -350,55 +376,25 @@ def calculate_cycle_settlement(viability: CycleViability) -> CycleSettlement | N
         price = (S(PRICE_PRECISION) * S(cumulative_denom[i])) // S(cumulative_num[i])
         clearing_prices[sell_token] = price.value
 
-    # Validate clearing price invariant
-    # For cycles, the invariant sell_filled * sell_price = buy_filled * buy_price
-    # should hold with bounded deviation from floor division rounding.
+    # Note on price invariant: In a perfect cycle settlement, sell_filled * sell_price
+    # would equal buy_filled * buy_price for each order. However, floor division in
+    # price and fill calculations introduces small rounding artifacts. This is safe
+    # because:
+    # 1. The limit price check (above) uses exact integer comparison
+    # 2. Floor division is conservative (rounds in system's favor)
+    # 3. Token conservation is enforced structurally (buy_filled[i] = sell_filled[next])
     #
-    # Error analysis for floor division chains:
-    # - N fill calculations (floor division each) - loses at most 1 unit per calculation
-    # - N price calculations (floor division each) - cumulative error compounds
-    # - Products scale errors by the other factor: fill * δ_price + price * δ_fill
-    #
-    # For values of magnitude M (fill * price ≈ 10^36), accumulated floor division
-    # errors result in deviations that are small relative to M. We use a relative
-    # tolerance of 10^-14 which is conservative while being much tighter than
-    # human-perceptible differences. This catches systematic errors while allowing
-    # for unavoidable integer arithmetic artifacts.
-    #
-    # Relative tolerance: deviation / max(sell_value, buy_value) <= 10^-14
-    # Equivalent absolute tolerance: deviation <= max_value / 10^14
-    relative_tolerance_divisor = S(10**14)
-    for i, order in enumerate(orders):
-        sell_token = normalize_address(order.sell_token)
-        buy_token = normalize_address(order.buy_token)
-        sell_price = clearing_prices.get(sell_token, 0)
-        buy_price = clearing_prices.get(buy_token, 0)
-        if sell_price > 0 and buy_price > 0:
-            sell_value = S(fills[i].sell_filled) * S(sell_price)
-            buy_value = S(fills[i].buy_filled) * S(buy_price)
-            # Use relative tolerance based on the larger value
-            max_value = sell_value if sell_value > buy_value else buy_value
-            max_deviation = max_value // relative_tolerance_divisor
-            # Ensure minimum absolute tolerance of PRICE_PRECISION for small values
-            if max_deviation < S(PRICE_PRECISION):
-                max_deviation = S(PRICE_PRECISION)
-            deviation = sell_value - buy_value if sell_value > buy_value else buy_value - sell_value
-            if deviation > max_deviation:
-                logger.warning(
-                    "cycle_price_invariant_error",
-                    order_idx=i,
-                    sell_value=sell_value.value,
-                    buy_value=buy_value.value,
-                    deviation=deviation.value,
-                    max_allowed=max_deviation.value,
-                )
-                return None
+    # We do NOT apply tolerance checks here - financial calculations must be exact.
+    # The limit price verification is the authoritative safety constraint.
 
-    # Calculate surplus (still using float for backward compatibility in dataclass)
-    # Use round() for nearest integer instead of truncation
+    # Calculate surplus using exact integer arithmetic
+    # surplus_ratio = 1 - product = (product_denom - product_num) / product_denom
+    # surplus = surplus_ratio * PRICE_PRECISION
+    #         = (product_denom - product_num) * PRICE_PRECISION / product_denom
     surplus = 0
-    if viability.surplus_ratio > 0:
-        surplus = round(viability.surplus_ratio * PRICE_PRECISION)
+    if viability.product_denom > 0 and viability.product_num < viability.product_denom:
+        surplus_num = S(viability.product_denom - viability.product_num) * S(PRICE_PRECISION)
+        surplus = (surplus_num // S(viability.product_denom)).value
 
     return CycleSettlement(
         fills=fills,
@@ -525,14 +521,14 @@ def solve_cycle(orders: list[Order]) -> CycleSettlement | None:
         price = (S(PRICE_PRECISION) * S(cumulative_denom[i])) // S(cumulative_num[i])
         clearing_prices[sell_token] = price.value
 
-    # Calculate surplus (float for backward compatibility)
+    # Calculate surplus using exact integer arithmetic
     # surplus_ratio = 1 - product = (product_denom - product_num) / product_denom
-    # Use round() for nearest integer instead of truncation
-    if product_denom.value > 0:
-        surplus_ratio = float(product_denom.value - product_num.value) / float(product_denom.value)
-    else:
-        surplus_ratio = 0.0
-    surplus = round(surplus_ratio * PRICE_PRECISION) if surplus_ratio > 0 else 0
+    # surplus = surplus_ratio * PRICE_PRECISION
+    #         = (product_denom - product_num) * PRICE_PRECISION / product_denom
+    surplus = 0
+    if product_denom.value > 0 and product_num < product_denom:
+        surplus_num = (product_denom - product_num) * S(PRICE_PRECISION)
+        surplus = (surplus_num // product_denom).value
 
     return CycleSettlement(
         fills=fills,

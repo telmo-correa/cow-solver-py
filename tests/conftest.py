@@ -107,10 +107,14 @@ class MockSwapConfig:
 
     # Fixed output amount (if set, ignores input)
     fixed_output: int | None = None
-    # Output multiplier (output = input * multiplier)
-    output_multiplier: float | None = None
+    # Output multiplier as integer ratio (numerator, denominator)
+    # Example: (5, 2) means output = input * 5 // 2
+    output_multiplier: tuple[int, int] | None = None
     # Default: realistic WETH/USDC rate (~2500 USDC per WETH)
-    default_rate: float = 2500.0
+    # Expressed as (numerator, denominator) where output = input * num // denom
+    # For WETH (18 dec) to USDC (6 dec): 1 WETH = 2500 USDC
+    # So: output = input * 2500 // 10**12
+    default_rate: tuple[int, int] = (2500, 10**12)
 
 
 class MockAMM:
@@ -138,11 +142,13 @@ class MockAMM:
         if self.config.fixed_output is not None:
             return self.config.fixed_output
         elif self.config.output_multiplier is not None:
-            return int(amount_in * self.config.output_multiplier)
+            num, denom = self.config.output_multiplier
+            return amount_in * num // denom
         else:
             # Default: assume WETH (18 decimals) to USDC (6 decimals)
             # 1 WETH = ~2500 USDC
-            return int(amount_in * self.config.default_rate / 10**12)
+            num, denom = self.config.default_rate
+            return amount_in * num // denom
 
     def simulate_swap(self, pool: UniswapV2Pool, token_in: str, amount_in: int) -> SwapResult:
         """Simulate a swap with configurable output."""
@@ -180,13 +186,17 @@ class MockAMM:
             }
         )
 
-        # Inverse of _calculate_output (approximate)
+        # Inverse of _calculate_output using ceiling division
         if self.config.fixed_output is not None:
             amount_in = 1000000000000000000  # 1 token
         elif self.config.output_multiplier is not None:
-            amount_in = int(amount_out / self.config.output_multiplier)
+            num, denom = self.config.output_multiplier
+            # Ceiling division: amount_in = (amount_out * denom + num - 1) // num
+            amount_in = (amount_out * denom + num - 1) // num
         else:
-            amount_in = int(amount_out / self.config.default_rate * 10**12)
+            num, denom = self.config.default_rate
+            # Ceiling division for input calculation
+            amount_in = (amount_out * denom + num - 1) // num
 
         token_out_addr = pool.token1 if token_in.lower() == pool.token0.lower() else pool.token0
 
