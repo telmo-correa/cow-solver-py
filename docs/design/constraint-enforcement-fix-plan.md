@@ -1,9 +1,20 @@
 # Constraint Enforcement Fix Plan
 
 **Created:** 2026-01-24
-**Status:** Draft
+**Status:** Phase 1 Complete
 
 This plan addresses all gaps identified in the constraint enforcement analysis across solver strategies.
+
+## Progress
+
+| Phase | Status | Commits |
+|-------|--------|---------|
+| 1.1 CowMatchStrategy EBBO | ✅ Complete | 685f290 |
+| 1.2 AmmRoutingStrategy Limit Tests | ✅ Complete | e195c24 |
+| 1.3 AmmRoutingStrategy Price Conflict | ✅ Complete | 987b6c0 |
+| 2.1 UnifiedCowStrategy EBBO Fix | ⏳ Pending | - |
+| 2.2 UnifiedCowStrategy Price Fix | ⏳ Pending | - |
+| 2.3 UnifiedCowStrategy Tests | ⏳ Pending | - |
 
 ---
 
