@@ -14,7 +14,7 @@ Decimal comparisons are converted to integer arithmetic for exactness.
 from __future__ import annotations
 
 import decimal
-from collections import defaultdict
+from collections import defaultdict, deque
 from decimal import Decimal
 from typing import TYPE_CHECKING
 
@@ -459,7 +459,7 @@ class UnifiedCowStrategy:
             price_sell = prices.get(sell_token)
             price_buy = prices.get(buy_token)
 
-            if price_sell is None or price_buy is None or price_buy <= 0:
+            if price_sell is None or price_buy is None or price_sell <= 0 or price_buy <= 0:
                 continue
 
             # Use high-precision context for exact division
@@ -655,7 +655,7 @@ class UnifiedCowStrategy:
             price_sell = prices.get(sell_token)
             price_buy = prices.get(buy_token)
 
-            if price_sell is None or price_buy is None or price_buy <= 0:
+            if price_sell is None or price_buy is None or price_sell <= 0 or price_buy <= 0:
                 continue
 
             # Clearing rate at these prices (buy tokens per sell token)
@@ -745,7 +745,7 @@ class UnifiedCowStrategy:
             price_sell = prices.get(sell_token)
             price_buy = prices.get(buy_token)
 
-            if price_sell is None or price_buy is None or price_buy <= 0:
+            if price_sell is None or price_buy is None or price_sell <= 0 or price_buy <= 0:
                 continue
 
             # Use high-precision context for exact division
@@ -850,10 +850,10 @@ class UnifiedCowStrategy:
             # Set reference price for this component
             prices[start_token] = Decimal(10**18)
             visited.add(start_token)
-            queue = [start_token]
+            queue: deque[str] = deque([start_token])
 
             while queue:
-                token = queue.pop(0)
+                token = queue.popleft()
                 current_price = prices[token]
 
                 for other_token, rate in token_rates[token]:

@@ -16,6 +16,7 @@ from solver.strategies.unified_cow import UnifiedCowStrategy
 WETH = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
 USDC = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
 DAI = "0x6B175474E89094C44Da98b954EedeaCB5f6f8fa0"
+LINK = "0x514910771AF9Ca656af840dff83E8264EcF986CA"
 
 
 def make_order(
@@ -46,6 +47,7 @@ def make_auction(orders: list[Order]) -> AuctionInstance:
     weth_lower = WETH.lower()
     usdc_lower = USDC.lower()
     dai_lower = DAI.lower()
+    link_lower = LINK.lower()
     return AuctionInstance(
         id="test",
         orders=orders,
@@ -53,6 +55,7 @@ def make_auction(orders: list[Order]) -> AuctionInstance:
             weth_lower: Token(decimals=18, available_balance="0"),
             usdc_lower: Token(decimals=6, available_balance="0"),
             dai_lower: Token(decimals=18, available_balance="0"),
+            link_lower: Token(decimals=18, available_balance="0"),
         },
     )
 
@@ -308,14 +311,16 @@ class TestUnifiedCowLimitPrice:
         assert result is not None
         for fill in result.fills:
             order = fill.order
-            # Limit rate = buy_amount / sell_amount
-            limit_rate = int(order.buy_amount) / int(order.sell_amount)
-            # Actual rate = buy_filled / sell_filled
+            sell_amount = int(order.sell_amount)
+            buy_amount = int(order.buy_amount)
+            # Limit price check using exact integer cross-multiplication:
+            # actual_rate >= limit_rate
+            # buy_filled / sell_filled >= buy_amount / sell_amount
+            # buy_filled * sell_amount >= buy_amount * sell_filled
             if fill.sell_filled > 0:
-                actual_rate = fill.buy_filled / fill.sell_filled
-                # Must get at least limit rate
-                assert actual_rate >= limit_rate * 0.9999, (
-                    f"Fill violates limit: actual {actual_rate:.6f} < limit {limit_rate:.6f}"
+                assert fill.buy_filled * sell_amount >= buy_amount * fill.sell_filled, (
+                    f"Fill violates limit: {fill.buy_filled}/{fill.sell_filled} < "
+                    f"{buy_amount}/{sell_amount}"
                 )
 
     def test_limit_price_at_boundary(self):
@@ -407,11 +412,14 @@ class TestUnifiedCowUniformPrice:
             sell_value = fill.sell_filled * sell_price
             buy_value = fill.buy_filled * buy_price
 
-            # Conservation: sell_value should equal buy_value (within rounding)
+            # Conservation: sell_value should equal buy_value
+            # Allow tiny error from int() truncation in _normalize_prices
+            # Max error = max(fill amounts) * 1 (price truncation)
             if sell_value > 0 and buy_value > 0:
-                ratio = sell_value / buy_value
-                assert 0.99 < ratio < 1.01, (
-                    f"Conservation violated: {sell_value} vs {buy_value} (ratio={ratio:.4f})"
+                max_truncation_error = max(fill.sell_filled, fill.buy_filled)
+                assert abs(sell_value - buy_value) <= max_truncation_error, (
+                    f"Conservation violated: {sell_value} vs {buy_value} "
+                    f"(diff={abs(sell_value - buy_value)})"
                 )
 
 
@@ -487,10 +495,11 @@ class TestUnifiedCowThreeTokenCycle:
         if result is not None:
             for fill in result.fills:
                 order = fill.order
-                limit_rate = int(order.buy_amount) / int(order.sell_amount)
+                sell_amount = int(order.sell_amount)
+                buy_amount = int(order.buy_amount)
+                # Limit price check using exact integer cross-multiplication
                 if fill.sell_filled > 0:
-                    actual_rate = fill.buy_filled / fill.sell_filled
-                    assert actual_rate >= limit_rate * 0.9999
+                    assert fill.buy_filled * sell_amount >= buy_amount * fill.sell_filled
 
 
 class TestUnifiedCowEdgeCases:
@@ -518,12 +527,21 @@ class TestUnifiedCowEdgeCases:
             uid="0x" + "01" * 56,
             sell_token=WETH,
             buy_token=USDC,
+            sell_amount="1000000000000000000",
+            buy_amount="2500000000",
         )
-        # Order selling DAI for something else (not WETH or USDC)
-        # This won't work with our fixture, so we just test two unrelated pairs
+        # Order selling DAI for LINK (no overlap with WETH/USDC)
+        order_b = make_order(
+            uid="0x" + "02" * 56,
+            sell_token=DAI,
+            buy_token=LINK,
+            sell_amount="1000000000000000000",
+            buy_amount="50000000000000000000",  # 50 LINK
+        )
         strategy = UnifiedCowStrategy(enforce_ebbo=False)
-        auction = make_auction([order_a])
+        auction = make_auction([order_a, order_b])
         result = strategy.try_solve(auction)
+        # No CoW possible - orders have no token overlap
         assert result is None
 
     def test_zero_amounts_rejected(self):
