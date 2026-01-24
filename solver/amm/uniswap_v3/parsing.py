@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from typing import TYPE_CHECKING
 
 import structlog
@@ -150,13 +151,14 @@ def _parse_fee(liquidity: Liquidity) -> int:
         return V3_FEE_MEDIUM  # Default to 0.3%
 
     try:
-        fee_float = float(fee_value)
+        # Use Decimal for exact arithmetic - avoid float precision loss
+        fee_decimal = Decimal(str(fee_value))
         # If it looks like a decimal (< 1), convert to Uniswap units
-        if fee_float < 1:
-            return int(fee_float * 1_000_000)
+        if fee_decimal < 1:
+            return int((fee_decimal * 1_000_000).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
         # Otherwise assume it's already in Uniswap units
-        return int(fee_float)
-    except (ValueError, TypeError):
+        return int(fee_decimal.quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+    except (ValueError, TypeError, InvalidOperation):
         logger.debug(
             "v3_pool_parse_fee_failed",
             liquidity_id=liquidity.id,

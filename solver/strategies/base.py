@@ -207,7 +207,8 @@ def convert_fill_ratios_to_fills(
 
     for order, fill_ratio_float in orders_with_ratios:
         # Convert float ratio to integer: fill_num / FILL_RATIO_SCALE
-        fill_num = int(fill_ratio_float * FILL_RATIO_SCALE)
+        # Use round() for nearest integer instead of truncation
+        fill_num = round(fill_ratio_float * FILL_RATIO_SCALE)
 
         # Skip essentially-zero fills
         if fill_num < min_fill_threshold:

@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 
 from solver.amm.base import SwapResult
 from solver.models.types import normalize_address
+from solver.safe_int import S
 
 if TYPE_CHECKING:
     from solver.pools.limit_order import LimitOrderPool
@@ -54,7 +55,8 @@ class LimitOrderAMM:
 
         # Calculate output: amount_in * maker_amount / taker_amount
         # This is linear scaling - no slippage curve
-        amount_out = (actual_amount_in * pool.maker_amount) // pool.taker_amount
+        # Use SafeInt for overflow protection
+        amount_out = (S(actual_amount_in) * S(pool.maker_amount) // S(pool.taker_amount)).value
 
         # Cap output at maker amount (sanity check)
         amount_out = min(amount_out, pool.maker_amount)
@@ -95,8 +97,10 @@ class LimitOrderAMM:
             return None
 
         # Calculate input: amount_out * taker_amount / maker_amount
-        # Round up for buy orders to ensure we get at least amount_out
-        amount_in = (amount_out * pool.taker_amount + pool.maker_amount - 1) // pool.maker_amount
+        # Round up (ceiling division) for buy orders to ensure we get at least amount_out
+        # Use SafeInt for overflow protection
+        numerator = S(amount_out) * S(pool.taker_amount)
+        amount_in = numerator.ceiling_div(S(pool.maker_amount)).value
 
         # Check input doesn't exceed taker amount
         if amount_in > pool.taker_amount:

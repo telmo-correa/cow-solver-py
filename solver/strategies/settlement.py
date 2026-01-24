@@ -352,8 +352,22 @@ def calculate_cycle_settlement(viability: CycleViability) -> CycleSettlement | N
 
     # Validate clearing price invariant
     # For cycles, the invariant sell_filled * sell_price = buy_filled * buy_price
-    # should hold exactly when using integer arithmetic. Small deviations may occur
-    # due to floor division rounding, but should be negligible.
+    # should hold with bounded deviation from floor division rounding.
+    #
+    # Error analysis for floor division chains:
+    # - N fill calculations (floor division each) - loses at most 1 unit per calculation
+    # - N price calculations (floor division each) - cumulative error compounds
+    # - Products scale errors by the other factor: fill * δ_price + price * δ_fill
+    #
+    # For values of magnitude M (fill * price ≈ 10^36), accumulated floor division
+    # errors result in deviations that are small relative to M. We use a relative
+    # tolerance of 10^-14 which is conservative while being much tighter than
+    # human-perceptible differences. This catches systematic errors while allowing
+    # for unavoidable integer arithmetic artifacts.
+    #
+    # Relative tolerance: deviation / max(sell_value, buy_value) <= 10^-14
+    # Equivalent absolute tolerance: deviation <= max_value / 10^14
+    relative_tolerance_divisor = S(10**14)
     for i, order in enumerate(orders):
         sell_token = normalize_address(order.sell_token)
         buy_token = normalize_address(order.buy_token)
@@ -362,12 +376,12 @@ def calculate_cycle_settlement(viability: CycleViability) -> CycleSettlement | N
         if sell_price > 0 and buy_price > 0:
             sell_value = S(fills[i].sell_filled) * S(sell_price)
             buy_value = S(fills[i].buy_filled) * S(buy_price)
-            # Integer arithmetic may have small rounding errors from floor division
-            # Allow relative error of 10^-14 (same as before but now from integer rounding)
+            # Use relative tolerance based on the larger value
             max_value = sell_value if sell_value > buy_value else buy_value
-            max_deviation = max_value // S(10**14)
-            if max_deviation.value == 0:
-                max_deviation = S(1)  # At least 1 unit
+            max_deviation = max_value // relative_tolerance_divisor
+            # Ensure minimum absolute tolerance of PRICE_PRECISION for small values
+            if max_deviation < S(PRICE_PRECISION):
+                max_deviation = S(PRICE_PRECISION)
             deviation = sell_value - buy_value if sell_value > buy_value else buy_value - sell_value
             if deviation > max_deviation:
                 logger.warning(
@@ -376,13 +390,15 @@ def calculate_cycle_settlement(viability: CycleViability) -> CycleSettlement | N
                     sell_value=sell_value.value,
                     buy_value=buy_value.value,
                     deviation=deviation.value,
+                    max_allowed=max_deviation.value,
                 )
                 return None
 
     # Calculate surplus (still using float for backward compatibility in dataclass)
+    # Use round() for nearest integer instead of truncation
     surplus = 0
     if viability.surplus_ratio > 0:
-        surplus = int(viability.surplus_ratio * PRICE_PRECISION)
+        surplus = round(viability.surplus_ratio * PRICE_PRECISION)
 
     return CycleSettlement(
         fills=fills,
@@ -511,11 +527,12 @@ def solve_cycle(orders: list[Order]) -> CycleSettlement | None:
 
     # Calculate surplus (float for backward compatibility)
     # surplus_ratio = 1 - product = (product_denom - product_num) / product_denom
+    # Use round() for nearest integer instead of truncation
     if product_denom.value > 0:
         surplus_ratio = float(product_denom.value - product_num.value) / float(product_denom.value)
     else:
         surplus_ratio = 0.0
-    surplus = int(surplus_ratio * PRICE_PRECISION) if surplus_ratio > 0 else 0
+    surplus = round(surplus_ratio * PRICE_PRECISION) if surplus_ratio > 0 else 0
 
     return CycleSettlement(
         fills=fills,

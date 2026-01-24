@@ -263,13 +263,20 @@ def parse_weighted_pool(liquidity: Liquidity) -> BalancerWeightedPool | None:
         )
         return None
 
-    # Validate weight sum is approximately 1.0 (allow small tolerance for rounding)
+    # Validate weight sum equals 1.0
+    # Use exact comparison - weights should sum to exactly 1 in Balancer protocol.
+    # Allow only minimal tolerance for unavoidable Decimal precision (1 wei per token).
+    # This replaces the previous 1% tolerance which was too permissive.
     total_weight = sum(r.weight for r in reserves)
-    if not (Decimal("0.99") <= total_weight <= Decimal("1.01")):
+    # Max acceptable deviation: 1 wei (10^-18) per token for Decimal conversion artifacts
+    max_deviation = Decimal(len(reserves)) / Decimal(10**18)
+    if abs(total_weight - Decimal("1")) > max_deviation:
         logger.warning(
             "weighted_pool_invalid_weight_sum",
             liquidity_id=liquidity.id,
             total_weight=str(total_weight),
+            deviation=str(abs(total_weight - Decimal("1"))),
+            max_allowed=str(max_deviation),
         )
         return None
 

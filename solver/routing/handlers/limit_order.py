@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 from solver.models.auction import Order
 from solver.routing.handlers.base import BaseHandler
 from solver.routing.types import RoutingResult
+from solver.safe_int import S
 
 if TYPE_CHECKING:
     from solver.amm.limit_order import LimitOrderAMM
@@ -75,8 +76,10 @@ class LimitOrderHandler(BaseHandler):
         # Proportional minimum = (actual_amount_in * min_buy_amount) / sell_amount
         actual_amount_in = result.amount_in
         if actual_amount_in < sell_amount:
-            # Calculate proportional minimum (round up to protect user)
-            proportional_min = (actual_amount_in * min_buy_amount + sell_amount - 1) // sell_amount
+            # Calculate proportional minimum (ceiling division to protect user)
+            # Use SafeInt for overflow protection
+            numerator = S(actual_amount_in) * S(min_buy_amount)
+            proportional_min = numerator.ceiling_div(S(sell_amount)).value
         else:
             proportional_min = min_buy_amount
 

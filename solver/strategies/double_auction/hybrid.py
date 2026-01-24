@@ -9,6 +9,7 @@ No tolerance/epsilon comparisons are allowed.
 
 from __future__ import annotations
 
+import decimal
 from decimal import ROUND_HALF_UP, Decimal
 
 import structlog
@@ -31,6 +32,31 @@ from .types import (
 )
 
 logger = structlog.get_logger()
+
+# Use context with high precision for Decimal operations to ensure exactness
+_DECIMAL_HIGH_PREC_CONTEXT = decimal.Context(prec=78)
+
+
+def _decimal_le(a: Decimal, b: Decimal) -> bool:
+    """Compare a <= b with high precision for exactness."""
+    with decimal.localcontext(_DECIMAL_HIGH_PREC_CONTEXT):
+        diff = a - b
+        return diff <= 0
+
+
+def _decimal_lt(a: Decimal, b: Decimal) -> bool:
+    """Compare a < b with high precision for exactness."""
+    with decimal.localcontext(_DECIMAL_HIGH_PREC_CONTEXT):
+        diff = a - b
+        return diff < 0
+
+
+def _decimal_gt(a: Decimal, b: Decimal) -> bool:
+    """Compare a > b with high precision for exactness."""
+    with decimal.localcontext(_DECIMAL_HIGH_PREC_CONTEXT):
+        diff = a - b
+        return diff > 0
+
 
 # Scale factor for converting Decimal AMM prices to integer ratios
 AMM_PRICE_SCALE = 10**18
@@ -110,7 +136,8 @@ def run_hybrid_auction(
         )
 
     # Validate AMM price is positive
-    if amm_price <= 0:
+    # Use high-precision comparison for exactness
+    if _decimal_le(amm_price, Decimal(0)):
         logger.warning(
             "hybrid_auction_invalid_amm_price",
             amm_price=float(amm_price),
@@ -127,7 +154,8 @@ def run_hybrid_auction(
     # Validate AMM price is within EBBO bounds
     # - ebbo_min: sellers of A must get at least this rate
     # - ebbo_max: buyers of A must pay at most this rate
-    if ebbo_min is not None and amm_price < ebbo_min:
+    # Use high-precision comparison for exactness
+    if ebbo_min is not None and _decimal_lt(amm_price, ebbo_min):
         logger.debug(
             "hybrid_auction_amm_below_ebbo_min",
             amm_price=float(amm_price),
@@ -149,7 +177,7 @@ def run_hybrid_auction(
             total_cow_b=0,
         )
 
-    if ebbo_max is not None and amm_price > ebbo_max:
+    if ebbo_max is not None and _decimal_gt(amm_price, ebbo_max):
         logger.debug(
             "hybrid_auction_amm_above_ebbo_max",
             amm_price=float(amm_price),

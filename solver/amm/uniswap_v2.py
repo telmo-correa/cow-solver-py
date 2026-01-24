@@ -7,6 +7,7 @@ With a 0.3% fee on input amounts.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from typing import TYPE_CHECKING, ClassVar
 
 import structlog
@@ -15,6 +16,7 @@ from eth_abi import encode  # type: ignore[attr-defined]
 from solver.amm.base import AMM, SwapResult
 from solver.constants import POOL_SWAP_GAS_COST
 from solver.models.types import is_valid_address, normalize_address
+from solver.safe_int import S
 
 if TYPE_CHECKING:
     from solver.models.auction import Liquidity
@@ -110,11 +112,12 @@ class UniswapV2(AMM):
         if reserve_in <= 0 or reserve_out <= 0:
             return 0
 
-        amount_in_with_fee = amount_in * fee_multiplier
-        numerator = amount_in_with_fee * reserve_out
-        denominator = reserve_in * 10000 + amount_in_with_fee
+        # Use SafeInt for explicit integer arithmetic with overflow detection
+        amount_in_with_fee = S(amount_in) * S(fee_multiplier)
+        numerator = amount_in_with_fee * S(reserve_out)
+        denominator = S(reserve_in) * S(10000) + amount_in_with_fee
 
-        return numerator // denominator
+        return (numerator // denominator).value
 
     def get_amount_in(
         self,
@@ -144,10 +147,12 @@ class UniswapV2(AMM):
             # Can't extract more than the reserve
             return 2**256 - 1  # Max uint256
 
-        numerator = reserve_in * amount_out * 10000
-        denominator = (reserve_out - amount_out) * fee_multiplier
+        # Use SafeInt for explicit integer arithmetic with overflow detection
+        # Ceiling division: (numerator // denominator) + 1
+        numerator = S(reserve_in) * S(amount_out) * S(10000)
+        denominator = (S(reserve_out) - S(amount_out)) * S(fee_multiplier)
 
-        return (numerator // denominator) + 1
+        return ((numerator // denominator) + S(1)).value
 
     def max_fill_sell_order(
         self,
@@ -193,15 +198,17 @@ class UniswapV2(AMM):
             return 0
 
         # max_input = R_out * sell_amount / buy_amount - R_in * 1000 / fee
-        # Use integer math to avoid precision loss
+        # Use SafeInt for integer math to avoid precision loss
         # max_input = (R_out * sell_amount * fee - R_in * 1000 * buy_amount) / (buy_amount * fee)
-        numerator = reserve_out * sell_amount * fee_multiplier - reserve_in * 10000 * buy_amount
-        denominator = buy_amount * fee_multiplier
-
-        if numerator <= 0:
+        term1 = S(reserve_out) * S(sell_amount) * S(fee_multiplier)
+        term2 = S(reserve_in) * S(10000) * S(buy_amount)
+        if term1 <= term2:
             return 0  # Pool rate is worse than limit rate
 
-        max_input = numerator // denominator
+        numerator = term1 - term2
+        denominator = S(buy_amount) * S(fee_multiplier)
+
+        max_input = (numerator // denominator).value
         max_input = min(max_input, sell_amount)
 
         # Verify and adjust for integer rounding in get_amount_out
@@ -209,14 +216,14 @@ class UniswapV2(AMM):
         # Constraint with solver_fee: output * sell_amount >= buy_amount * (input + solver_fee)
         if max_input > 0:
             actual_output = self.get_amount_out(max_input, reserve_in, reserve_out, fee_multiplier)
-            # Check constraint including solver_fee
-            if actual_output * sell_amount < buy_amount * (max_input + solver_fee):
+            # Check constraint using SafeInt cross-multiplication
+            if S(actual_output) * S(sell_amount) < S(buy_amount) * S(max_input + solver_fee):
                 # Binary search for the largest valid input
                 lo, hi = 0, max_input
                 while lo < hi:
                     mid = (lo + hi + 1) // 2
                     mid_output = self.get_amount_out(mid, reserve_in, reserve_out, fee_multiplier)
-                    if mid_output * sell_amount >= buy_amount * (mid + solver_fee):
+                    if S(mid_output) * S(sell_amount) >= S(buy_amount) * S(mid + solver_fee):
                         lo = mid
                     else:
                         hi = mid - 1
@@ -268,14 +275,16 @@ class UniswapV2(AMM):
             return buy_amount  # No output desired
 
         # max_output = R_out - R_in * 1000 * buy_amount / (fee * sell_amount)
-        # Use integer math: max_output = (R_out * fee * sell_amount - R_in * 1000 * buy_amount) / (fee * sell_amount)
-        numerator = reserve_out * fee_multiplier * sell_amount - reserve_in * 10000 * buy_amount
-        denominator = fee_multiplier * sell_amount
-
-        if numerator <= 0:
+        # Use SafeInt for integer math: max_output = (R_out * fee * sell_amount - R_in * 1000 * buy_amount) / (fee * sell_amount)
+        term1 = S(reserve_out) * S(fee_multiplier) * S(sell_amount)
+        term2 = S(reserve_in) * S(10000) * S(buy_amount)
+        if term1 <= term2:
             return 0  # Pool rate is worse than limit rate
 
-        max_output = numerator // denominator
+        numerator = term1 - term2
+        denominator = S(fee_multiplier) * S(sell_amount)
+
+        max_output = (numerator // denominator).value
         max_output = min(max_output, buy_amount)
 
         # Verify and adjust for integer rounding in get_amount_in
@@ -283,14 +292,14 @@ class UniswapV2(AMM):
         # Constraint with solver_fee: (input + solver_fee) * buy_amount <= sell_amount * output
         if max_output > 0:
             actual_input = self.get_amount_in(max_output, reserve_in, reserve_out, fee_multiplier)
-            # Check constraint including solver_fee
-            if (actual_input + solver_fee) * buy_amount > sell_amount * max_output:
+            # Check constraint using SafeInt cross-multiplication
+            if S(actual_input + solver_fee) * S(buy_amount) > S(sell_amount) * S(max_output):
                 # Binary search for the largest valid output
                 lo, hi = 0, max_output
                 while lo < hi:
                     mid = (lo + hi + 1) // 2
                     mid_input = self.get_amount_in(mid, reserve_in, reserve_out, fee_multiplier)
-                    if (mid_input + solver_fee) * buy_amount <= sell_amount * mid:
+                    if S(mid_input + solver_fee) * S(buy_amount) <= S(sell_amount) * S(mid):
                         lo = mid
                     else:
                         hi = mid - 1
@@ -582,12 +591,13 @@ def parse_liquidity_to_pool(liquidity: Liquidity) -> UniswapV2Pool | None:
         balance0, balance1 = balance1, balance0
 
     # Parse fee (default 0.3% = 30 bps)
+    # Use Decimal for exact arithmetic - avoid float precision loss
     fee_bps = 30
     if liquidity.fee:
         try:
-            fee_decimal = float(liquidity.fee)
-            fee_bps = int(fee_decimal * 10000)
-        except ValueError:
+            fee_decimal = Decimal(str(liquidity.fee))
+            fee_bps = int((fee_decimal * 10000).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+        except (ValueError, InvalidOperation):
             logger.warning(
                 "fee_parse_failed",
                 pool_id=liquidity.id,

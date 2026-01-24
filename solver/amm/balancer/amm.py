@@ -5,6 +5,7 @@ High-level AMM classes for swap simulation through Balancer pools.
 
 from __future__ import annotations
 
+from decimal import ROUND_HALF_UP, Decimal
 from typing import TYPE_CHECKING, Any
 
 import structlog
@@ -587,8 +588,12 @@ class BalancerStableAMM:
 
             # Calculate output
             # Note: amp must be scaled by AMP_PRECISION (JSON has raw A value)
+            # Use explicit rounding for Decimal-to-int conversion
+            amp_scaled = (pool.amplification_parameter * AMP_PRECISION).quantize(
+                Decimal("1"), rounding=ROUND_HALF_UP
+            )
             amount_out_scaled = stable_calc_out_given_in(
-                amp=int(pool.amplification_parameter * AMP_PRECISION),
+                amp=int(amp_scaled),
                 balances=balances,
                 token_index_in=index_in,
                 token_index_out=index_out,
@@ -652,8 +657,12 @@ class BalancerStableAMM:
 
             # Calculate required input (before fee)
             # Note: amp must be scaled by AMP_PRECISION (JSON has raw A value)
+            # Use explicit rounding for Decimal-to-int conversion
+            amp_scaled = (pool.amplification_parameter * AMP_PRECISION).quantize(
+                Decimal("1"), rounding=ROUND_HALF_UP
+            )
             amount_in_raw = stable_calc_in_given_out(
-                amp=int(pool.amplification_parameter * AMP_PRECISION),
+                amp=int(amp_scaled),
                 balances=balances,
                 token_index_in=index_in,
                 token_index_out=index_out,

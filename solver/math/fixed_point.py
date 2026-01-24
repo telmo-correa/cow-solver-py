@@ -9,7 +9,7 @@ All values are stored as integers scaled by 10^18.
 
 from __future__ import annotations
 
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 from typing import ClassVar
 
 __all__ = [
@@ -379,8 +379,12 @@ class Bfp:
 
     @classmethod
     def from_decimal(cls, d: Decimal) -> Bfp:
-        """Create from decimal (will be scaled by 10^18)."""
-        return cls(int(d * cls.ONE))
+        """Create from decimal (will be scaled by 10^18).
+
+        Uses ROUND_HALF_UP for consistent rounding behavior.
+        """
+        scaled = (d * cls.ONE).quantize(Decimal("1"), rounding=ROUND_HALF_UP)
+        return cls(int(scaled))
 
     @classmethod
     def from_int(cls, i: int) -> Bfp:
