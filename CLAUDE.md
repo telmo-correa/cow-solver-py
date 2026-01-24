@@ -2,6 +2,8 @@
 
 This file provides context for AI assistants working on this project. Read this first.
 
+> **CRITICAL - FINANCIAL APPLICATION:** This is a financial solver handling real money. NEVER use tolerance/epsilon comparisons for price or amount calculations. All financial comparisons MUST use exact integer arithmetic. Tolerance-based comparisons can lead to value extraction, incorrect settlements, or protocol violations. When integer truncation causes issues, fix the root cause (use ceiling/floor appropriately, adjust formulas) rather than adding tolerance.
+
 > **IMPORTANT:** NEVER run `git push` without an explicit request from the user. Always wait for the user to ask you to push.
 
 ## Project Overview
