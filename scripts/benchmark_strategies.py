@@ -10,10 +10,11 @@ Metrics collected:
 - Orders matched (count and percentage)
 - Volume matched (in sell token amounts)
 - Surplus generated (improvement over limit prices)
+- EBBO compliance (clearing prices vs AMM spot prices)
 - Execution time
 
 Usage:
-    python scripts/benchmark_strategies.py [--limit N]
+    python scripts/benchmark_strategies.py [--limit N] [--check-ebbo]
 """
 
 import argparse
@@ -27,7 +28,9 @@ from pathlib import Path
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from solver.ebbo import EBBOPrices, EBBOValidator, load_ebbo_prices
 from solver.models.auction import AuctionInstance
+from solver.models.types import normalize_address
 from solver.strategies.cow_match import CowMatchStrategy
 from solver.strategies.hybrid_cow import HybridCowStrategy
 from solver.strategies.ring_trade import RingTradeStrategy
@@ -45,6 +48,8 @@ class StrategyMetrics:
     time_ms: float = 0.0
     auctions_with_matches: int = 0
     auctions_total: int = 0
+    ebbo_violations: int = 0  # Number of EBBO violations
+    ebbo_checked: int = 0  # Number of orders checked for EBBO
 
 
 @dataclass
@@ -90,6 +95,20 @@ class BenchmarkResult:
             return 0.0
         return self.total_time_ms / len(self.metrics)
 
+    @property
+    def total_ebbo_violations(self) -> int:
+        return sum(m.ebbo_violations for m in self.metrics)
+
+    @property
+    def total_ebbo_checked(self) -> int:
+        return sum(m.ebbo_checked for m in self.metrics)
+
+    @property
+    def ebbo_compliance_rate(self) -> float:
+        if self.total_ebbo_checked == 0:
+            return 100.0
+        return (1 - self.total_ebbo_violations / self.total_ebbo_checked) * 100
+
 
 def calculate_surplus(result, auction: AuctionInstance) -> int:  # noqa: ARG001
     """Calculate surplus from a strategy result.
@@ -114,7 +133,12 @@ def calculate_surplus(result, auction: AuctionInstance) -> int:  # noqa: ARG001
     return total_surplus
 
 
-def run_strategy(strategy, auction: AuctionInstance, strategy_name: str) -> StrategyMetrics:
+def run_strategy(
+    strategy,
+    auction: AuctionInstance,
+    strategy_name: str,
+    ebbo_prices: EBBOPrices | None = None,
+) -> StrategyMetrics:
     """Run a strategy and collect metrics."""
     start_time = time.perf_counter()
     result = strategy.try_solve(auction)
@@ -132,6 +156,15 @@ def run_strategy(strategy, auction: AuctionInstance, strategy_name: str) -> Stra
         metrics.volume_matched = sum(f.sell_filled for f in result.fills)
         metrics.surplus = calculate_surplus(result, auction)
         metrics.auctions_with_matches = 1
+
+        # Check EBBO compliance if we have EBBO data
+        if ebbo_prices is not None:
+            validator = EBBOValidator(ebbo_prices=ebbo_prices)
+            clearing_prices = {normalize_address(k): int(v) for k, v in result.prices.items()}
+            filled_orders = [fill.order for fill in result.fills]
+            violations = validator.check_clearing_prices(clearing_prices, filled_orders, auction)
+            metrics.ebbo_checked = len(filled_orders)
+            metrics.ebbo_violations = len(violations)
 
     return metrics
 
@@ -190,16 +223,22 @@ def main():
     parser = argparse.ArgumentParser(description="Benchmark strategies on historical data")
     parser.add_argument("--limit", type=int, default=None, help="Limit number of auctions")
     parser.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
+    parser.add_argument(
+        "--check-ebbo", action="store_true", help="Check EBBO compliance using precomputed prices"
+    )
     args = parser.parse_args()
 
-    # Find historical auction files
+    # Find historical auction files (exclude EBBO files)
     data_dir = Path(__file__).parent.parent / "data" / "historical_auctions"
-    auction_files = sorted(data_dir.glob("mainnet_*.json"))
+    auction_files = sorted(f for f in data_dir.glob("mainnet_*.json") if "_ebbo" not in f.name)
 
     if args.limit:
         auction_files = auction_files[: args.limit]
 
-    print(f"Benchmarking {len(auction_files)} historical auctions...\n")
+    print(f"Benchmarking {len(auction_files)} historical auctions...")
+    if args.check_ebbo:
+        print("EBBO compliance checking enabled")
+    print()
 
     # Initialize strategies
     strategies = [
@@ -219,12 +258,21 @@ def main():
         "cycles_4": 0,
     }
 
+    ebbo_auctions_loaded = 0
     for i, auction_file in enumerate(auction_files):
         auction = load_auction(auction_file)
 
+        # Load EBBO data if requested
+        ebbo_prices = None
+        if args.check_ebbo:
+            ebbo_prices = load_ebbo_prices(auction_file)
+            if ebbo_prices is not None:
+                ebbo_auctions_loaded += 1
+
         if args.verbose:
+            ebbo_status = " (EBBO loaded)" if ebbo_prices else ""
             print(
-                f"[{i + 1}/{len(auction_files)}] {auction_file.name}: {auction.order_count} orders"
+                f"[{i + 1}/{len(auction_files)}] {auction_file.name}: {auction.order_count} orders{ebbo_status}"
             )
 
         # Analyze potential
@@ -235,11 +283,14 @@ def main():
 
         # Run each strategy
         for name, strategy in strategies:
-            metrics = run_strategy(strategy, auction, name)
+            metrics = run_strategy(strategy, auction, name, ebbo_prices)
             results[name].metrics.append(metrics)
 
             if args.verbose and metrics.orders_matched > 0:
-                print(f"  {name}: {metrics.orders_matched} orders matched")
+                ebbo_info = ""
+                if metrics.ebbo_checked > 0:
+                    ebbo_info = f" (EBBO: {metrics.ebbo_checked - metrics.ebbo_violations}/{metrics.ebbo_checked} compliant)"
+                print(f"  {name}: {metrics.orders_matched} orders matched{ebbo_info}")
 
     # Print results
     print("\n" + "=" * 80)
@@ -290,6 +341,27 @@ def main():
     )
     print(f"Potential improvement: {cow_potential - best_matched:,} orders")
 
+    # EBBO compliance section (if enabled)
+    if args.check_ebbo:
+        print("\n" + "-" * 80)
+        print("EBBO COMPLIANCE")
+        print("-" * 80)
+        print(f"\nAuctions with EBBO data: {ebbo_auctions_loaded}/{len(auction_files)}")
+
+        print(f"\n{'Strategy':<15} {'Checked':<12} {'Violations':<12} {'Compliance':<12}")
+        print("-" * 60)
+
+        for name, result in results.items():
+            if result.total_ebbo_checked > 0:
+                print(
+                    f"{name:<15} "
+                    f"{result.total_ebbo_checked:<12,} "
+                    f"{result.total_ebbo_violations:<12,} "
+                    f"{result.ebbo_compliance_rate:<12.1f}%"
+                )
+            else:
+                print(f"{name:<15} No orders checked")
+
     # Detailed per-strategy analysis
     print("\n" + "-" * 80)
     print("DETAILED ANALYSIS")
@@ -308,6 +380,11 @@ def main():
         print(
             f"  - Total time: {result.total_time_ms:.1f}ms (avg {result.avg_time_ms:.2f}ms per auction)"
         )
+        if args.check_ebbo and result.total_ebbo_checked > 0:
+            print(
+                f"  - EBBO compliance: {result.ebbo_compliance_rate:.1f}% "
+                f"({result.total_ebbo_checked - result.total_ebbo_violations}/{result.total_ebbo_checked})"
+            )
 
 
 if __name__ == "__main__":

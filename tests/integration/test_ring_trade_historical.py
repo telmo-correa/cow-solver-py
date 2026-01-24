@@ -4,6 +4,7 @@ Tests ring trade strategy against real auction fixtures to verify:
 - Ring detection works on production-like data
 - Match rate meets expected thresholds
 - All settlements are valid
+- EBBO compliance (clearing prices vs AMM spot prices)
 - Near-viable cycles are tracked for future AMM-assisted rings
 """
 
@@ -14,7 +15,9 @@ from pathlib import Path
 
 import pytest
 
+from solver.ebbo import EBBOPrices, EBBOValidator, load_ebbo_prices
 from solver.models.auction import AuctionInstance
+from solver.models.types import normalize_address
 from solver.strategies.ring_trade import (
     OrderGraph,
     RingTradeStrategy,
@@ -24,6 +27,7 @@ from solver.strategies.ring_trade import (
 # Fixture directories
 N_ORDER_COW_DIR = Path("tests/fixtures/auctions/n_order_cow")
 BENCHMARK_DIR = Path("tests/fixtures/auctions/benchmark")
+HISTORICAL_AUCTIONS_DIR = Path("data/historical_auctions")
 
 
 def load_auction(fixture_path: Path) -> AuctionInstance | None:
@@ -47,6 +51,20 @@ def get_benchmark_fixtures() -> list[Path]:
     if not BENCHMARK_DIR.exists():
         return []
     return sorted(BENCHMARK_DIR.glob("*.json"))
+
+
+def get_historical_auction_fixtures() -> list[Path]:
+    """Get historical auction files that have EBBO data."""
+    if not HISTORICAL_AUCTIONS_DIR.exists():
+        return []
+    # Get auction files that have companion EBBO files
+    auction_files = []
+    for f in HISTORICAL_AUCTIONS_DIR.glob("mainnet_*.json"):
+        if "_ebbo" not in f.name:
+            ebbo_file = f.parent / f"{f.stem}_ebbo.json"
+            if ebbo_file.exists():
+                auction_files.append(f)
+    return sorted(auction_files)
 
 
 class TestRingTradeHistorical:
@@ -299,3 +317,150 @@ class TestBenchmarkComparison:
                     # Allow 1% tolerance
                     diff_pct = abs(sell_value - buy_value) / sell_value
                     assert diff_pct < 0.01, f"Price invariant violated: {diff_pct:.2%} difference"
+
+
+class TestEBBOCompliance:
+    """EBBO compliance tests using precomputed AMM reference prices."""
+
+    def test_ring_trade_ebbo_compliance_on_historical_auctions(self):
+        """Ring trade results satisfy EBBO constraints on historical data."""
+        strategy = RingTradeStrategy()
+
+        total_checked = 0
+        total_violations = 0
+        auctions_with_results = 0
+
+        for fixture_path in get_historical_auction_fixtures():
+            auction = load_auction(fixture_path)
+            if auction is None:
+                continue
+
+            # Load EBBO data
+            ebbo_prices = load_ebbo_prices(fixture_path)
+            if ebbo_prices is None:
+                continue
+
+            result = strategy.try_solve(auction)
+            if result is None or not result.fills:
+                continue
+
+            auctions_with_results += 1
+
+            # Validate EBBO compliance
+            validator = EBBOValidator(ebbo_prices=ebbo_prices)
+            clearing_prices = {normalize_address(k): int(v) for k, v in result.prices.items()}
+            filled_orders = [fill.order for fill in result.fills]
+            violations = validator.check_clearing_prices(clearing_prices, filled_orders, auction)
+
+            total_checked += len(filled_orders)
+            total_violations += len(violations)
+
+        # Report results
+        if total_checked > 0:
+            compliance_rate = (total_checked - total_violations) / total_checked * 100
+            print("\nEBBO Compliance on historical auctions:")
+            print(f"  Auctions with results: {auctions_with_results}")
+            print(f"  Orders checked: {total_checked}")
+            print(f"  Violations: {total_violations}")
+            print(f"  Compliance rate: {compliance_rate:.1f}%")
+
+            # Ring trades should have reasonably high EBBO compliance
+            # Allow some violations because:
+            # 1. Ring trades optimize for limit prices, not AMM spot prices
+            # 2. AMM prices may have moved between EBBO computation and auction
+            # 3. Some token pairs may not have EBBO data
+            assert compliance_rate >= 85.0, (
+                f"EBBO compliance rate {compliance_rate:.1f}% is below 85%"
+            )
+
+    def test_ebbo_validator_detects_violations(self):
+        """EBBO validator correctly identifies price violations."""
+        from decimal import Decimal
+
+        # Create test EBBO prices
+        ebbo_prices = EBBOPrices(
+            auction_id="test",
+            prices={
+                "0xtoken_a": {"0xtoken_b": Decimal("1.5")},  # 1 A = 1.5 B
+            },
+        )
+
+        validator = EBBOValidator(ebbo_prices=ebbo_prices)
+
+        # Clearing prices that match EBBO
+        clearing_good = {"0xtoken_a": 150, "0xtoken_b": 100}  # 150/100 = 1.5
+
+        # Clearing prices worse than EBBO
+        clearing_bad = {"0xtoken_a": 140, "0xtoken_b": 100}  # 140/100 = 1.4 < 1.5
+
+        # Create a mock order (only needs sell/buy token)
+        class MockOrder:
+            sell_token = "0xtoken_a"
+            buy_token = "0xtoken_b"
+
+        orders = [MockOrder()]
+
+        # Good clearing prices should have no violations
+        violations_good = validator.check_clearing_prices(clearing_good, orders)  # type: ignore[arg-type]
+        assert len(violations_good) == 0, "Good clearing prices should not violate EBBO"
+
+        # Bad clearing prices should have violations
+        violations_bad = validator.check_clearing_prices(clearing_bad, orders)  # type: ignore[arg-type]
+        assert len(violations_bad) == 1, "Bad clearing prices should violate EBBO"
+        assert violations_bad[0].deficit_pct > 0, "Violation should report positive deficit"
+
+    def test_ebbo_prices_loading(self):
+        """EBBO prices load correctly from companion files."""
+        auction_fixtures = get_historical_auction_fixtures()
+        if not auction_fixtures:
+            pytest.skip("No historical auction fixtures with EBBO data")
+
+        fixture_path = auction_fixtures[0]
+        ebbo_prices = load_ebbo_prices(fixture_path)
+
+        assert ebbo_prices is not None, "EBBO prices should load"
+        assert len(ebbo_prices.prices) > 0, "EBBO prices should have data"
+
+        # Verify price structure
+        for sell_token, buy_prices in ebbo_prices.prices.items():
+            assert sell_token.startswith("0x"), "Sell token should be address"
+            for buy_token, price in buy_prices.items():
+                assert buy_token.startswith("0x"), "Buy token should be address"
+                assert price > 0, "Price should be positive"
+
+    @pytest.mark.parametrize(
+        "fixture_path",
+        get_historical_auction_fixtures()[:5],  # Test first 5 for speed
+        ids=lambda p: p.stem if p else "none",
+    )
+    def test_individual_auction_ebbo_compliance(self, fixture_path: Path):
+        """Each historical auction should have high EBBO compliance."""
+        if fixture_path is None:
+            pytest.skip("No fixture available")
+
+        auction = load_auction(fixture_path)
+        if auction is None:
+            pytest.skip(f"Could not load auction: {fixture_path}")
+
+        ebbo_prices = load_ebbo_prices(fixture_path)
+        if ebbo_prices is None:
+            pytest.skip(f"No EBBO data for: {fixture_path}")
+
+        strategy = RingTradeStrategy()
+        result = strategy.try_solve(auction)
+
+        if result is None or not result.fills:
+            # No matches is OK (not an EBBO violation)
+            return
+
+        validator = EBBOValidator(ebbo_prices=ebbo_prices)
+        clearing_prices = {normalize_address(k): int(v) for k, v in result.prices.items()}
+        filled_orders = [fill.order for fill in result.fills]
+        violations = validator.check_clearing_prices(clearing_prices, filled_orders, auction)
+
+        # Individual auction should have no more than 1 violation
+        # (AMM prices may have moved slightly since EBBO was computed)
+        assert len(violations) <= 1, (
+            f"Auction {fixture_path.name} has {len(violations)} EBBO violations: "
+            f"{[str(v) for v in violations]}"
+        )
