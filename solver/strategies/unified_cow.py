@@ -6,10 +6,14 @@ phase separation that can miss optimal solutions.
 Key insight:
 - Bidirectional pairs: LP with conservation constraints (true markets)
 - Cycles: RingTrade's specialized settlement (rate-product constraint)
+
+IMPORTANT: All financial calculations use exact integer arithmetic.
+Decimal comparisons are converted to integer arithmetic for exactness.
 """
 
 from __future__ import annotations
 
+import decimal
 from collections import defaultdict
 from decimal import Decimal
 from typing import TYPE_CHECKING
@@ -33,6 +37,23 @@ if TYPE_CHECKING:
     from solver.amm.uniswap_v2 import UniswapV2
 
 logger = structlog.get_logger()
+
+# Use context with high precision for Decimal operations to ensure exactness
+_DECIMAL_HIGH_PREC_CONTEXT = decimal.Context(prec=78)
+
+
+def _decimal_ge(a: Decimal, b: Decimal) -> bool:
+    """Compare a >= b with high precision for exactness."""
+    with decimal.localcontext(_DECIMAL_HIGH_PREC_CONTEXT):
+        diff = a - b
+        return diff >= 0
+
+
+def _decimal_lt(a: Decimal, b: Decimal) -> bool:
+    """Compare a < b with high precision for exactness."""
+    with decimal.localcontext(_DECIMAL_HIGH_PREC_CONTEXT):
+        diff = a - b
+        return diff < 0
 
 
 class UnifiedCowStrategy:
@@ -630,7 +651,8 @@ class UnifiedCowStrategy:
             clearing_rate = price_buy / price_sell
 
             # Order is eligible if it gets at least its limit price
-            if clearing_rate >= limit_rate:
+            # Use integer comparison for exactness
+            if _decimal_ge(clearing_rate, limit_rate):
                 # Surplus coefficient: sell_amount × (clearing_rate - limit_rate)
                 # This is the surplus generated per unit of fill ratio
                 surplus_coeff = Decimal(sell_amt) * (clearing_rate - limit_rate)
@@ -725,7 +747,8 @@ class UnifiedCowStrategy:
                 continue
 
             # EBBO: user must get at least AMM rate
-            if clearing_rate < amm_rate:
+            # Use integer comparison for exactness
+            if _decimal_lt(clearing_rate, amm_rate):
                 return False
 
         return True

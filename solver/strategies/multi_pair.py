@@ -11,7 +11,7 @@ to maximize matched volume while maintaining EBBO compliance.
 from __future__ import annotations
 
 from collections import defaultdict
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 from typing import TYPE_CHECKING
 
 import structlog
@@ -430,7 +430,9 @@ class MultiPairCowStrategy(AMMBackedStrategy):
                 processed_uids.add(fill.order.uid)
 
         for token, price in result.prices.items():
-            all_prices[token] = str(int(price * Decimal(10**18)))
+            # Use explicit rounding to nearest for price output
+            scaled_price = (price * Decimal(10**18)).quantize(Decimal("1"), rounding=ROUND_HALF_UP)
+            all_prices[token] = str(int(scaled_price))
 
     def _build_result(
         self,

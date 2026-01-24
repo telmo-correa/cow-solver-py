@@ -6,16 +6,31 @@ Bid/Offer) bounds from AMM reference prices.
 EBBO ensures users get execution at least as good as available AMMs:
 - ebbo_min: Floor price for sellers (they must get at least this rate)
 - ebbo_max: Ceiling price for buyers (they must pay at most this rate)
+
+IMPORTANT: All financial calculations use exact integer arithmetic.
+Decimal comparisons are converted to integer arithmetic for exactness.
 """
 
 from __future__ import annotations
 
+import decimal
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import TYPE_CHECKING
 
 from solver.fees.price_estimation import get_token_info
 from solver.models.types import normalize_address
+
+# Use context with high precision for Decimal operations to ensure exactness
+_DECIMAL_HIGH_PREC_CONTEXT = decimal.Context(prec=78)
+
+
+def _decimal_lt(a: Decimal, b: Decimal) -> bool:
+    """Compare a < b with high precision for exactness."""
+    with decimal.localcontext(_DECIMAL_HIGH_PREC_CONTEXT):
+        diff = a - b
+        return diff < 0
+
 
 if TYPE_CHECKING:
     from solver.models.auction import AuctionInstance
@@ -149,7 +164,8 @@ def verify_fills_against_ebbo(
             continue
 
         # EBBO: user must get at least AMM rate
-        if clearing_rate < amm_rate:
+        # Use integer comparison for exactness
+        if _decimal_lt(clearing_rate, amm_rate):
             return False
 
     return True

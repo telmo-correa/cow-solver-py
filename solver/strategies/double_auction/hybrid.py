@@ -9,7 +9,7 @@ No tolerance/epsilon comparisons are allowed.
 
 from __future__ import annotations
 
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 
 import structlog
 
@@ -173,7 +173,9 @@ def run_hybrid_auction(
 
     # With AMM price: match orders that can clear at AMM price
     # Convert AMM price to integer ratio for exact calculations
-    amm_price_ratio: PriceRatio = (int(amm_price * AMM_PRICE_SCALE), AMM_PRICE_SCALE)
+    # Use round-to-nearest for reference price conversion
+    amm_price_scaled = (amm_price * AMM_PRICE_SCALE).quantize(Decimal("1"), rounding=ROUND_HALF_UP)
+    amm_price_ratio: PriceRatio = (int(amm_price_scaled), AMM_PRICE_SCALE)
     amm_num, amm_denom = amm_price_ratio
 
     # Sort asks ascending (cheapest sellers first) - use integer ratios

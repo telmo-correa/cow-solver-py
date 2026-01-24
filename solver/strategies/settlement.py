@@ -81,6 +81,9 @@ def check_cycle_viability(
     We select the LOWEST rate order on each edge (most generous) to maximize
     chances of viability and surplus.
 
+    Uses exact integer arithmetic: product = (buy1*buy2*...) / (sell1*sell2*...)
+    Viable iff product_num <= product_denom.
+
     Args:
         cycle: Token addresses in cycle order (A, B, C, ...) where A→B→C→...→A
         get_orders_fn: Function(sell_token, buy_token) -> list[Order]
@@ -89,7 +92,10 @@ def check_cycle_viability(
         CycleViability with viability status, surplus ratio, and orders to use
     """
     n = len(cycle)
-    product = 1.0
+    # Product as integer ratio: (numerator, denominator)
+    # product = (buy1/sell1) * (buy2/sell2) * ... = (buy1*buy2*...) / (sell1*sell2*...)
+    product_num = S(1)
+    product_denom = S(1)
     orders_used: list[Order] = []
 
     for i in range(n):
@@ -106,19 +112,29 @@ def check_cycle_viability(
             )
 
         # Find order with LOWEST exchange rate on this edge (most generous)
+        # rate = buy_amt / sell_amt
+        # Compare using cross-multiplication: rate1 < rate2 iff buy1*sell2 < buy2*sell1
         best_order: Order | None = None
-        best_rate = float("inf")
+        best_buy: int = 0
+        best_sell: int = 0
 
         for order in orders:
             sell_amt = order.sell_amount_int
             buy_amt = order.buy_amount_int
             if sell_amt > 0 and buy_amt > 0:
-                rate = buy_amt / sell_amt
-                if rate < best_rate:
-                    best_rate = rate
+                if best_order is None:
                     best_order = order
+                    best_buy = buy_amt
+                    best_sell = sell_amt
+                else:
+                    # Compare: buy_amt/sell_amt < best_buy/best_sell
+                    # Cross-multiply: buy_amt * best_sell < best_buy * sell_amt
+                    if S(buy_amt) * S(best_sell) < S(best_buy) * S(sell_amt):
+                        best_order = order
+                        best_buy = buy_amt
+                        best_sell = sell_amt
 
-        if best_order is None or best_rate == float("inf"):
+        if best_order is None:
             return CycleViability(
                 viable=False,
                 surplus_ratio=0.0,
@@ -126,13 +142,23 @@ def check_cycle_viability(
                 orders=[],
             )
 
-        product *= best_rate
+        product_num = product_num * S(best_buy)
+        product_denom = product_denom * S(best_sell)
         orders_used.append(best_order)
 
+    # viable if product <= 1, i.e., product_num <= product_denom
+    viable = product_num <= product_denom
+
+    # Calculate float product and surplus_ratio for backward compatibility
+    # These are used for logging and near-viable detection only
+    if product_denom.value > 0:
+        product = float(product_num.value) / float(product_denom.value)
+    else:
+        product = float("inf")
     surplus_ratio = 1.0 - product
 
     return CycleViability(
-        viable=product <= 1.0,
+        viable=viable,
         surplus_ratio=surplus_ratio,
         product=product,
         orders=orders_used,
@@ -192,6 +218,12 @@ def calculate_cycle_settlement(viability: CycleViability) -> CycleSettlement | N
     We find the "bottleneck" - the order with the smallest normalized amount -
     and scale all fills proportionally.
 
+    Uses exact integer arithmetic throughout:
+    - cumulative_rate[i] = (buy0*...*buy_{i-1}) / (sell0*...*sell_{i-1})
+    - normalized[i] = sell_amounts[i] / cumulative_rate[i]
+    - Bottleneck found via integer cross-multiplication comparison
+    - Fill amounts computed with floor division
+
     Args:
         viability: CycleViability with viable=True and orders populated
 
@@ -204,9 +236,9 @@ def calculate_cycle_settlement(viability: CycleViability) -> CycleSettlement | N
     if n == 0:
         return None
 
-    # Parse amounts and rates
+    # Parse amounts and rate components (buy_amt, sell_amt) for each order
     sell_amounts: list[int] = []
-    rates: list[float] = []
+    buy_amounts: list[int] = []
 
     for order in orders:
         sell_amt = order.sell_amount_int
@@ -214,29 +246,59 @@ def calculate_cycle_settlement(viability: CycleViability) -> CycleSettlement | N
         if sell_amt == 0 or buy_amt == 0:
             return None
         sell_amounts.append(sell_amt)
-        rates.append(buy_amt / sell_amt)
+        buy_amounts.append(buy_amt)
 
-    # Calculate normalized amounts for each order
-    # Normalize to the first token in the cycle as reference
-    normalized_amounts: list[float] = []
-    cumulative_rate = 1.0
+    # Calculate cumulative rate components for each position
+    # cumulative_rate[i] = rate[0] * rate[1] * ... * rate[i-1]
+    # = (buy[0]/sell[0]) * (buy[1]/sell[1]) * ... * (buy[i-1]/sell[i-1])
+    # = (buy[0] * ... * buy[i-1]) / (sell[0] * ... * sell[i-1])
+    # cumulative[0] = 1/1 (identity)
+    cumulative_num: list[int] = [1]  # cumulative_num[i] = buy[0] * ... * buy[i-1]
+    cumulative_denom: list[int] = [1]  # cumulative_denom[i] = sell[0] * ... * sell[i-1]
 
-    for i in range(n):
-        normalized = sell_amounts[i] / cumulative_rate
-        normalized_amounts.append(normalized)
-        cumulative_rate *= rates[i]
+    for i in range(n - 1):
+        cumulative_num.append(cumulative_num[i] * buy_amounts[i])
+        cumulative_denom.append(cumulative_denom[i] * sell_amounts[i])
 
-    # Find bottleneck (minimum normalized amount)
-    bottleneck_normalized = min(normalized_amounts)
+    # Find bottleneck (minimum normalized amount) using integer comparison
+    # normalized[i] = sell_amounts[i] / cumulative_rate[i]
+    #               = sell_amounts[i] * cumulative_denom[i] / cumulative_num[i]
+    # Compare normalized[i] vs normalized[j] via cross-multiplication:
+    # sell_amounts[i] * cumulative_denom[i] * cumulative_num[j]
+    #   vs sell_amounts[j] * cumulative_denom[j] * cumulative_num[i]
+    bottleneck_idx = 0
+    for i in range(1, n):
+        # Is normalized[i] < normalized[bottleneck_idx]?
+        # Using cross-multiplication to avoid division
+        lhs = S(sell_amounts[i]) * S(cumulative_denom[i]) * S(cumulative_num[bottleneck_idx])
+        rhs = (
+            S(sell_amounts[bottleneck_idx])
+            * S(cumulative_denom[bottleneck_idx])
+            * S(cumulative_num[i])
+        )
+        if lhs < rhs:
+            bottleneck_idx = i
 
-    # Calculate sell_filled amounts
+    # Calculate sell_filled amounts using exact integer arithmetic
+    # sell_filled[i] = bottleneck_normalized * cumulative_rate[i]
+    # bottleneck_normalized = sell_amounts[b] * cumulative_denom[b] / cumulative_num[b]
+    # sell_filled[i] = (sell_amounts[b] * cumulative_denom[b] / cumulative_num[b])
+    #                  * (cumulative_num[i] / cumulative_denom[i])
+    #                = (sell_amounts[b] * cumulative_denom[b] * cumulative_num[i])
+    #                  / (cumulative_num[b] * cumulative_denom[i])
+    bottleneck_sell = sell_amounts[bottleneck_idx]
+    bottleneck_cum_num = cumulative_num[bottleneck_idx]
+    bottleneck_cum_denom = cumulative_denom[bottleneck_idx]
+
     sell_filled_amounts: list[int] = []
-    cumulative_rate = 1.0
-
     for i in range(n):
-        sell_filled = int(bottleneck_normalized * cumulative_rate)
+        numerator = S(bottleneck_sell) * S(bottleneck_cum_denom) * S(cumulative_num[i])
+        denominator = S(bottleneck_cum_num) * S(cumulative_denom[i])
+        if denominator.value == 0:
+            return None
+        # Use floor division (conservative)
+        sell_filled = (numerator // denominator).value
         sell_filled_amounts.append(sell_filled)
-        cumulative_rate *= rates[i]
 
     # Set buy_filled = sell_filled of next order (ensures conservation)
     # Verify limit prices are respected using exact integer comparison
@@ -273,19 +335,25 @@ def calculate_cycle_settlement(viability: CycleViability) -> CycleSettlement | N
             )
         )
 
-    # Calculate clearing prices
+    # Calculate clearing prices using integer arithmetic
+    # price[0] = PRICE_PRECISION
+    # price[i+1] = price[i] / rate[i] = price[i] * sell[i] / buy[i]
+    # price[i] = PRICE_PRECISION * sell[0]*...*sell[i-1] / (buy[0]*...*buy[i-1])
+    #          = PRICE_PRECISION * cumulative_denom[i] / cumulative_num[i]
     clearing_prices: dict[str, int] = {}
-    price: float = PRICE_PRECISION
 
     for i, order in enumerate(orders):
         sell_token = normalize_address(order.sell_token)
-        clearing_prices[sell_token] = int(price)
-        price = price / rates[i]
+        if cumulative_num[i] == 0:
+            return None
+        # Use floor division for prices (standard behavior)
+        price = (S(PRICE_PRECISION) * S(cumulative_denom[i])) // S(cumulative_num[i])
+        clearing_prices[sell_token] = price.value
 
     # Validate clearing price invariant
     # For cycles, the invariant sell_filled * sell_price = buy_filled * buy_price
-    # may not hold exactly due to integer truncation in price calculation.
-    # We check that the deviation is within 1 wei per token (negligible).
+    # should hold exactly when using integer arithmetic. Small deviations may occur
+    # due to floor division rounding, but should be negligible.
     for i, order in enumerate(orders):
         sell_token = normalize_address(order.sell_token)
         buy_token = normalize_address(order.buy_token)
@@ -294,11 +362,8 @@ def calculate_cycle_settlement(viability: CycleViability) -> CycleSettlement | N
         if sell_price > 0 and buy_price > 0:
             sell_value = S(fills[i].sell_filled) * S(sell_price)
             buy_value = S(fills[i].buy_filled) * S(buy_price)
-            # Allow for float64 precision in clearing price calculation (~10^-14 relative error)
-            # This is a SANITY CHECK, not limit price enforcement. Actual limit prices are
-            # verified with exact integer cross-multiplication in the loop above.
-            # Clearing prices use float division which has inherent precision limits.
-            # Multiple float divisions can accumulate error, so we allow 10^-14 relative error.
+            # Integer arithmetic may have small rounding errors from floor division
+            # Allow relative error of 10^-14 (same as before but now from integer rounding)
             max_value = sell_value if sell_value > buy_value else buy_value
             max_deviation = max_value // S(10**14)
             if max_deviation.value == 0:
@@ -314,7 +379,7 @@ def calculate_cycle_settlement(viability: CycleViability) -> CycleSettlement | N
                 )
                 return None
 
-    # Calculate surplus
+    # Calculate surplus (still using float for backward compatibility in dataclass)
     surplus = 0
     if viability.surplus_ratio > 0:
         surplus = int(viability.surplus_ratio * PRICE_PRECISION)
@@ -332,6 +397,11 @@ def solve_cycle(orders: list[Order]) -> CycleSettlement | None:
     This is a simplified interface that checks viability and calculates
     settlement in one step.
 
+    Uses exact integer arithmetic throughout:
+    - Viability check: product_num <= product_denom
+    - Fill amounts via integer cross-multiplication
+    - Clearing prices via integer division
+
     Args:
         orders: Orders forming the cycle (in cycle order A→B→C→A)
 
@@ -342,10 +412,12 @@ def solve_cycle(orders: list[Order]) -> CycleSettlement | None:
     if n < 3:
         return None
 
-    # Parse amounts and rates, check viability
+    # Parse amounts, check viability using integer product
+    # product = (buy0/sell0) * (buy1/sell1) * ... = (buy0*buy1*...) / (sell0*sell1*...)
     sell_amounts: list[int] = []
-    rates: list[float] = []
-    product = 1.0
+    buy_amounts: list[int] = []
+    product_num = S(1)
+    product_denom = S(1)
 
     for order in orders:
         sell_amt = order.sell_amount_int
@@ -353,29 +425,49 @@ def solve_cycle(orders: list[Order]) -> CycleSettlement | None:
         if sell_amt <= 0 or buy_amt <= 0:
             return None
         sell_amounts.append(sell_amt)
-        rate = buy_amt / sell_amt
-        rates.append(rate)
-        product *= rate
+        buy_amounts.append(buy_amt)
+        product_num = product_num * S(buy_amt)
+        product_denom = product_denom * S(sell_amt)
 
-    if product > 1.0:
+    # viable if product <= 1, i.e., product_num <= product_denom
+    if product_num > product_denom:
         return None  # Not viable
 
-    # Calculate settlement using the same logic
-    normalized_amounts: list[float] = []
-    cumulative_rate = 1.0
-    for i in range(n):
-        normalized = sell_amounts[i] / cumulative_rate
-        normalized_amounts.append(normalized)
-        cumulative_rate *= rates[i]
+    # Calculate cumulative rate components for each position
+    # cumulative[i] = rate[0] * ... * rate[i-1] = (buy0*...*buy_{i-1}) / (sell0*...*sell_{i-1})
+    cumulative_num: list[int] = [1]
+    cumulative_denom: list[int] = [1]
 
-    bottleneck_normalized = min(normalized_amounts)
+    for i in range(n - 1):
+        cumulative_num.append(cumulative_num[i] * buy_amounts[i])
+        cumulative_denom.append(cumulative_denom[i] * sell_amounts[i])
+
+    # Find bottleneck (minimum normalized amount) using integer comparison
+    # normalized[i] = sell_amounts[i] * cumulative_denom[i] / cumulative_num[i]
+    bottleneck_idx = 0
+    for i in range(1, n):
+        lhs = S(sell_amounts[i]) * S(cumulative_denom[i]) * S(cumulative_num[bottleneck_idx])
+        rhs = (
+            S(sell_amounts[bottleneck_idx])
+            * S(cumulative_denom[bottleneck_idx])
+            * S(cumulative_num[i])
+        )
+        if lhs < rhs:
+            bottleneck_idx = i
+
+    # Calculate sell_filled amounts
+    bottleneck_sell = sell_amounts[bottleneck_idx]
+    bottleneck_cum_num = cumulative_num[bottleneck_idx]
+    bottleneck_cum_denom = cumulative_denom[bottleneck_idx]
 
     sell_filled_amounts: list[int] = []
-    cumulative_rate = 1.0
     for i in range(n):
-        sell_filled = int(bottleneck_normalized * cumulative_rate)
+        numerator = S(bottleneck_sell) * S(bottleneck_cum_denom) * S(cumulative_num[i])
+        denominator = S(bottleneck_cum_num) * S(cumulative_denom[i])
+        if denominator.value == 0:
+            return None
+        sell_filled = (numerator // denominator).value
         sell_filled_amounts.append(sell_filled)
-        cumulative_rate *= rates[i]
 
     fills: list[OrderFill] = []
     for i in range(n):
@@ -407,15 +499,22 @@ def solve_cycle(orders: list[Order]) -> CycleSettlement | None:
     if len(fills) != n:
         return None
 
-    # Calculate clearing prices
+    # Calculate clearing prices using integer arithmetic
+    # price[i] = PRICE_PRECISION * cumulative_denom[i] / cumulative_num[i]
     clearing_prices: dict[str, int] = {}
-    price: float = PRICE_PRECISION
     for i, order in enumerate(orders):
         sell_token = normalize_address(order.sell_token)
-        clearing_prices[sell_token] = int(price)
-        price = price / rates[i]
+        if cumulative_num[i] == 0:
+            return None
+        price = (S(PRICE_PRECISION) * S(cumulative_denom[i])) // S(cumulative_num[i])
+        clearing_prices[sell_token] = price.value
 
-    surplus_ratio = 1.0 - product
+    # Calculate surplus (float for backward compatibility)
+    # surplus_ratio = 1 - product = (product_denom - product_num) / product_denom
+    if product_denom.value > 0:
+        surplus_ratio = float(product_denom.value - product_num.value) / float(product_denom.value)
+    else:
+        surplus_ratio = 0.0
     surplus = int(surplus_ratio * PRICE_PRECISION) if surplus_ratio > 0 else 0
 
     return CycleSettlement(

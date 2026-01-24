@@ -22,7 +22,7 @@ No tolerance/epsilon comparisons are allowed. Price ratios are represented as
 
 from __future__ import annotations
 
-from decimal import Decimal
+from decimal import ROUND_DOWN, ROUND_UP, Decimal
 
 import structlog
 
@@ -530,12 +530,18 @@ def run_double_auction(
 
     if ebbo_min is not None and ebbo_min > 0:
         # Convert Decimal to ratio: ebbo_min ≈ (ebbo_min * SCALE) / SCALE
-        ebbo_min_ratio: PriceRatio = (int(ebbo_min * EBBO_SCALE), EBBO_SCALE)
+        # For EBBO min (seller protection), round UP to be conservative
+        # Sellers must get at least this rate, so we round up to not under-count
+        ebbo_min_scaled = (ebbo_min * EBBO_SCALE).quantize(Decimal("1"), rounding=ROUND_UP)
+        ebbo_min_ratio: PriceRatio = (int(ebbo_min_scaled), EBBO_SCALE)
         if _compare_prices(ebbo_min_ratio, price_floor) > 0:
             price_floor = ebbo_min_ratio
 
     if ebbo_max is not None and ebbo_max > 0:
-        ebbo_max_ratio: PriceRatio = (int(ebbo_max * EBBO_SCALE), EBBO_SCALE)
+        # For EBBO max (buyer protection), round DOWN to be conservative
+        # Buyers must pay at most this rate, so we round down to not over-count
+        ebbo_max_scaled = (ebbo_max * EBBO_SCALE).quantize(Decimal("1"), rounding=ROUND_DOWN)
+        ebbo_max_ratio: PriceRatio = (int(ebbo_max_scaled), EBBO_SCALE)
         if _compare_prices(ebbo_max_ratio, price_ceiling) < 0:
             price_ceiling = ebbo_max_ratio
 
@@ -687,6 +693,10 @@ def calculate_surplus(result: DoubleAuctionResult) -> int:
     - Seller surplus: amount_b received - (amount_a * ask_limit_price)
     - Buyer surplus: (bid_limit_price * amount_a) - amount_b paid
 
+    Uses exact integer arithmetic with PriceRatio to avoid truncation issues.
+    Ceiling division is used for seller_min_b (conservative for seller surplus)
+    and floor division for buyer_max_b (conservative for buyer surplus).
+
     Returns:
         Total surplus in token B units (can be converted to USD later)
     """
@@ -694,18 +704,26 @@ def calculate_surplus(result: DoubleAuctionResult) -> int:
 
     for match in result.matches:
         # Seller wanted at least ask_price B per A
-        ask_price = get_limit_price(match.seller, is_selling_a=True)
-        if ask_price is None:
+        # ask_price = (buy_amount, sell_amount) where price = buy_amount / sell_amount
+        ask_ratio = get_limit_price_ratio(match.seller, is_selling_a=True)
+        if ask_ratio is None:
             continue
-        seller_min_b = int(Decimal(match.amount_a) * ask_price)
-        seller_surplus = match.amount_b - seller_min_b
+        ask_num, ask_denom = ask_ratio
+        # seller_min_b = amount_a * ask_num / ask_denom
+        # Use ceiling division (seller wanted AT LEAST this, round up for conservative surplus)
+        seller_min_b = (S(match.amount_a) * S(ask_num)).ceiling_div(S(ask_denom))
+        seller_surplus = match.amount_b - seller_min_b.value
 
         # Buyer was willing to pay up to bid_price B per A
-        bid_price = get_limit_price(match.buyer, is_selling_a=False)
-        if bid_price is None:
+        # bid_price = (sell_amount, buy_amount) where price = sell_amount / buy_amount
+        bid_ratio = get_limit_price_ratio(match.buyer, is_selling_a=False)
+        if bid_ratio is None:
             continue
-        buyer_max_b = int(Decimal(match.amount_a) * bid_price)
-        buyer_surplus = buyer_max_b - match.amount_b
+        bid_num, bid_denom = bid_ratio
+        # buyer_max_b = amount_a * bid_num / bid_denom
+        # Use floor division (buyer would pay AT MOST this, round down for conservative surplus)
+        buyer_max_b = (S(match.amount_a) * S(bid_num)) // S(bid_denom)
+        buyer_surplus = buyer_max_b.value - match.amount_b
 
         total_surplus += seller_surplus + buyer_surplus
 

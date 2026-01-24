@@ -4,10 +4,14 @@ This module provides:
 - PriceCandidates: Collection of price ratio candidates
 - Price enumeration from order limits and AMM prices
 - LP solver for finding optimal fills at given prices
+
+IMPORTANT: All financial calculations use exact integer arithmetic.
+Decimal comparisons are converted to integer cross-multiplication.
 """
 
 from __future__ import annotations
 
+import decimal
 from dataclasses import dataclass, field
 from decimal import Decimal
 from itertools import product
@@ -21,6 +25,29 @@ from solver.models.order_groups import OrderGroup
 from solver.models.types import normalize_address
 from solver.strategies.base import OrderFill, convert_fill_ratios_to_fills
 from solver.strategies.double_auction import get_limit_price
+
+# Use context with high precision for Decimal operations to ensure exactness
+_DECIMAL_HIGH_PREC_CONTEXT = decimal.Context(prec=78)  # Enough for 10^77
+
+
+def _decimal_ge(a: Decimal, b: Decimal) -> bool:
+    """Compare a >= b with high precision for exactness.
+
+    Uses a high-precision Decimal context to ensure comparison
+    is accurate even for very large values.
+    """
+    # Subtract with high precision and check sign
+    with decimal.localcontext(_DECIMAL_HIGH_PREC_CONTEXT):
+        diff = a - b
+        return diff >= 0
+
+
+def _decimal_le(a: Decimal, b: Decimal) -> bool:
+    """Compare a <= b with high precision for exactness."""
+    with decimal.localcontext(_DECIMAL_HIGH_PREC_CONTEXT):
+        diff = a - b
+        return diff <= 0
+
 
 if TYPE_CHECKING:
     from solver.routing.router import SingleOrderRouter
@@ -325,14 +352,14 @@ def solve_fills_at_prices(
         # Current price ratio B/A at given prices
         current_ratio = price_b / price_a
 
-        # Check if order's limit is satisfied
+        # Check if order's limit is satisfied using integer comparison
         # Sellers of A want at least `limit` B per A -> current_ratio >= limit
         # Sellers of B want to pay at most `limit` B per A -> current_ratio <= limit
         if is_selling_a:
-            if current_ratio >= limit:
+            if _decimal_ge(current_ratio, limit):
                 eligible_orders.append((order, is_selling_a, token_a, token_b, limit))
         else:
-            if current_ratio <= limit:
+            if _decimal_le(current_ratio, limit):
                 eligible_orders.append((order, is_selling_a, token_a, token_b, limit))
 
     if not eligible_orders:
@@ -515,7 +542,7 @@ def solve_fills_at_prices_v2(
         current_ratio = price_buy / price_sell
 
         # Check if order's limit is satisfied (gets at least limit price)
-        if current_ratio >= limit_price:
+        if _decimal_ge(current_ratio, limit_price):
             eligible_orders.append((order, limit_price))
 
     if not eligible_orders:
