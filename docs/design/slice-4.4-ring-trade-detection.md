@@ -18,6 +18,71 @@
 
 ---
 
+## Scope & Limitations
+
+### What This Slice Covers (Pure Rings)
+
+This slice implements **pure ring trades** - cycles that close without any AMM interaction. A pure ring requires:
+- Product of exchange rates >= 1
+- All value flows peer-to-peer
+- Zero AMM calls
+
+### What This Slice Does NOT Cover (AMM-Assisted Rings)
+
+A more general approach would allow **AMM-assisted rings** - cycles that are "almost" viable and use a small AMM trade to close the gap:
+
+```
+Example: A→B→C→A with rate product = 0.98 (2% gap)
+
+Pure ring approach: NOT VIABLE (rejected)
+AMM-assisted approach: VIABLE
+  - 98% settles peer-to-peer (gas savings)
+  - 2% gap closed via AMM (small cost)
+  - Net positive vs routing everything through AMM
+```
+
+### Why Start With Pure Rings?
+
+| Approach | Complexity | Value Capture | Status |
+|----------|------------|---------------|--------|
+| Pure rings only | Low | ~60% of ring potential | **Slice 4.4** |
+| AMM-assisted rings | Medium | ~90% of ring potential | Future |
+| Full unified optimizer | High | 100% | Phase 4 goal |
+
+**Stepping stone rationale:**
+1. **Simpler math** - Pure rings have no price impact curves to model
+2. **Clear success metric** - Can measure ring match rate in isolation
+3. **Reusable foundation** - Graph + cycle detection extends to AMM-assisted
+4. **Validates the concept** - Proves ring detection works before adding complexity
+
+### Path to Unified Optimization
+
+The Phase 4 goal is joint optimization across ALL mechanisms. Pure rings are a stepping stone:
+
+```
+Slice 4.4: Pure rings (this doc)
+    ↓
+Future: AMM-assisted rings (extend viability check)
+    ↓
+Future: Unified optimizer (rings + splits + flash loans)
+```
+
+The implementation is designed for extensibility:
+- `is_cycle_viable()` can be extended to check "viable with AMM assist"
+- `RingTrade` dataclass can include optional AMM interactions
+- Cycle detection is reusable regardless of settlement method
+
+### Tracking Missed Value
+
+To quantify what pure rings leave on the table, we'll track:
+- **Near-viable cycles**: Product in range [0.95, 1.0)
+- **Gap distribution**: How much AMM volume would close each gap
+- **Potential uplift**: Estimated value from AMM-assisted rings
+
+This data informs whether to prioritize AMM-assisted rings next.
+
+---
+
 ## Background
 
 ### What is a Ring Trade?
@@ -35,7 +100,7 @@ Result: All three orders filled, zero AMM fees, zero slippage
 
 ### When is a Ring Trade Viable?
 
-A cycle is economically viable when the product of exchange rates >= 1:
+**For pure rings (this slice):** Product of exchange rates >= 1:
 
 ```
 rate_1 × rate_2 × rate_3 >= 1
@@ -45,7 +110,18 @@ where rate_i = buy_amount_i / sell_amount_i (what each order is willing to pay)
 
 If the product > 1, there's **surplus** to distribute among participants.
 If the product = 1, it's break-even (still saves gas vs AMM).
-If the product < 1, the cycle is not viable.
+If the product < 1, the cycle is **not viable as a pure ring**.
+
+**For AMM-assisted rings (future):** Product in range [threshold, 1.0):
+
+```
+0.95 <= rate_1 × rate_2 × rate_3 < 1.0
+
+The gap (1 - product) can be closed via AMM if:
+  gas_saved_by_ring > amm_cost_to_close_gap
+```
+
+This slice tracks near-viable cycles to inform future work.
 
 ### Analysis Results (from Slice 4.3)
 
@@ -367,10 +443,16 @@ class TestCycleViability:
         """Cycle with rate product = 1 is viable (break-even)."""
 
     def test_not_viable_product_below_1(self):
-        """Cycle with rate product < 1 is not viable."""
+        """Cycle with rate product < 1 is not viable as pure ring."""
 
     def test_missing_edge_not_viable(self):
         """Cycle with missing order on one edge is not viable."""
+
+    def test_near_viable_tracked(self):
+        """Cycles with product in [0.95, 1.0) tracked for future AMM-assist."""
+
+    def test_returns_gap_ratio(self):
+        """Viability check returns gap ratio for near-viable analysis."""
 ```
 
 #### 4. Amount Calculation (`test_ring_amounts.py`)
@@ -445,6 +527,12 @@ class TestRingTradeHistorical:
 
     def test_all_settlements_valid(self):
         """All ring settlements satisfy constraints."""
+
+    def test_near_viable_cycles_tracked(self):
+        """Near-viable cycles (product 0.95-1.0) logged for analysis."""
+
+    def test_near_viable_statistics(self):
+        """Report potential uplift from AMM-assisted rings."""
 ```
 
 ### Benchmark Tests
@@ -522,7 +610,86 @@ Options:
 
 ### Q4: What about rings that need AMM to balance?
 
-Sometimes a ring is "almost" viable but needs small AMM trade to close. This is out of scope for Slice 4.4 but noted for future work.
+Sometimes a ring is "almost" viable but needs small AMM trade to close the gap.
+
+**Current approach (Slice 4.4):** Out of scope. Track near-viable cycles for data.
+
+**Future approach:** AMM-assisted rings (see Future Extensions below).
+
+**Design for extensibility:**
+- `is_cycle_viable()` returns `(viable, gap_ratio)` not just `bool`
+- Near-viable cycles (gap < 5%) logged for analysis
+- `RingTrade` dataclass has optional `amm_interactions` field (empty for now)
+
+---
+
+## Future Extensions
+
+### AMM-Assisted Rings (Post Slice 4.4)
+
+Extend viability check to include "almost viable" cycles:
+
+```python
+def is_cycle_viable_with_amm(
+    cycle: tuple[str, ...],
+    graph: OrderGraph,
+    router: SingleOrderRouter,
+    min_product: float = 0.95  # Allow up to 5% gap
+) -> tuple[bool, Optional[AmmAssist]]:
+    """
+    Check if cycle is viable with optional AMM assistance.
+
+    Returns:
+        (True, None) - Pure ring, no AMM needed
+        (True, AmmAssist) - Viable with AMM to close gap
+        (False, None) - Not viable even with AMM
+    """
+    product = calculate_rate_product(cycle, graph)
+
+    if product >= 1.0:
+        return True, None  # Pure ring
+
+    if product >= min_product:
+        # Calculate AMM cost to close gap
+        gap = 1.0 - product
+        amm_cost = estimate_amm_cost(cycle, gap, router)
+        gas_savings = estimate_ring_gas_savings(cycle)
+
+        if gas_savings > amm_cost:
+            return True, AmmAssist(gap=gap, cost=amm_cost)
+
+    return False, None
+```
+
+### Integration Points
+
+The pure ring implementation should be designed so AMM-assisted rings are a natural extension:
+
+| Component | Pure Ring (4.4) | AMM-Assisted (Future) |
+|-----------|-----------------|----------------------|
+| `is_cycle_viable()` | Returns bool | Returns (bool, gap_ratio) |
+| `RingTrade.interactions` | Always empty | May contain AMM calls |
+| `calculate_settlement()` | Pure math | Includes AMM quote |
+| Selection criteria | Surplus only | Surplus - AMM cost |
+
+### Unified Optimizer Vision
+
+Eventually, ring detection feeds into a unified optimizer:
+
+```
+Input: Orders + Liquidity sources
+
+Optimizer considers:
+  1. Direct CoW matches (A↔B)
+  2. Pure ring trades (A→B→C→A, product >= 1)
+  3. AMM-assisted rings (A→B→C→A, product >= 0.95)
+  4. Split routes (large orders across venues)
+  5. Pure AMM routes (fallback)
+
+Output: Optimal mix maximizing (surplus - gas)
+```
+
+Slice 4.4 builds the foundation (cycle detection, settlement math) that this optimizer will use.
 
 ---
 
