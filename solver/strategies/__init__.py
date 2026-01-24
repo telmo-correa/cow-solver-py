@@ -25,6 +25,18 @@ from solver.strategies.double_auction import (
     run_hybrid_auction,
 )
 from solver.strategies.hybrid_cow import HybridCowStrategy
+from solver.strategies.multi_pair import (
+    LPResult,
+    MultiPairCowStrategy,
+    PriceCandidates,
+    UnionFind,
+    build_price_candidates,
+    build_token_graph,
+    enumerate_price_combinations,
+    find_spanning_tree,
+    find_token_components,
+    solve_fills_at_prices,
+)
 from solver.strategies.ring_trade import (
     CycleViability,
     OrderGraph,
@@ -48,6 +60,17 @@ __all__ = [
     "run_double_auction",
     "run_hybrid_auction",
     "calculate_surplus",
+    # Multi-pair coordination (Slice 4.6)
+    "MultiPairCowStrategy",
+    "UnionFind",
+    "find_token_components",
+    "PriceCandidates",
+    "build_price_candidates",
+    "build_token_graph",
+    "find_spanning_tree",
+    "enumerate_price_combinations",
+    "LPResult",
+    "solve_fills_at_prices",
     # Ring trades (Slice 4.4)
     "OrderGraph",
     "CycleViability",

@@ -89,6 +89,9 @@ def _parse_scaling_factor(
     1. Top-level scaling_factors_dict (Python auction format)
     2. Per-token data with "scalingFactor" key (Rust auction format)
 
+    Scaling factors may come as integers, floats, or decimal strings like
+    "1.000000000000000000" or "1000000000000.000000000000000000".
+
     Falls back to 1 if not found or invalid.
     """
     token_addr_lower = token_addr.lower()
@@ -99,8 +102,10 @@ def _parse_scaling_factor(
     if scaling_raw is None:
         scaling_raw = "1"
     try:
-        return int(scaling_raw)
-    except (ValueError, TypeError):
+        # Handle decimal strings like "1.000000000000000000"
+        # First convert to Decimal, then to int
+        return int(Decimal(str(scaling_raw)))
+    except (ValueError, TypeError, InvalidOperation):
         logger.warning(
             f"{pool_type}_invalid_scaling",
             liquidity_id=liquidity_id,

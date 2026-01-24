@@ -19,6 +19,7 @@ Algorithm:
 
 from __future__ import annotations
 
+from decimal import Decimal
 from typing import TYPE_CHECKING
 
 import structlog
@@ -201,6 +202,32 @@ class HybridCowStrategy:
                 for order in group.sellers_of_b:
                     all_remainders.append(order)
                 continue
+
+            # EBBO constraint: verify sellers receive at least AMM equivalent (zero tolerance)
+            # For sellers of A: they receive total_cow_b tokens B
+            # AMM would give them: int(total_cow_a * amm_price)
+            # EBBO satisfied if: total_cow_b >= int(total_cow_a * amm_price)
+            # This integer comparison properly accounts for rounding
+            if amm_price is not None and result.total_cow_a > 0:
+                amm_equivalent = int(Decimal(result.total_cow_a) * amm_price)
+                if result.total_cow_b < amm_equivalent:
+                    clearing_rate = Decimal(result.total_cow_b) / Decimal(result.total_cow_a)
+                    logger.debug(
+                        "hybrid_cow_ebbo_violation",
+                        token_a=group.token_a[-8:],
+                        token_b=group.token_b[-8:],
+                        clearing_rate=float(clearing_rate),
+                        amm_price=float(amm_price),
+                        cow_b=result.total_cow_b,
+                        amm_equivalent=amm_equivalent,
+                        deficit=amm_equivalent - result.total_cow_b,
+                    )
+                    # Reject this match - add orders as remainders
+                    for order in group.sellers_of_a:
+                        all_remainders.append(order)
+                    for order in group.sellers_of_b:
+                        all_remainders.append(order)
+                    continue
 
             # Convert matches to fills
             for match in result.cow_matches:

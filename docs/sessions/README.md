@@ -34,11 +34,12 @@ This directory tracks progress across AI-assisted development sessions.
 - **Slice 4.3:** Complete (Evaluation showed direct CoW 1.4%, ring trades 5.41%)
 - **Slice 4.4:** Complete (Ring trade detection - OrderGraph, cycle detection, RingTradeStrategy)
 - **Slice 4.5:** Complete (Settlement optimization formulation and analysis)
-- **EBBO:** Complete (EBBO prices computed for 50 auctions, validation integrated)
-- **Tests:** 950 passing
+- **Slice 4.6:** Complete (Multi-pair price coordination, EBBO zero-tolerance enforcement)
+- **EBBO:** Complete (Zero tolerance across all strategies, 100% compliance)
+- **Tests:** 978 passing
 - **Liquidity:** V2, V3, Balancer weighted, Balancer stable, 0x limit orders
 - **Parity:** Complete liquidity parity with Rust baseline solver
-- **Next:** Slice 4.6 - Multi-pair price coordination
+- **Next:** Gap analysis - why 36.53% potential vs 0.12% matched?
 
 ## Session Archive
 
@@ -97,6 +98,7 @@ Individual session logs are preserved in the `archive/` directory for reference.
 | [49](archive/session-49-slice4.4-ring-trade.md) | 2026-01-23 | Slice 4.4 - Ring Trade Detection |
 | [50](../design/settlement-optimization-formulation.md) | 2026-01-23 | Slice 4.5 - Settlement Optimization Analysis |
 | 51 | 2026-01-23 | EBBO Validation Integration |
+| [52](archive/session-52-slice4.6-ebbo.md) | 2026-01-24 | Slice 4.6 - Multi-Pair Coordination & EBBO |
 
 ## Session Template
 

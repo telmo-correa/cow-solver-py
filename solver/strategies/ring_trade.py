@@ -27,16 +27,14 @@ from collections import defaultdict
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from decimal import Decimal
-from typing import TYPE_CHECKING
 
 import structlog
 
 from solver.models.auction import AuctionInstance, Order
 from solver.models.types import normalize_address
+from solver.pools import build_registry_from_liquidity
+from solver.routing.router import SingleOrderRouter
 from solver.strategies.base import OrderFill, StrategyResult
-
-if TYPE_CHECKING:
-    from solver.routing.router import SingleOrderRouter
 
 logger = structlog.get_logger()
 
@@ -705,19 +703,18 @@ class RingTradeStrategy:
         Returns:
             True if EBBO compliant (or cannot be checked), False if violation
         """
-        if self.router is None:
-            # Cannot check EBBO without router
-            if self.enforce_ebbo:
-                logger.warning(
-                    "ring_trade_ebbo_check_skipped",
-                    reason="no_router",
-                    cycle=ring.cycle,
-                )
-            return True  # Allow when we can't check
-
         auction = getattr(self, "_current_auction", None)
         if auction is None:
             return True  # No auction context
+
+        # Build router from auction liquidity if not injected
+        router = self.router
+        if router is None:
+            pool_registry = build_registry_from_liquidity(auction.liquidity)
+            if pool_registry.pool_count == 0:
+                # No pools to check against - allow the ring
+                return True
+            router = SingleOrderRouter(pool_registry=pool_registry)
 
         # Check each order's execution rate against AMM spot price
         for i, order in enumerate(ring.orders):
@@ -737,7 +734,7 @@ class RingTradeStrategy:
             token_info = auction.tokens.get(sell_token)
             token_decimals = token_info.decimals if token_info and token_info.decimals else 18
 
-            amm_rate = self.router.get_reference_price(
+            amm_rate = router.get_reference_price(
                 sell_token, buy_token, token_in_decimals=token_decimals
             )
 
@@ -752,8 +749,8 @@ class RingTradeStrategy:
 
             # EBBO check: ring rate must be >= AMM rate
             # (user must get at least as much as from AMM)
-            # Allow 0.1% tolerance for rounding
-            if ring_rate < amm_rate * Decimal("0.999"):
+            # Zero tolerance - strict EBBO compliance required
+            if ring_rate < amm_rate:
                 logger.warning(
                     "ring_trade_ebbo_violation",
                     order_idx=i,

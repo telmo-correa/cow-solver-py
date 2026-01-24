@@ -32,8 +32,8 @@ if TYPE_CHECKING:
 
 logger = structlog.get_logger()
 
-# Tolerance for EBBO comparison (0.1% = 0.001)
-EBBO_TOLERANCE = Decimal("0.001")
+# Tolerance for EBBO comparison (zero tolerance - strict compliance required)
+EBBO_TOLERANCE = Decimal("0")
 
 
 @dataclass

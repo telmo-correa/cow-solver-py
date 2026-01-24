@@ -33,6 +33,7 @@ from solver.models.auction import AuctionInstance
 from solver.models.types import normalize_address
 from solver.strategies.cow_match import CowMatchStrategy
 from solver.strategies.hybrid_cow import HybridCowStrategy
+from solver.strategies.multi_pair import MultiPairCowStrategy
 from solver.strategies.ring_trade import RingTradeStrategy
 
 
@@ -244,6 +245,7 @@ def main():
     strategies = [
         ("CowMatch", CowMatchStrategy()),
         ("HybridCow", HybridCowStrategy()),
+        ("MultiPair", MultiPairCowStrategy()),
         ("RingTrade", RingTradeStrategy(max_4_cycles=100)),
     ]
 

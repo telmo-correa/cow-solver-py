@@ -18,8 +18,10 @@ if TYPE_CHECKING:
     from solver.strategies.base import SolutionStrategy, StrategyResult
 
 from solver.amm.uniswap_v2 import UniswapV2
+from solver.ebbo import EBBO_TOLERANCE, EBBOPrices, EBBOValidator
 from solver.models.auction import AuctionInstance, Order
 from solver.models.solution import Interaction, Solution, SolverResponse
+from solver.models.types import normalize_address
 from solver.routing.router import SingleOrderRouter
 
 logger = structlog.get_logger()
@@ -52,6 +54,7 @@ class Solver:
         weighted_amm: BalancerWeightedAMM | None = None,
         stable_amm: BalancerStableAMM | None = None,
         limit_order_amm: LimitOrderAMM | None = None,
+        ebbo_prices: EBBOPrices | None = None,
     ) -> None:
         """Initialize the solver with strategies.
 
@@ -67,7 +70,15 @@ class Solver:
             weighted_amm: Balancer weighted AMM. If None, weighted pools are skipped.
             stable_amm: Balancer stable AMM. If None, stable pools are skipped.
             limit_order_amm: 0x limit order AMM. If None, limit orders are skipped.
+            ebbo_prices: Precomputed EBBO prices for validation. If provided,
+                        strategy results are filtered to remove EBBO violations.
         """
+        self.ebbo_validator = (
+            EBBOValidator(ebbo_prices=ebbo_prices, tolerance=EBBO_TOLERANCE)
+            if ebbo_prices is not None
+            else None
+        )
+
         if strategies is not None:
             self.strategies = strategies
         elif (
@@ -82,17 +93,17 @@ class Solver:
             from solver.strategies import (
                 AmmRoutingStrategy,
                 CowMatchStrategy,
-                HybridCowStrategy,
+                MultiPairCowStrategy,
             )
 
             self.strategies = [
                 # CowMatchStrategy handles 2-order cases with "price improvement"
                 # logic that correctly handles fill-or-kill orders
                 CowMatchStrategy(),
-                # HybridCowStrategy handles N-order cases with AMM price reference.
-                # For 2-order cases, it acts as fallback if CowMatchStrategy fails
-                # (e.g., crossed limits that AMM price can unlock)
-                HybridCowStrategy(
+                # MultiPairCowStrategy handles N-order cases with multi-pair price
+                # coordination using LP optimization. It finds connected components
+                # of overlapping token pairs and optimizes prices jointly.
+                MultiPairCowStrategy(
                     amm=amm,
                     router=router,
                     v3_amm=v3_amm,
@@ -114,17 +125,17 @@ class Solver:
             from solver.strategies import (
                 AmmRoutingStrategy,
                 CowMatchStrategy,
-                HybridCowStrategy,
+                MultiPairCowStrategy,
             )
 
             self.strategies = [
                 # CowMatchStrategy handles 2-order cases with "price improvement"
                 # logic that correctly handles fill-or-kill orders
                 CowMatchStrategy(),
-                # HybridCowStrategy handles N-order cases with AMM price reference.
-                # For 2-order cases, it acts as fallback if CowMatchStrategy fails
-                # (e.g., crossed limits that AMM price can unlock)
-                HybridCowStrategy(),
+                # MultiPairCowStrategy handles N-order cases with multi-pair price
+                # coordination using LP optimization. It finds connected components
+                # of overlapping token pairs and optimizes prices jointly.
+                MultiPairCowStrategy(),
                 AmmRoutingStrategy(),
             ]
 
@@ -164,6 +175,11 @@ class Solver:
                 break
 
             result = strategy.try_solve(current_auction)
+
+            # Apply EBBO filtering if validator is available
+            if result is not None and result.has_fills and self.ebbo_validator is not None:
+                result = self._filter_ebbo_violations(result, current_auction)
+
             if result is not None and result.has_fills:
                 logger.info(
                     "strategy_succeeded",
@@ -339,6 +355,100 @@ class Solver:
             order_uids=[o.uid[:18] + "..." for o in orders],
         )
         return original.model_copy(update={"orders": orders})
+
+    def _filter_ebbo_violations(
+        self,
+        result: StrategyResult,
+        auction: AuctionInstance,
+    ) -> StrategyResult | None:
+        """Filter out fills that violate EBBO constraints.
+
+        EBBO (Ethereum Best Bid/Offer) requires that clearing prices are at
+        least as good as what users could get from base protocols.
+
+        For CoW matches (no interactions), we check that each filled order's
+        clearing rate is at least as good as the EBBO rate for that pair.
+
+        Args:
+            result: Strategy result to filter
+            auction: Auction context for token info
+
+        Returns:
+            Filtered result with EBBO-compliant fills only, or None if all violate
+        """
+        from solver.strategies.base import StrategyResult
+
+        if self.ebbo_validator is None:
+            return result
+
+        # Build clearing prices dict
+        clearing_prices = {normalize_address(k): int(v) for k, v in result.prices.items()}
+
+        # Check each fill for EBBO compliance
+        valid_fills = []
+        violation_count = 0
+
+        for fill in result.fills:
+            order = fill.order
+            violations = self.ebbo_validator.check_clearing_prices(
+                clearing_prices,
+                [order],
+                auction,
+            )
+
+            if violations:
+                # This fill violates EBBO - reject it
+                violation_count += 1
+                for v in violations:
+                    logger.debug(
+                        "ebbo_fill_rejected",
+                        order_uid=order.uid[:18] + "...",
+                        sell_token=order.sell_token[-8:],
+                        buy_token=order.buy_token[-8:],
+                        clearing_rate=str(v.clearing_rate),
+                        ebbo_rate=str(v.ebbo_rate),
+                        deficit_pct=f"{v.deficit_pct:.2f}%",
+                    )
+            else:
+                valid_fills.append(fill)
+
+        if not valid_fills:
+            logger.debug(
+                "ebbo_all_fills_rejected",
+                total_fills=len(result.fills),
+                violations=violation_count,
+            )
+            return None
+
+        if violation_count > 0:
+            logger.info(
+                "ebbo_filtered_fills",
+                original=len(result.fills),
+                valid=len(valid_fills),
+                rejected=violation_count,
+            )
+
+        # Rebuild the result with valid fills only
+        # Keep only interactions that correspond to valid fills
+        valid_orders = {f.order.uid for f in valid_fills}
+        valid_interactions = []
+        for interaction in result.interactions:
+            # For AMM interactions, we keep all since they may be shared
+            # For CoW matches, there are no interactions
+            valid_interactions.append(interaction)
+
+        # Recalculate remainder orders - add rejected orders back
+        rejected_orders = [f.order for f in result.fills if f.order.uid not in valid_orders]
+        new_remainders = list(result.remainder_orders) + rejected_orders
+
+        return StrategyResult(
+            fills=valid_fills,
+            interactions=valid_interactions,
+            prices=result.prices,
+            gas=result.gas,
+            remainder_orders=new_remainders,
+            fee_calculator=result.fee_calculator,
+        )
 
 
 # Singleton solver instance with optional V3 support via environment
