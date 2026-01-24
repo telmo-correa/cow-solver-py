@@ -19,7 +19,7 @@ from solver.fees.price_estimation import get_token_info
 from solver.models.auction import AuctionInstance, Order
 from solver.models.order_groups import OrderGroup
 from solver.models.types import normalize_address
-from solver.strategies.base import OrderFill
+from solver.strategies.base import OrderFill, convert_fill_ratios_to_fills
 from solver.strategies.double_auction import get_limit_price
 
 if TYPE_CHECKING:
@@ -394,38 +394,17 @@ def solve_fills_at_prices(
     if not result.success or result.x is None:
         return None
 
-    # Convert solution to fills
-    fills: list[OrderFill] = []
-    total_volume = 0
-
-    for i, (order, _is_selling_a, _token_a, _token_b, _) in enumerate(eligible_orders):
-        fill_ratio = result.x[i]
-        if fill_ratio < 0.001:  # Skip negligible fills
-            continue
-
-        # Calculate fill amounts preserving the order's limit price
-        # The user gets at least their requested amount (the limit price)
-        sell_filled = int(order.sell_amount_int * fill_ratio)
-        buy_filled = int(order.buy_amount_int * fill_ratio)
-
-        if sell_filled <= 0 or buy_filled <= 0:
-            continue
-
-        # Check fill-or-kill constraint
-        if not order.partially_fillable and fill_ratio < 0.999:
-            continue
-
-        fills.append(
-            OrderFill(
-                order=order,
-                sell_filled=sell_filled,
-                buy_filled=buy_filled,
-            )
-        )
-        total_volume += sell_filled
+    # Convert solution to fills using shared helper for integer arithmetic
+    orders_with_ratios = [
+        (order, result.x[i])
+        for i, (order, _is_selling_a, _token_a, _token_b, _) in enumerate(eligible_orders)
+    ]
+    fills = convert_fill_ratios_to_fills(orders_with_ratios)
 
     if not fills:
         return None
+
+    total_volume = sum(f.sell_filled for f in fills)
 
     return LPResult(
         fills=fills,
@@ -596,37 +575,14 @@ def solve_fills_at_prices_v2(
     if not result.success or result.x is None:
         return None
 
-    # Convert solution to fills
-    fills: list[OrderFill] = []
-    total_volume = 0
-
-    for i, (order, _) in enumerate(eligible_orders):
-        fill_ratio = result.x[i]
-        if fill_ratio < 0.001:  # Skip negligible fills
-            continue
-
-        # Calculate fill amounts preserving the order's limit price
-        sell_filled = int(order.sell_amount_int * fill_ratio)
-        buy_filled = int(order.buy_amount_int * fill_ratio)
-
-        if sell_filled <= 0 or buy_filled <= 0:
-            continue
-
-        # Check fill-or-kill constraint
-        if not order.partially_fillable and fill_ratio < 0.999:
-            continue
-
-        fills.append(
-            OrderFill(
-                order=order,
-                sell_filled=sell_filled,
-                buy_filled=buy_filled,
-            )
-        )
-        total_volume += sell_filled
+    # Convert solution to fills using shared helper for integer arithmetic
+    orders_with_ratios = [(order, result.x[i]) for i, (order, _) in enumerate(eligible_orders)]
+    fills = convert_fill_ratios_to_fills(orders_with_ratios)
 
     if not fills:
         return None
+
+    total_volume = sum(f.sell_filled for f in fills)
 
     return LPResult(
         fills=fills,

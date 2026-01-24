@@ -2,6 +2,9 @@
 
 This module extends the pure double auction by integrating AMM reference
 prices for optimal clearing decisions.
+
+IMPORTANT: All financial calculations use exact integer arithmetic via SafeInt.
+No tolerance/epsilon comparisons are allowed.
 """
 
 from __future__ import annotations
@@ -10,9 +13,17 @@ from decimal import Decimal
 
 import structlog
 
+from solver.models.auction import Order
 from solver.models.order_groups import OrderGroup
+from solver.safe_int import S
 
-from .core import get_limit_price, run_double_auction
+from .core import (
+    PriceRatio,
+    _price_ratio_sort_key,
+    _price_ratio_to_decimal,
+    get_limit_price_ratio,
+    run_double_auction,
+)
 from .types import (
     AMMRoute,
     DoubleAuctionMatch,
@@ -20,6 +31,9 @@ from .types import (
 )
 
 logger = structlog.get_logger()
+
+# Scale factor for converting Decimal AMM prices to integer ratios
+AMM_PRICE_SCALE = 10**18
 
 
 def run_hybrid_auction(
@@ -158,23 +172,29 @@ def run_hybrid_auction(
         )
 
     # With AMM price: match orders that can clear at AMM price
-    # Sort asks ascending (cheapest sellers first)
+    # Convert AMM price to integer ratio for exact calculations
+    amm_price_ratio: PriceRatio = (int(amm_price * AMM_PRICE_SCALE), AMM_PRICE_SCALE)
+    amm_num, amm_denom = amm_price_ratio
+
+    # Sort asks ascending (cheapest sellers first) - use integer ratios
     asks_raw = [
-        (order, get_limit_price(order, is_selling_a=True), order.sell_amount_int)
+        (order, get_limit_price_ratio(order, is_selling_a=True), order.sell_amount_int)
         for order in group.sellers_of_a
     ]
-    asks = [(o, p, a) for o, p, a in asks_raw if p is not None]
+    asks: list[tuple[Order, PriceRatio, int]] = [(o, p, a) for o, p, a in asks_raw if p is not None]
     invalid_asks = [o for o, p, _ in asks_raw if p is None]
-    asks.sort(key=lambda x: x[1])
+    # Sort by price ratio ascending (cheapest first)
+    asks.sort(key=lambda x: _price_ratio_sort_key(x[1]))
 
     # Sort bids descending (highest bidders first)
     bids_raw = [
-        (order, get_limit_price(order, is_selling_a=False), order.sell_amount_int)
+        (order, get_limit_price_ratio(order, is_selling_a=False), order.sell_amount_int)
         for order in group.sellers_of_b
     ]
-    bids = [(o, p, a) for o, p, a in bids_raw if p is not None]
+    bids: list[tuple[Order, PriceRatio, int]] = [(o, p, a) for o, p, a in bids_raw if p is not None]
     invalid_bids = [o for o, p, _ in bids_raw if p is None]
-    bids.sort(key=lambda x: x[1], reverse=True)
+    # Sort by price ratio descending (highest bidders first)
+    bids.sort(key=lambda x: _price_ratio_sort_key(x[1]), reverse=True)
 
     # Log invalid orders
     if invalid_asks or invalid_bids:
@@ -195,16 +215,22 @@ def run_hybrid_auction(
     # Filter to orders that CAN trade at AMM price:
     # - Asks with limit <= AMM price (willing to sell at or below AMM)
     # - Bids with limit >= AMM price (willing to buy at or above AMM)
-    matchable_asks = [(o, p, a) for o, p, a in asks if p <= amm_price]
-    matchable_bids = [(o, p, a) for o, p, a in bids if p >= amm_price]
+    # Use integer cross-multiplication: ask_num/ask_denom <= amm_num/amm_denom
+    # iff ask_num * amm_denom <= amm_num * ask_denom
+    matchable_asks = [
+        (o, p, a) for o, p, a in asks if S(p[0]) * S(amm_denom) <= S(amm_num) * S(p[1])
+    ]
+    matchable_bids = [
+        (o, p, a) for o, p, a in bids if S(p[0]) * S(amm_denom) >= S(amm_num) * S(p[1])
+    ]
 
     # Match orders at AMM price
     ask_idx = 0
     bid_idx = 0
 
     while ask_idx < len(matchable_asks) and bid_idx < len(matchable_bids):
-        ask_order, _, _ = matchable_asks[ask_idx]
-        bid_order, _, _ = matchable_bids[bid_idx]
+        ask_order, ask_limit, _ = matchable_asks[ask_idx]
+        bid_order, bid_limit, _ = matchable_bids[bid_idx]
 
         ask_remaining_amount = ask_remaining[ask_order.uid]
         bid_remaining_amount = bid_remaining[bid_order.uid]
@@ -217,10 +243,14 @@ def run_hybrid_auction(
             continue
 
         # At AMM price, bid can buy this much A with remaining B
-        bid_can_buy_a = int(Decimal(bid_remaining_amount) / amm_price)
+        # bid_can_buy_a = bid_remaining / (amm_num / amm_denom) = bid_remaining * amm_denom / amm_num
+        if amm_num <= 0:
+            bid_idx += 1
+            continue
+        bid_can_buy_a = (S(bid_remaining_amount) * S(amm_denom)) // S(amm_num)
 
         # Match amount
-        match_a = min(ask_remaining_amount, bid_can_buy_a)
+        match_a = min(ask_remaining_amount, bid_can_buy_a.value)
 
         if match_a <= 0:
             bid_idx += 1
@@ -232,41 +262,45 @@ def run_hybrid_auction(
                 # Ask can't be partially filled, skip to next bid
                 bid_idx += 1
                 continue
-            bid_fill_amount = int(Decimal(match_a) * amm_price)
-            if bid_fill_amount < bid_remaining_amount and not bid_order.partially_fillable:
+            # bid_fill_amount = match_a * amm_num / amm_denom
+            bid_fill_amount = (S(match_a) * S(amm_num)) // S(amm_denom)
+            if bid_fill_amount.value < bid_remaining_amount and not bid_order.partially_fillable:
                 # Bid can't be partially filled, skip to next ask
                 ask_idx += 1
                 continue
 
-        # Calculate B amount at AMM price
-        match_b = int(Decimal(match_a) * amm_price)
+        # Calculate B amount at AMM price: match_b = match_a * amm_num / amm_denom
+        match_b = (S(match_a) * S(amm_num)) // S(amm_denom)
 
-        if match_b <= 0:
+        if match_b.value <= 0:
             bid_idx += 1
             continue
 
-        # Verify limit prices are satisfied after integer truncation
-        # Ask limit: needs at least ask_limit B per A
-        ask_limit = get_limit_price(ask_order, is_selling_a=True)
-        bid_limit = get_limit_price(bid_order, is_selling_a=False)
-        actual_price = Decimal(match_b) / Decimal(match_a)
-
-        if ask_limit is not None and actual_price < ask_limit:
-            # Truncation violated ask's limit - skip this match
+        # Verify limit prices are satisfied using integer cross-multiplication
+        # Ask limit: match_b / match_a >= ask_num / ask_denom
+        # Cross multiply: match_b * ask_denom >= ask_num * match_a
+        ask_num, ask_denom = ask_limit
+        seller_satisfied = S(match_b.value) * S(ask_denom) >= S(ask_num) * S(match_a)
+        if not seller_satisfied:
             logger.debug(
                 "hybrid_auction_ask_limit_violation",
-                actual=float(actual_price),
-                limit=float(ask_limit),
+                match_a=match_a,
+                match_b=match_b.value,
+                limit=float(_price_ratio_to_decimal(ask_limit)),
             )
             ask_idx += 1
             continue
 
-        if bid_limit is not None and actual_price > bid_limit:
-            # Truncation violated bid's limit - skip this match
+        # Bid limit: match_b / match_a <= bid_num / bid_denom
+        # Cross multiply: match_b * bid_denom <= bid_num * match_a
+        bid_num, bid_denom = bid_limit
+        buyer_satisfied = S(match_b.value) * S(bid_denom) <= S(bid_num) * S(match_a)
+        if not buyer_satisfied:
             logger.debug(
                 "hybrid_auction_bid_limit_violation",
-                actual=float(actual_price),
-                limit=float(bid_limit),
+                match_a=match_a,
+                match_b=match_b.value,
+                limit=float(_price_ratio_to_decimal(bid_limit)),
             )
             bid_idx += 1
             continue
@@ -276,16 +310,16 @@ def run_hybrid_auction(
             seller=ask_order,
             buyer=bid_order,
             amount_a=match_a,
-            amount_b=match_b,
+            amount_b=match_b.value,
             clearing_price=amm_price,
         )
         matches.append(match)
 
         # Update remaining
         ask_remaining[ask_order.uid] -= match_a
-        bid_remaining[bid_order.uid] -= match_b
+        bid_remaining[bid_order.uid] -= match_b.value
         total_a_matched += match_a
-        total_b_matched += match_b
+        total_b_matched += match_b.value
 
         # Advance indices
         if ask_remaining[ask_order.uid] <= 0:

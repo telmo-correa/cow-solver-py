@@ -180,6 +180,61 @@ class OrderFill:
         return "0x" + combined.hex()
 
 
+# Scale factor for converting float fill ratios to integers (10^18 precision)
+FILL_RATIO_SCALE = 10**18
+
+
+def convert_fill_ratios_to_fills(
+    orders_with_ratios: list[tuple[Order, float]],
+    min_fill_threshold: int = FILL_RATIO_SCALE // 1000,
+    fill_or_kill_threshold: int = (FILL_RATIO_SCALE * 999) // 1000,
+) -> list[OrderFill]:
+    """Convert scipy float fill ratios to OrderFills using integer arithmetic.
+
+    This helper converts float fill ratios (0.0 to 1.0) from LP solvers to
+    integer-based OrderFills, avoiding floating-point precision issues.
+
+    Args:
+        orders_with_ratios: List of (order, fill_ratio) tuples where fill_ratio
+                           is a float from 0.0 to 1.0
+        min_fill_threshold: Minimum fill_num to include (default 0.1% = 10^15)
+        fill_or_kill_threshold: Threshold for fill-or-kill orders (default 99.9%)
+
+    Returns:
+        List of OrderFills with integer amounts
+    """
+    fills: list[OrderFill] = []
+
+    for order, fill_ratio_float in orders_with_ratios:
+        # Convert float ratio to integer: fill_num / FILL_RATIO_SCALE
+        fill_num = int(fill_ratio_float * FILL_RATIO_SCALE)
+
+        # Skip essentially-zero fills
+        if fill_num < min_fill_threshold:
+            continue
+
+        # Calculate fill amounts using integer arithmetic
+        sell_filled = (S(order.sell_amount_int) * S(fill_num)) // S(FILL_RATIO_SCALE)
+        buy_filled = (S(order.buy_amount_int) * S(fill_num)) // S(FILL_RATIO_SCALE)
+
+        if sell_filled.value <= 0 or buy_filled.value <= 0:
+            continue
+
+        # Respect fill-or-kill constraint
+        if not order.partially_fillable and fill_num < fill_or_kill_threshold:
+            continue
+
+        fills.append(
+            OrderFill(
+                order=order,
+                sell_filled=sell_filled.value,
+                buy_filled=buy_filled.value,
+            )
+        )
+
+    return fills
+
+
 @dataclass
 class StrategyResult:
     """Result of a strategy's attempt to solve an auction (partial or complete).

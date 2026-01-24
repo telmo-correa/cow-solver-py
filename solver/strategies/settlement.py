@@ -2,6 +2,10 @@
 
 This module provides algorithms for calculating fill amounts and
 clearing prices for cyclic trades (A→B→C→A).
+
+IMPORTANT: All financial calculations use exact integer arithmetic via SafeInt.
+No tolerance/epsilon comparisons are allowed. Limit price verification uses
+integer cross-multiplication for exactness.
 """
 
 from __future__ import annotations
@@ -13,15 +17,13 @@ import structlog
 
 from solver.models.auction import Order
 from solver.models.types import normalize_address
+from solver.safe_int import S
 from solver.strategies.base import OrderFill
 
 logger = structlog.get_logger()
 
 # Price precision (1e18) - standard for CoW Protocol clearing prices
 PRICE_PRECISION = 10**18
-
-# Tolerance for numerical comparisons (0.1% = 0.001)
-SETTLEMENT_TOLERANCE = 0.001
 
 
 @dataclass
@@ -237,23 +239,29 @@ def calculate_cycle_settlement(viability: CycleViability) -> CycleSettlement | N
         cumulative_rate *= rates[i]
 
     # Set buy_filled = sell_filled of next order (ensures conservation)
-    # Verify limit prices are respected
+    # Verify limit prices are respected using exact integer comparison
     fills: list[OrderFill] = []
     for i in range(n):
         sell_filled = sell_filled_amounts[i]
         next_i = (i + 1) % n
         buy_filled = sell_filled_amounts[next_i]
 
-        # Verify limit price
+        # Verify limit price using integer cross-multiplication
+        # Limit: buy_filled / sell_filled >= buy_amount / sell_amount
+        # Cross multiply: buy_filled * sell_amount >= buy_amount * sell_filled
         if sell_filled > 0:
-            actual_rate = buy_filled / sell_filled
-            limit_rate = rates[i]
-            if actual_rate < limit_rate * (1 - SETTLEMENT_TOLERANCE):
+            order = orders[i]
+            limit_satisfied = S(buy_filled) * S(order.sell_amount_int) >= S(
+                order.buy_amount_int
+            ) * S(sell_filled)
+            if not limit_satisfied:
                 logger.warning(
                     "cycle_limit_price_violated",
                     order_idx=i,
-                    actual_rate=actual_rate,
-                    limit_rate=limit_rate,
+                    sell_filled=sell_filled,
+                    buy_filled=buy_filled,
+                    sell_amount=order.sell_amount_int,
+                    buy_amount=order.buy_amount_int,
                 )
                 return None
 
@@ -275,20 +283,34 @@ def calculate_cycle_settlement(viability: CycleViability) -> CycleSettlement | N
         price = price / rates[i]
 
     # Validate clearing price invariant
+    # For cycles, the invariant sell_filled * sell_price = buy_filled * buy_price
+    # may not hold exactly due to integer truncation in price calculation.
+    # We check that the deviation is within 1 wei per token (negligible).
     for i, order in enumerate(orders):
         sell_token = normalize_address(order.sell_token)
         buy_token = normalize_address(order.buy_token)
         sell_price = clearing_prices.get(sell_token, 0)
         buy_price = clearing_prices.get(buy_token, 0)
         if sell_price > 0 and buy_price > 0:
-            sell_value = fills[i].sell_filled * sell_price
-            buy_value = fills[i].buy_filled * buy_price
-            if sell_value > 0 and abs(sell_value - buy_value) / sell_value > SETTLEMENT_TOLERANCE:
+            sell_value = S(fills[i].sell_filled) * S(sell_price)
+            buy_value = S(fills[i].buy_filled) * S(buy_price)
+            # Allow for float64 precision in clearing price calculation (~10^-14 relative error)
+            # This is a SANITY CHECK, not limit price enforcement. Actual limit prices are
+            # verified with exact integer cross-multiplication in the loop above.
+            # Clearing prices use float division which has inherent precision limits.
+            # Multiple float divisions can accumulate error, so we allow 10^-14 relative error.
+            max_value = sell_value if sell_value > buy_value else buy_value
+            max_deviation = max_value // S(10**14)
+            if max_deviation.value == 0:
+                max_deviation = S(1)  # At least 1 unit
+            deviation = sell_value - buy_value if sell_value > buy_value else buy_value - sell_value
+            if deviation > max_deviation:
                 logger.warning(
                     "cycle_price_invariant_error",
                     order_idx=i,
-                    sell_value=sell_value,
-                    buy_value=buy_value,
+                    sell_value=sell_value.value,
+                    buy_value=buy_value.value,
+                    deviation=deviation.value,
                 )
                 return None
 
@@ -364,10 +386,14 @@ def solve_cycle(orders: list[Order]) -> CycleSettlement | None:
         if sell_filled <= 0 or buy_filled <= 0:
             continue
 
-        # Verify limit price
-        actual_rate = buy_filled / sell_filled
-        limit_rate = rates[i]
-        if actual_rate < limit_rate * (1 - SETTLEMENT_TOLERANCE):
+        # Verify limit price using integer cross-multiplication
+        # buy_filled / sell_filled >= buy_amount / sell_amount
+        # Cross multiply: buy_filled * sell_amount >= buy_amount * sell_filled
+        order = orders[i]
+        limit_satisfied = S(buy_filled) * S(order.sell_amount_int) >= S(order.buy_amount_int) * S(
+            sell_filled
+        )
+        if not limit_satisfied:
             return None
 
         fills.append(
@@ -401,7 +427,6 @@ def solve_cycle(orders: list[Order]) -> CycleSettlement | None:
 
 __all__ = [
     "PRICE_PRECISION",
-    "SETTLEMENT_TOLERANCE",
     "CycleViability",
     "CycleSettlement",
     "check_cycle_viability",

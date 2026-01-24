@@ -21,7 +21,7 @@ from solver.models.auction import AuctionInstance, Order
 from solver.models.types import normalize_address
 from solver.pools import build_registry_from_liquidity
 from solver.routing.router import SingleOrderRouter
-from solver.strategies.base import OrderFill, StrategyResult
+from solver.strategies.base import OrderFill, StrategyResult, convert_fill_ratios_to_fills
 from solver.strategies.ebbo_bounds import get_ebbo_bounds, verify_fills_against_ebbo
 from solver.strategies.settlement import (
     CycleViability,
@@ -689,33 +689,9 @@ class UnifiedCowStrategy:
         if not result.success or result.x is None:
             return []
 
-        # Convert to fills
-        fills: list[OrderFill] = []
-
-        for i, (order, _, _) in enumerate(eligible):
-            fill_ratio = result.x[i]
-            if fill_ratio < 0.001:
-                continue
-
-            sell_filled = int(order.sell_amount_int * fill_ratio)
-            buy_filled = int(order.buy_amount_int * fill_ratio)
-
-            if sell_filled <= 0 or buy_filled <= 0:
-                continue
-
-            # Respect fill-or-kill
-            if not order.partially_fillable and fill_ratio < 0.999:
-                continue
-
-            fills.append(
-                OrderFill(
-                    order=order,
-                    sell_filled=sell_filled,
-                    buy_filled=buy_filled,
-                )
-            )
-
-        return fills
+        # Convert to fills using shared helper for integer arithmetic
+        orders_with_ratios = [(order, result.x[i]) for i, (order, _, _) in enumerate(eligible)]
+        return convert_fill_ratios_to_fills(orders_with_ratios)
 
     def _verify_ebbo(
         self,
