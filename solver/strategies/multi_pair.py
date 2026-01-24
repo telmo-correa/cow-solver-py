@@ -17,7 +17,6 @@ from typing import TYPE_CHECKING
 import structlog
 
 from solver.amm.uniswap_v2 import UniswapV2, uniswap_v2
-from solver.fees.price_estimation import get_token_info
 from solver.models.auction import AuctionInstance, Order
 from solver.models.order_groups import OrderGroup, find_cow_opportunities
 from solver.models.types import normalize_address
@@ -25,6 +24,7 @@ from solver.pools import PoolRegistry, build_registry_from_liquidity
 from solver.routing.router import SingleOrderRouter
 from solver.strategies.base import OrderFill, StrategyResult
 from solver.strategies.components import find_token_components
+from solver.strategies.ebbo_bounds import get_ebbo_bounds
 from solver.strategies.graph import OrderGraph, find_spanning_tree
 from solver.strategies.pricing import (
     LPResult,
@@ -257,24 +257,20 @@ class MultiPairCowStrategy:
         """Solve a single token pair using double auction with EBBO validation."""
         from solver.strategies.double_auction import run_hybrid_auction
 
-        token_a_info = get_token_info(auction, group.token_a)
-        decimals = (
-            18 if token_a_info is None or token_a_info.decimals is None else token_a_info.decimals
-        )
+        # Get two-sided EBBO bounds
+        bounds = get_ebbo_bounds(group.token_a, group.token_b, router, auction)
 
-        amm_price = router.get_reference_price(
-            group.token_a, group.token_b, token_in_decimals=decimals
+        result = run_hybrid_auction(
+            group,
+            amm_price=bounds.amm_price,
+            ebbo_min=bounds.ebbo_min,
+            ebbo_max=bounds.ebbo_max,
         )
-        result = run_hybrid_auction(group, amm_price=amm_price)
 
         if not result.cow_matches:
             return None
 
-        # EBBO validation (zero tolerance)
-        if amm_price is not None and result.total_cow_a > 0:
-            amm_equivalent = int(Decimal(result.total_cow_a) * amm_price)
-            if result.total_cow_b < amm_equivalent:
-                return None
+        # EBBO validation is now handled by run_hybrid_auction with both bounds
 
         # Convert matches to fills
         fills: list[OrderFill] = []

@@ -278,13 +278,16 @@ def _execute_matches_at_price(
 def run_double_auction(
     group: OrderGroup,
     respect_fill_or_kill: bool = True,
+    ebbo_min: Decimal | None = None,
+    ebbo_max: Decimal | None = None,
 ) -> DoubleAuctionResult:
     """Run double auction clearing on an order group.
 
     Implements a two-pass double auction algorithm:
     1. First pass: Find the valid clearing price range from matchable orders
-    2. Try candidate prices: midpoint, then boundary prices if needed
-    3. Select the price that maximizes matched volume
+    2. Intersect with EBBO bounds (if provided)
+    3. Try candidate prices: midpoint, then boundary prices if needed
+    4. Select the price that maximizes matched volume
 
     Using a uniform clearing price is essential for valid CoW Protocol settlement.
     Each trade must satisfy: prices[sell_token] * sell = prices[buy_token] * buy,
@@ -298,6 +301,10 @@ def run_double_auction(
         group: OrderGroup with orders in both directions
         respect_fill_or_kill: If True, skip non-partially-fillable orders
                               that would be only partially filled
+        ebbo_min: Minimum valid clearing price (EBBO floor for sellers).
+                  If provided, clearing_price must be >= ebbo_min.
+        ebbo_max: Maximum valid clearing price (EBBO ceiling for buyers).
+                  If provided, clearing_price must be <= ebbo_max.
 
     Returns:
         DoubleAuctionResult with all matches and remainders
@@ -452,19 +459,54 @@ def run_double_auction(
         )
 
     # ========================================================================
+    # INTERSECT WITH EBBO BOUNDS
+    # ========================================================================
+    # If EBBO bounds are provided, constrain the valid price range upfront.
+    # This avoids wasted computation on matches that would fail EBBO validation.
+    #
+    # - ebbo_min: Sellers must get at least this rate (price >= ebbo_min)
+    # - ebbo_max: Buyers must pay at most this rate (price <= ebbo_max)
+
+    price_floor = max_ask_limit
+    price_ceiling = min_bid_limit
+
+    if ebbo_min is not None:
+        price_floor = max(price_floor, ebbo_min)
+    if ebbo_max is not None:
+        price_ceiling = min(price_ceiling, ebbo_max)
+
+    if price_floor > price_ceiling:
+        # No EBBO-compliant match possible
+        logger.debug(
+            "double_auction_ebbo_no_valid_range",
+            price_floor=float(price_floor),
+            price_ceiling=float(price_ceiling),
+            ebbo_min=float(ebbo_min) if ebbo_min else None,
+            ebbo_max=float(ebbo_max) if ebbo_max else None,
+        )
+        return DoubleAuctionResult(
+            matches=[],
+            total_a_matched=0,
+            total_b_matched=0,
+            clearing_price=None,
+            unmatched_sellers=[(o, a) for o, _, a in asks] + list(invalid_asks),
+            unmatched_buyers=[(o, a) for o, _, a in bids] + list(invalid_bids),
+        )
+
+    # ========================================================================
     # SECOND PASS: Try candidate prices and select the best one
     # ========================================================================
     # For fill-or-kill orders, the midpoint price may cause partial fills that
     # violate constraints. We try multiple candidate prices and select the one
     # that maximizes matched volume.
     #
-    # Candidate prices:
+    # Candidate prices (within EBBO-constrained range):
     # 1. Midpoint (fair to both sides)
-    # 2. max_ask_limit (favors sellers)
-    # 3. min_bid_limit (favors buyers)
+    # 2. price_floor (favors sellers / EBBO minimum)
+    # 3. price_ceiling (favors buyers / EBBO maximum)
 
-    midpoint_price = (max_ask_limit + min_bid_limit) / 2
-    candidate_prices = [midpoint_price, max_ask_limit, min_bid_limit]
+    midpoint_price = (price_floor + price_ceiling) / 2
+    candidate_prices = [midpoint_price, price_floor, price_ceiling]
 
     # Remove duplicates while preserving order (midpoint first)
     seen: set[Decimal] = set()
@@ -640,6 +682,8 @@ def run_hybrid_auction(
     group: OrderGroup,
     amm_price: Decimal | None = None,
     respect_fill_or_kill: bool = True,
+    ebbo_min: Decimal | None = None,
+    ebbo_max: Decimal | None = None,
 ) -> HybridAuctionResult:
     """Run hybrid CoW+AMM auction on an order group.
 
@@ -648,8 +692,9 @@ def run_hybrid_auction(
     should route through AMM.
 
     The algorithm:
-    1. If no AMM price, run pure double auction
+    1. If no AMM price, run pure double auction with EBBO bounds
     2. With AMM price:
+       - Validate AMM price is within EBBO bounds
        - Sort asks ascending, bids descending by limit price
        - Match orders where: ask_limit <= AMM price <= bid_limit
        - Use AMM price as clearing price (fair reference)
@@ -665,6 +710,10 @@ def run_hybrid_auction(
                    falls back to pure double auction behavior.
         respect_fill_or_kill: If True, skip non-partially-fillable orders
                               that would be only partially filled
+        ebbo_min: Minimum clearing price (EBBO floor for sellers of A).
+                  Derived from AMM rate for A→B direction.
+        ebbo_max: Maximum clearing price (EBBO ceiling for buyers of A).
+                  Derived from inverse of AMM rate for B→A direction.
 
     Returns:
         HybridAuctionResult with CoW matches and AMM routes
@@ -679,9 +728,11 @@ def run_hybrid_auction(
             total_cow_b=0,
         )
 
-    # If no AMM price, use pure double auction
+    # If no AMM price, use pure double auction with EBBO bounds
     if amm_price is None:
-        pure_result = run_double_auction(group, respect_fill_or_kill)
+        pure_result = run_double_auction(
+            group, respect_fill_or_kill, ebbo_min=ebbo_min, ebbo_max=ebbo_max
+        )
         amm_routes = []
 
         # Convert unmatched orders to AMM routes
@@ -700,14 +751,67 @@ def run_hybrid_auction(
             total_cow_b=pure_result.total_b_matched,
         )
 
-    # Validate AMM price
+    # Validate AMM price is positive
     if amm_price <= 0:
         logger.warning(
             "hybrid_auction_invalid_amm_price",
             amm_price=float(amm_price),
         )
-        # Fall back to pure auction behavior
-        return run_hybrid_auction(group, amm_price=None, respect_fill_or_kill=respect_fill_or_kill)
+        # Fall back to pure auction behavior with EBBO bounds
+        return run_hybrid_auction(
+            group,
+            amm_price=None,
+            respect_fill_or_kill=respect_fill_or_kill,
+            ebbo_min=ebbo_min,
+            ebbo_max=ebbo_max,
+        )
+
+    # Validate AMM price is within EBBO bounds
+    # - ebbo_min: sellers of A must get at least this rate
+    # - ebbo_max: buyers of A must pay at most this rate
+    if ebbo_min is not None and amm_price < ebbo_min:
+        logger.debug(
+            "hybrid_auction_amm_below_ebbo_min",
+            amm_price=float(amm_price),
+            ebbo_min=float(ebbo_min),
+        )
+        # AMM price doesn't satisfy seller EBBO - no compliant match possible
+        return HybridAuctionResult(
+            cow_matches=[],
+            amm_routes=[
+                AMMRoute(order=o, amount=o.sell_amount_int, is_selling_a=True)
+                for o in group.sellers_of_a
+            ]
+            + [
+                AMMRoute(order=o, amount=o.sell_amount_int, is_selling_a=False)
+                for o in group.sellers_of_b
+            ],
+            clearing_price=None,
+            total_cow_a=0,
+            total_cow_b=0,
+        )
+
+    if ebbo_max is not None and amm_price > ebbo_max:
+        logger.debug(
+            "hybrid_auction_amm_above_ebbo_max",
+            amm_price=float(amm_price),
+            ebbo_max=float(ebbo_max),
+        )
+        # AMM price doesn't satisfy buyer EBBO - no compliant match possible
+        return HybridAuctionResult(
+            cow_matches=[],
+            amm_routes=[
+                AMMRoute(order=o, amount=o.sell_amount_int, is_selling_a=True)
+                for o in group.sellers_of_a
+            ]
+            + [
+                AMMRoute(order=o, amount=o.sell_amount_int, is_selling_a=False)
+                for o in group.sellers_of_b
+            ],
+            clearing_price=None,
+            total_cow_a=0,
+            total_cow_b=0,
+        )
 
     # With AMM price: match orders that can clear at AMM price
     # Sort asks ascending (cheapest sellers first)

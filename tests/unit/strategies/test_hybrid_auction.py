@@ -305,3 +305,182 @@ class TestHybridAuctionValidation:
             assert actual_price >= Decimal("7") / Decimal("3")
             # Bid offered at most 10/4 = 2.5 B/A
             assert actual_price <= Decimal("10") / Decimal("4")
+
+
+class TestHybridAuctionEBBOBounds:
+    """Tests for EBBO bounds (ebbo_min, ebbo_max) with hybrid auction."""
+
+    def test_ebbo_min_rejects_amm_price_below_floor(self) -> None:
+        """AMM price below ebbo_min should result in no CoW match.
+
+        When the AMM price is below the EBBO minimum (what sellers must get),
+        no EBBO-compliant CoW match is possible.
+        """
+        # Ask: sell 100 A, want 200 B (limit = 2 B/A)
+        # Bid: sell 400 B, want 100 A (limit = 4 B/A)
+        # AMM price: 2.5 B/A (matches can happen)
+        # But ebbo_min = 3.0 means sellers must get at least 3 B/A
+        # Since AMM price (2.5) < ebbo_min (3.0), no match possible
+        group = OrderGroup(
+            token_a=TOKEN_A,
+            token_b=TOKEN_B,
+            sellers_of_a=[
+                make_order("ask1", TOKEN_A, TOKEN_B, 100, 200),
+            ],
+            sellers_of_b=[
+                make_order("bid1", TOKEN_B, TOKEN_A, 400, 100),
+            ],
+        )
+
+        # Without EBBO bounds, should match at AMM price
+        result_no_ebbo = run_hybrid_auction(group, amm_price=Decimal("2.5"))
+        assert len(result_no_ebbo.cow_matches) == 1
+
+        # With ebbo_min = 3.0 > AMM price (2.5), no CoW match
+        result_with_ebbo = run_hybrid_auction(
+            group, amm_price=Decimal("2.5"), ebbo_min=Decimal("3.0")
+        )
+        assert len(result_with_ebbo.cow_matches) == 0
+        # All orders should route to AMM
+        assert len(result_with_ebbo.amm_routes) == 2
+
+    def test_ebbo_max_rejects_amm_price_above_ceiling(self) -> None:
+        """AMM price above ebbo_max should result in no CoW match.
+
+        When the AMM price is above the EBBO maximum (what buyers can pay),
+        no EBBO-compliant CoW match is possible.
+        """
+        # Ask: sell 100 A, want 200 B (limit = 2 B/A)
+        # Bid: sell 400 B, want 100 A (limit = 4 B/A)
+        # AMM price: 3.5 B/A (matches can happen)
+        # But ebbo_max = 3.0 means buyers must pay at most 3 B/A
+        # Since AMM price (3.5) > ebbo_max (3.0), no match possible
+        group = OrderGroup(
+            token_a=TOKEN_A,
+            token_b=TOKEN_B,
+            sellers_of_a=[
+                make_order("ask1", TOKEN_A, TOKEN_B, 100, 200),
+            ],
+            sellers_of_b=[
+                make_order("bid1", TOKEN_B, TOKEN_A, 400, 100),
+            ],
+        )
+
+        # Without EBBO bounds, should match at AMM price
+        result_no_ebbo = run_hybrid_auction(group, amm_price=Decimal("3.5"))
+        assert len(result_no_ebbo.cow_matches) == 1
+
+        # With ebbo_max = 3.0 < AMM price (3.5), no CoW match
+        result_with_ebbo = run_hybrid_auction(
+            group, amm_price=Decimal("3.5"), ebbo_max=Decimal("3.0")
+        )
+        assert len(result_with_ebbo.cow_matches) == 0
+        assert len(result_with_ebbo.amm_routes) == 2
+
+    def test_ebbo_bounds_with_no_amm_price(self) -> None:
+        """EBBO bounds should work with pure double auction (no AMM price).
+
+        When AMM price is None, hybrid auction falls back to pure double auction,
+        which should still respect EBBO bounds.
+        """
+        # Ask: sell 100 A, want 150 B (limit = 1.5 B/A)
+        # Bid: sell 300 B, want 100 A (limit = 3 B/A)
+        # Pure auction range: [1.5, 3.0], midpoint = 2.25
+        group = OrderGroup(
+            token_a=TOKEN_A,
+            token_b=TOKEN_B,
+            sellers_of_a=[
+                make_order("ask1", TOKEN_A, TOKEN_B, 100, 150),
+            ],
+            sellers_of_b=[
+                make_order("bid1", TOKEN_B, TOKEN_A, 300, 100),
+            ],
+        )
+
+        # Without EBBO bounds, matches at midpoint
+        result_no_ebbo = run_hybrid_auction(group, amm_price=None)
+        assert result_no_ebbo.clearing_price == Decimal("2.25")
+
+        # With ebbo_min = 2.5, range becomes [2.5, 3.0]
+        result_with_ebbo = run_hybrid_auction(group, amm_price=None, ebbo_min=Decimal("2.5"))
+        assert len(result_with_ebbo.cow_matches) == 1
+        # Midpoint of [2.5, 3.0] = 2.75
+        assert result_with_ebbo.clearing_price == Decimal("2.75")
+
+    def test_ebbo_both_bounds_within_valid_range(self) -> None:
+        """Both EBBO bounds should constrain the AMM price validation."""
+        # Ask: sell 100 A, want 200 B (limit = 2 B/A)
+        # Bid: sell 400 B, want 100 A (limit = 4 B/A)
+        # AMM price: 3.0 B/A
+        # ebbo_min = 2.5, ebbo_max = 3.5 - AMM price (3.0) is within bounds
+        group = OrderGroup(
+            token_a=TOKEN_A,
+            token_b=TOKEN_B,
+            sellers_of_a=[
+                make_order("ask1", TOKEN_A, TOKEN_B, 100, 200),
+            ],
+            sellers_of_b=[
+                make_order("bid1", TOKEN_B, TOKEN_A, 400, 100),
+            ],
+        )
+
+        result = run_hybrid_auction(
+            group,
+            amm_price=Decimal("3.0"),
+            ebbo_min=Decimal("2.5"),
+            ebbo_max=Decimal("3.5"),
+        )
+
+        # AMM price is within EBBO bounds, should match
+        assert len(result.cow_matches) == 1
+        assert result.clearing_price == Decimal("3.0")
+
+    def test_ebbo_bounds_crossed_no_valid_range(self) -> None:
+        """When ebbo_min > ebbo_max, no match is possible."""
+        group = OrderGroup(
+            token_a=TOKEN_A,
+            token_b=TOKEN_B,
+            sellers_of_a=[
+                make_order("ask1", TOKEN_A, TOKEN_B, 100, 200),
+            ],
+            sellers_of_b=[
+                make_order("bid1", TOKEN_B, TOKEN_A, 400, 100),
+            ],
+        )
+
+        # ebbo_min (3.5) > ebbo_max (2.5) - no valid range
+        result = run_hybrid_auction(
+            group,
+            amm_price=Decimal("3.0"),
+            ebbo_min=Decimal("3.5"),
+            ebbo_max=Decimal("2.5"),
+        )
+
+        # No match possible when bounds are crossed
+        assert len(result.cow_matches) == 0
+
+    def test_multiple_orders_with_ebbo_filtering(self) -> None:
+        """EBBO bounds should filter appropriately with multiple orders."""
+        # Multiple asks and bids
+        # AMM price needs to satisfy ebbo_min for ALL sellers
+        group = OrderGroup(
+            token_a=TOKEN_A,
+            token_b=TOKEN_B,
+            sellers_of_a=[
+                make_order("ask1", TOKEN_A, TOKEN_B, 50, 100),  # 2 B/A
+                make_order("ask2", TOKEN_A, TOKEN_B, 50, 125),  # 2.5 B/A
+            ],
+            sellers_of_b=[
+                make_order("bid1", TOKEN_B, TOKEN_A, 300, 75),  # 4 B/A
+            ],
+        )
+
+        # AMM price = 3.0 is fine for both asks
+        result_no_ebbo = run_hybrid_auction(group, amm_price=Decimal("3.0"))
+        assert len(result_no_ebbo.cow_matches) >= 1
+
+        # ebbo_min = 3.5 - now AMM price (3.0) < ebbo_min, no CoW match
+        result_with_ebbo = run_hybrid_auction(
+            group, amm_price=Decimal("3.0"), ebbo_min=Decimal("3.5")
+        )
+        assert len(result_with_ebbo.cow_matches) == 0

@@ -176,9 +176,13 @@ class Solver:
 
             result = strategy.try_solve(current_auction)
 
-            # Apply EBBO filtering if validator is available
+            # Apply EBBO filtering if validator is configured.
+            # This is a mandatory safety net when enabled - violations are logged as
+            # errors since they indicate bugs in strategy-level EBBO validation.
             if result is not None and result.has_fills and self.ebbo_validator is not None:
-                result = self._filter_ebbo_violations(result, current_auction)
+                result = self._filter_ebbo_violations(
+                    result, current_auction, self.ebbo_validator, type(strategy).__name__
+                )
 
             if result is not None and result.has_fills:
                 logger.info(
@@ -360,6 +364,8 @@ class Solver:
         self,
         result: StrategyResult,
         auction: AuctionInstance,
+        ebbo_validator: EBBOValidator | None = None,
+        strategy_name: str = "unknown",
     ) -> StrategyResult | None:
         """Filter out fills that violate EBBO constraints.
 
@@ -369,16 +375,24 @@ class Solver:
         For CoW matches (no interactions), we check that each filled order's
         clearing rate is at least as good as the EBBO rate for that pair.
 
+        This is a mandatory safety net. If violations are caught here, it
+        indicates a bug in the strategy's EBBO checking logic and an error
+        is logged.
+
         Args:
             result: Strategy result to filter
             auction: Auction context for token info
+            ebbo_validator: Validator to use (if None, uses self.ebbo_validator)
+            strategy_name: Name of the strategy that produced this result
 
         Returns:
             Filtered result with EBBO-compliant fills only, or None if all violate
         """
         from solver.strategies.base import StrategyResult
 
-        if self.ebbo_validator is None:
+        # Use provided validator or fall back to instance validator
+        validator = ebbo_validator if ebbo_validator is not None else self.ebbo_validator
+        if validator is None:
             return result
 
         # Build clearing prices dict
@@ -390,7 +404,7 @@ class Solver:
 
         for fill in result.fills:
             order = fill.order
-            violations = self.ebbo_validator.check_clearing_prices(
+            violations = validator.check_clearing_prices(
                 clearing_prices,
                 [order],
                 auction,
@@ -398,34 +412,41 @@ class Solver:
 
             if violations:
                 # This fill violates EBBO - reject it
+                # Log as ERROR because this indicates a bug in the strategy
                 violation_count += 1
                 for v in violations:
-                    logger.debug(
-                        "ebbo_fill_rejected",
+                    logger.error(
+                        "ebbo_violation_caught_by_solver",
+                        strategy=strategy_name,
                         order_uid=order.uid[:18] + "...",
                         sell_token=order.sell_token[-8:],
                         buy_token=order.buy_token[-8:],
                         clearing_rate=str(v.clearing_rate),
                         ebbo_rate=str(v.ebbo_rate),
                         deficit_pct=f"{v.deficit_pct:.2f}%",
+                        message="Strategy produced EBBO violation - this indicates a bug in strategy EBBO validation",
                     )
             else:
                 valid_fills.append(fill)
 
         if not valid_fills:
-            logger.debug(
-                "ebbo_all_fills_rejected",
+            logger.warning(
+                "ebbo_all_fills_rejected_by_solver",
+                strategy=strategy_name,
                 total_fills=len(result.fills),
                 violations=violation_count,
+                message="All fills from strategy violated EBBO - strategy EBBO validation is broken",
             )
             return None
 
         if violation_count > 0:
-            logger.info(
-                "ebbo_filtered_fills",
+            logger.warning(
+                "ebbo_partial_rejection_by_solver",
+                strategy=strategy_name,
                 original=len(result.fills),
                 valid=len(valid_fills),
                 rejected=violation_count,
+                message="Some fills violated EBBO - strategy EBBO validation is incomplete",
             )
 
         # Rebuild the result with valid fills only

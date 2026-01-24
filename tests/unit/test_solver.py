@@ -1,5 +1,9 @@
 """Unit tests for the Solver class."""
 
+from decimal import Decimal
+from unittest.mock import MagicMock
+
+from solver.ebbo import EBBOValidator, EBBOViolation
 from solver.models.auction import AuctionInstance, Order, OrderClass, OrderKind, Token
 from solver.solver import Solver
 from solver.strategies.base import OrderFill, StrategyResult
@@ -306,3 +310,194 @@ class TestSolverSubAuction:
         assert order1.uid not in order_uids
         assert order2.uid in order_uids
         assert order3.uid in order_uids
+
+
+class TestSolverEBBOFiltering:
+    """Tests for mandatory EBBO filtering in the solver."""
+
+    def test_ebbo_validator_filters_violations(self):
+        """EBBO validator should filter out fills that violate EBBO."""
+        order = make_order()
+        fill = OrderFill(order, sell_filled=1000, buy_filled=2000)
+        result = StrategyResult(
+            fills=[fill],
+            interactions=[],
+            prices={
+                order.sell_token.lower(): str(fill.buy_filled),
+                order.buy_token.lower(): str(fill.sell_filled),
+            },
+            gas=0,
+            remainder_orders=[],
+        )
+
+        # Create mock validator that reports a violation
+        mock_validator = MagicMock(spec=EBBOValidator)
+        mock_validator.check_clearing_prices.return_value = [
+            EBBOViolation(
+                sell_token=order.sell_token,
+                buy_token=order.buy_token,
+                clearing_rate=Decimal("0.5"),
+                ebbo_rate=Decimal("1.0"),
+                deficit_pct=50.0,
+            )
+        ]
+
+        mock_strategy = MockStrategy(result=result)
+        solver = Solver(strategies=[mock_strategy])
+        solver.ebbo_validator = mock_validator
+
+        auction = make_auction([order])
+        solver.solve(auction)
+
+        # Fill should be rejected due to EBBO violation
+        # Either no solutions or solution without this fill
+        # The solver should call check_clearing_prices
+        mock_validator.check_clearing_prices.assert_called()
+
+    def test_ebbo_filtering_passes_valid_fills(self):
+        """EBBO validator should pass fills that don't violate EBBO."""
+        order = make_order()
+        fill = OrderFill(order, sell_filled=1000, buy_filled=2000)
+        result = StrategyResult(
+            fills=[fill],
+            interactions=[],
+            prices={
+                order.sell_token.lower(): str(fill.buy_filled),
+                order.buy_token.lower(): str(fill.sell_filled),
+            },
+            gas=0,
+            remainder_orders=[],
+        )
+
+        # Create mock validator that reports no violations
+        mock_validator = MagicMock(spec=EBBOValidator)
+        mock_validator.check_clearing_prices.return_value = []
+
+        mock_strategy = MockStrategy(result=result)
+        solver = Solver(strategies=[mock_strategy])
+        solver.ebbo_validator = mock_validator
+
+        auction = make_auction([order])
+        response = solver.solve(auction)
+
+        # Should have one solution (fill passed validation)
+        assert len(response.solutions) == 1
+
+    def test_ebbo_filtering_rejects_all_fills(self):
+        """When all fills violate EBBO, result should be filtered out."""
+        order = make_order()
+        fill = OrderFill(order, sell_filled=1000, buy_filled=2000)
+        result = StrategyResult(
+            fills=[fill],
+            interactions=[],
+            prices={
+                order.sell_token.lower(): str(fill.buy_filled),
+                order.buy_token.lower(): str(fill.sell_filled),
+            },
+            gas=0,
+            remainder_orders=[],
+        )
+
+        # Create mock validator that reports a violation
+        mock_validator = MagicMock(spec=EBBOValidator)
+        mock_validator.check_clearing_prices.return_value = [
+            EBBOViolation(
+                sell_token=order.sell_token,
+                buy_token=order.buy_token,
+                clearing_rate=Decimal("0.5"),
+                ebbo_rate=Decimal("1.0"),
+                deficit_pct=50.0,
+            )
+        ]
+
+        mock_strategy = MockStrategy(result=result)
+        solver = Solver(strategies=[mock_strategy])
+        solver.ebbo_validator = mock_validator
+
+        auction = make_auction([order])
+        response = solver.solve(auction)
+
+        # All fills rejected, no solutions
+        assert len(response.solutions) == 0
+
+    def test_ebbo_filtering_partial_rejection(self):
+        """EBBO filtering should keep valid fills while rejecting violators."""
+        order1 = make_order(
+            uid="0x" + "01" * 56,
+            sell_token="0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            buy_token="0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        )
+        order2 = make_order(
+            uid="0x" + "02" * 56,
+            sell_token="0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            buy_token="0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        )
+
+        fill1 = OrderFill(order1, sell_filled=1000, buy_filled=2000)
+        fill2 = OrderFill(order2, sell_filled=2000, buy_filled=1000)
+
+        result = StrategyResult(
+            fills=[fill1, fill2],
+            interactions=[],
+            prices={
+                "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": "2000",
+                "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": "1000",
+            },
+            gas=0,
+            remainder_orders=[],
+        )
+
+        # Create mock validator that only rejects order1
+        def check_prices(_prices, orders, _auction):
+            if orders[0].uid == order1.uid:
+                return [
+                    EBBOViolation(
+                        sell_token=order1.sell_token,
+                        buy_token=order1.buy_token,
+                        clearing_rate=Decimal("0.5"),
+                        ebbo_rate=Decimal("1.0"),
+                        deficit_pct=50.0,
+                    )
+                ]
+            return []
+
+        mock_validator = MagicMock(spec=EBBOValidator)
+        mock_validator.check_clearing_prices.side_effect = check_prices
+
+        mock_strategy = MockStrategy(result=result)
+        solver = Solver(strategies=[mock_strategy])
+        solver.ebbo_validator = mock_validator
+
+        auction = make_auction([order1, order2])
+        response = solver.solve(auction)
+
+        # Only fill2 should pass, so one solution with one trade
+        assert len(response.solutions) == 1
+        assert len(response.solutions[0].trades) == 1
+
+    def test_no_ebbo_validator_allows_all_fills(self):
+        """When no EBBO validator is available, all fills should pass."""
+        order = make_order()
+        fill = OrderFill(order, sell_filled=1000, buy_filled=2000)
+        result = StrategyResult(
+            fills=[fill],
+            interactions=[],
+            prices={
+                order.sell_token.lower(): str(fill.buy_filled),
+                order.buy_token.lower(): str(fill.sell_filled),
+            },
+            gas=0,
+            remainder_orders=[],
+        )
+
+        mock_strategy = MockStrategy(result=result)
+        # Solver without ebbo_validator or liquidity
+        solver = Solver(strategies=[mock_strategy])
+        solver.ebbo_validator = None
+
+        # Auction without liquidity (can't build validator)
+        auction = make_auction([order])
+        response = solver.solve(auction)
+
+        # Should have one solution (no validator to filter)
+        assert len(response.solutions) == 1

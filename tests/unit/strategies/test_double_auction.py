@@ -537,3 +537,176 @@ class TestRealWorldScenario:
 
         surplus = calculate_surplus(result)
         assert surplus >= 0  # Surplus should be non-negative
+
+
+class TestEBBOBounds:
+    """Tests for EBBO bounds (ebbo_min, ebbo_max) parameters."""
+
+    def test_ebbo_min_rejects_match_below_floor(self) -> None:
+        """Match should be rejected when clearing price < ebbo_min.
+
+        EBBO requires sellers of A to get at least the AMM rate.
+        If the clearing price would be below ebbo_min, no match is possible.
+        """
+        # Ask: sell 100 A, want 150 B (price = 1.5 B/A)
+        # Bid: sell 200 B, want 100 A (price = 2.0 B/A)
+        # Valid clearing range: [1.5, 2.0], midpoint = 1.75
+        # But if ebbo_min = 1.8, the valid range becomes [1.8, 2.0]
+        group = OrderGroup(
+            token_a=TOKEN_A,
+            token_b=TOKEN_B,
+            sellers_of_a=[
+                make_order("ask1", TOKEN_A, TOKEN_B, 100, 150),  # 1.5 B/A
+            ],
+            sellers_of_b=[
+                make_order("bid1", TOKEN_B, TOKEN_A, 200, 100),  # 2.0 B/A
+            ],
+        )
+
+        # Without EBBO bounds, should match
+        result_no_ebbo = run_double_auction(group)
+        assert len(result_no_ebbo.matches) == 1
+        assert result_no_ebbo.clearing_price == Decimal("1.75")
+
+        # With ebbo_min = 1.8, clearing price moves to [1.8, 2.0] range
+        result_with_ebbo = run_double_auction(group, ebbo_min=Decimal("1.8"))
+        assert len(result_with_ebbo.matches) == 1
+        # Clearing price should be (1.8 + 2.0) / 2 = 1.9
+        assert result_with_ebbo.clearing_price == Decimal("1.9")
+
+    def test_ebbo_min_no_valid_range(self) -> None:
+        """When ebbo_min > all bid limits, no match is possible."""
+        # Ask: sell 100 A, want 150 B (price = 1.5 B/A)
+        # Bid: sell 200 B, want 100 A (price = 2.0 B/A)
+        # If ebbo_min = 2.5 > bid limit (2.0), no EBBO-compliant match possible
+        group = OrderGroup(
+            token_a=TOKEN_A,
+            token_b=TOKEN_B,
+            sellers_of_a=[
+                make_order("ask1", TOKEN_A, TOKEN_B, 100, 150),
+            ],
+            sellers_of_b=[
+                make_order("bid1", TOKEN_B, TOKEN_A, 200, 100),
+            ],
+        )
+
+        result = run_double_auction(group, ebbo_min=Decimal("2.5"))
+        assert result.matches == []
+        assert result.clearing_price is None
+
+    def test_ebbo_max_rejects_match_above_ceiling(self) -> None:
+        """Match should be constrained when clearing price > ebbo_max.
+
+        EBBO requires buyers of A to pay at most the AMM rate (inverted).
+        If the clearing price would exceed ebbo_max, it should be capped.
+        """
+        # Ask: sell 100 A, want 300 B (price = 3.0 B/A)
+        # Bid: sell 500 B, want 100 A (price = 5.0 B/A)
+        # Valid clearing range: [3.0, 5.0], midpoint = 4.0
+        # With ebbo_max = 3.5, valid range becomes [3.0, 3.5]
+        group = OrderGroup(
+            token_a=TOKEN_A,
+            token_b=TOKEN_B,
+            sellers_of_a=[
+                make_order("ask1", TOKEN_A, TOKEN_B, 100, 300),  # 3.0 B/A
+            ],
+            sellers_of_b=[
+                make_order("bid1", TOKEN_B, TOKEN_A, 500, 100),  # 5.0 B/A
+            ],
+        )
+
+        # Without EBBO bounds
+        result_no_ebbo = run_double_auction(group)
+        assert result_no_ebbo.clearing_price == Decimal("4.0")
+
+        # With ebbo_max = 3.5, clearing price constrained to [3.0, 3.5]
+        result_with_ebbo = run_double_auction(group, ebbo_max=Decimal("3.5"))
+        assert len(result_with_ebbo.matches) == 1
+        assert result_with_ebbo.clearing_price == Decimal("3.25")  # (3.0 + 3.5) / 2
+
+    def test_ebbo_max_no_valid_range(self) -> None:
+        """When ebbo_max < all ask limits, no match is possible."""
+        # Ask: sell 100 A, want 300 B (price = 3.0 B/A)
+        # Bid: sell 500 B, want 100 A (price = 5.0 B/A)
+        # If ebbo_max = 2.5 < ask limit (3.0), no EBBO-compliant match possible
+        group = OrderGroup(
+            token_a=TOKEN_A,
+            token_b=TOKEN_B,
+            sellers_of_a=[
+                make_order("ask1", TOKEN_A, TOKEN_B, 100, 300),
+            ],
+            sellers_of_b=[
+                make_order("bid1", TOKEN_B, TOKEN_A, 500, 100),
+            ],
+        )
+
+        result = run_double_auction(group, ebbo_max=Decimal("2.5"))
+        assert result.matches == []
+        assert result.clearing_price is None
+
+    def test_ebbo_both_bounds_constrain_range(self) -> None:
+        """Both ebbo_min and ebbo_max should constrain the clearing price range."""
+        # Ask: sell 100 A, want 200 B (price = 2.0 B/A)
+        # Bid: sell 400 B, want 100 A (price = 4.0 B/A)
+        # Original range: [2.0, 4.0], midpoint = 3.0
+        # With ebbo_min = 2.5, ebbo_max = 3.5: new range [2.5, 3.5], midpoint = 3.0
+        group = OrderGroup(
+            token_a=TOKEN_A,
+            token_b=TOKEN_B,
+            sellers_of_a=[
+                make_order("ask1", TOKEN_A, TOKEN_B, 100, 200),
+            ],
+            sellers_of_b=[
+                make_order("bid1", TOKEN_B, TOKEN_A, 400, 100),
+            ],
+        )
+
+        result = run_double_auction(group, ebbo_min=Decimal("2.5"), ebbo_max=Decimal("3.5"))
+        assert len(result.matches) == 1
+        # Range is [2.5, 3.5], midpoint = 3.0
+        assert result.clearing_price == Decimal("3.0")
+
+    def test_ebbo_bounds_crossed_no_match(self) -> None:
+        """When ebbo_min > ebbo_max, no match is possible."""
+        group = OrderGroup(
+            token_a=TOKEN_A,
+            token_b=TOKEN_B,
+            sellers_of_a=[
+                make_order("ask1", TOKEN_A, TOKEN_B, 100, 200),
+            ],
+            sellers_of_b=[
+                make_order("bid1", TOKEN_B, TOKEN_A, 400, 100),
+            ],
+        )
+
+        # ebbo_min > ebbo_max means no valid clearing price
+        result = run_double_auction(group, ebbo_min=Decimal("3.5"), ebbo_max=Decimal("2.5"))
+        assert result.matches == []
+        assert result.clearing_price is None
+
+    def test_ebbo_min_affects_volume(self) -> None:
+        """Higher ebbo_min can reduce matched volume due to stricter constraints."""
+        # Ask: sell 100 A, want 150 B (price = 1.5 B/A)
+        # Bid: sell 200 B, want 100 A (price = 2.0 B/A)
+        # At price 1.5: bid can buy 200/1.5 = 133 A (capped at 100)
+        # At price 1.9: bid can buy 200/1.9 = 105 A (capped at 100)
+        # So volume should still be 100 A in both cases
+        group = OrderGroup(
+            token_a=TOKEN_A,
+            token_b=TOKEN_B,
+            sellers_of_a=[
+                make_order("ask1", TOKEN_A, TOKEN_B, 100, 150),
+            ],
+            sellers_of_b=[
+                make_order("bid1", TOKEN_B, TOKEN_A, 200, 100),
+            ],
+        )
+
+        result_no_ebbo = run_double_auction(group)
+        result_with_ebbo = run_double_auction(group, ebbo_min=Decimal("1.9"))
+
+        # Both should match 100 A but at different prices
+        assert result_no_ebbo.total_a_matched == 100
+        assert result_with_ebbo.total_a_matched == 100
+        # But B amounts differ due to different clearing prices
+        assert result_with_ebbo.total_b_matched > result_no_ebbo.total_b_matched

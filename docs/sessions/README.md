@@ -36,7 +36,7 @@ This directory tracks progress across AI-assisted development sessions.
 - **Slice 4.5:** Complete (Settlement optimization formulation and analysis)
 - **Slice 4.6:** Complete (Multi-pair price coordination, EBBO zero-tolerance enforcement)
 - **EBBO:** Complete (Zero tolerance across all strategies, 100% compliance)
-- **Tests:** 998 passing
+- **Tests:** 1026 passing
 - **Liquidity:** V2, V3, Balancer weighted, Balancer stable, 0x limit orders
 - **Parity:** Complete liquidity parity with Rust baseline solver
 - **Next:** Gap analysis - why 36.53% potential vs 0.12% matched?
@@ -100,6 +100,7 @@ Individual session logs are preserved in the `archive/` directory for reference.
 | 51 | 2026-01-23 | EBBO Validation Integration |
 | [52](archive/session-52-slice4.6-ebbo.md) | 2026-01-24 | Slice 4.6 - Multi-Pair Coordination & EBBO |
 | [53](archive/session-53-refactor-strategies.md) | 2026-01-24 | Refactor Strategy Modules |
+| [54](archive/session-54-two-sided-ebbo.md) | 2026-01-24 | Two-Sided EBBO Validation |
 
 ## Session Template
 

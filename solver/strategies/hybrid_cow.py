@@ -27,13 +27,11 @@ Algorithm:
 
 from __future__ import annotations
 
-from decimal import Decimal
 from typing import TYPE_CHECKING
 
 import structlog
 
 from solver.amm.uniswap_v2 import UniswapV2, uniswap_v2
-from solver.fees.price_estimation import get_token_info
 from solver.models.auction import AuctionInstance
 from solver.models.order_groups import find_cow_opportunities
 from solver.models.types import normalize_address
@@ -41,6 +39,7 @@ from solver.pools import PoolRegistry, build_registry_from_liquidity
 from solver.routing.router import SingleOrderRouter
 from solver.strategies.base import OrderFill, StrategyResult
 from solver.strategies.double_auction import run_hybrid_auction
+from solver.strategies.ebbo_bounds import get_ebbo_bounds
 
 if TYPE_CHECKING:
     from solver.amm.balancer import BalancerStableAMM, BalancerWeightedAMM
@@ -173,22 +172,8 @@ class HybridCowStrategy:
         all_prices: dict[str, str] = {}
 
         for group in cow_groups:
-            # Get token decimals for proper probe amount scaling
-            token_a_info = get_token_info(auction, group.token_a)
-            if token_a_info is None or token_a_info.decimals is None:
-                logger.warning(
-                    "hybrid_cow_token_decimals_not_found",
-                    token=group.token_a[-8:],
-                    using_default=18,
-                )
-                token_a_decimals = 18
-            else:
-                token_a_decimals = token_a_info.decimals
-
-            # Get AMM reference price for this pair
-            amm_price = router.get_reference_price(
-                group.token_a, group.token_b, token_in_decimals=token_a_decimals
-            )
+            # Get two-sided EBBO bounds
+            bounds = get_ebbo_bounds(group.token_a, group.token_b, router, auction)
 
             logger.debug(
                 "hybrid_cow_processing_pair",
@@ -196,12 +181,19 @@ class HybridCowStrategy:
                 token_b=group.token_b[-8:],
                 sellers_of_a=len(group.sellers_of_a),
                 sellers_of_b=len(group.sellers_of_b),
-                amm_price=float(amm_price) if amm_price else None,
+                amm_price=float(bounds.amm_price) if bounds.amm_price else None,
+                ebbo_min=float(bounds.ebbo_min) if bounds.ebbo_min else None,
+                ebbo_max=float(bounds.ebbo_max) if bounds.ebbo_max else None,
             )
 
-            # Run hybrid auction (uses AMM price if available, falls back to pure
-            # double auction with uniform clearing price if not)
-            result = run_hybrid_auction(group, amm_price=amm_price)
+            # Run hybrid auction with both EBBO bounds
+            # (EBBO validation is now handled inside run_hybrid_auction)
+            result = run_hybrid_auction(
+                group,
+                amm_price=bounds.amm_price,
+                ebbo_min=bounds.ebbo_min,
+                ebbo_max=bounds.ebbo_max,
+            )
 
             if not result.cow_matches:
                 # No matches - add all orders as remainders for AMM routing
@@ -211,31 +203,7 @@ class HybridCowStrategy:
                     all_remainders.append(order)
                 continue
 
-            # EBBO constraint: verify sellers receive at least AMM equivalent (zero tolerance)
-            # For sellers of A: they receive total_cow_b tokens B
-            # AMM would give them: int(total_cow_a * amm_price)
-            # EBBO satisfied if: total_cow_b >= int(total_cow_a * amm_price)
-            # This integer comparison properly accounts for rounding
-            if amm_price is not None and result.total_cow_a > 0:
-                amm_equivalent = int(Decimal(result.total_cow_a) * amm_price)
-                if result.total_cow_b < amm_equivalent:
-                    clearing_rate = Decimal(result.total_cow_b) / Decimal(result.total_cow_a)
-                    logger.debug(
-                        "hybrid_cow_ebbo_violation",
-                        token_a=group.token_a[-8:],
-                        token_b=group.token_b[-8:],
-                        clearing_rate=float(clearing_rate),
-                        amm_price=float(amm_price),
-                        cow_b=result.total_cow_b,
-                        amm_equivalent=amm_equivalent,
-                        deficit=amm_equivalent - result.total_cow_b,
-                    )
-                    # Reject this match - add orders as remainders
-                    for order in group.sellers_of_a:
-                        all_remainders.append(order)
-                    for order in group.sellers_of_b:
-                        all_remainders.append(order)
-                    continue
+            # EBBO validation is now handled by run_hybrid_auction with both bounds
 
             # Convert matches to fills
             for match in result.cow_matches:

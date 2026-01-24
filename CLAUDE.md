@@ -123,6 +123,7 @@ strategies = [
 | `solver/strategies/multi_pair.py` | N-order joint optimization (Slice 4.6) |
 | `solver/strategies/amm_routing.py` | AMM routing strategy |
 | `solver/strategies/double_auction.py` | Double auction algorithm (used by multi_pair) |
+| `solver/strategies/ebbo_bounds.py` | Two-sided EBBO bounds calculation helper |
 | `solver/strategies/ring_trade.py` | Ring trade detection (research) |
 | `solver/amm/uniswap_v2.py` | V2 AMM math and encoding |
 | `solver/amm/uniswap_v3/` | V3 package (quoter, encoding, etc.) |
@@ -170,8 +171,9 @@ Mock classes: `MockAMM`, `MockPoolFinder`, `MockRouter`, `MockSwapConfig`
 ### EBBO Validation
 EBBO (Ethereum Best Bid/Offer) ensures users get at least as good execution as AMMs:
 - Zero tolerance enforced (Slice 4.6)
-- Validation at strategy level AND solver level
-- Uses integer comparison to handle rounding properly
+- Two-sided validation: `ebbo_min` protects sellers, `ebbo_max` protects buyers
+- Validation at strategy level AND solver level (safety net with error logging)
+- Uses `get_ebbo_bounds()` helper for consistent bounds calculation
 
 ### Limit Order Fees
 For `class: limit` orders, solvers MUST calculate a fee:
