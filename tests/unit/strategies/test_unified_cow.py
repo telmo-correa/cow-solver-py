@@ -264,7 +264,7 @@ class TestUnifiedCowEBBOEndToEnd:
         # Set WETH→USDC = 2.5e-9 (inverse of 4e8)
         mock_router = Mock()
 
-        def mock_get_reference_price(sell_token, buy_token, **kwargs):
+        def mock_get_reference_price(sell_token, buy_token, **_kwargs):
             if sell_token == weth_lower and buy_token == usdc_lower:
                 return Decimal("2.5e-9")  # WETH→USDC: 2500 USDC/WETH
             elif sell_token == usdc_lower and buy_token == weth_lower:
@@ -311,7 +311,7 @@ class TestUnifiedCowEBBOEndToEnd:
         # Mock AMM with spread [2400, 2600] - clearing at 2000 is below
         mock_router = Mock()
 
-        def mock_get_reference_price(sell_token, buy_token, **kwargs):
+        def mock_get_reference_price(sell_token, buy_token, **_kwargs):
             if sell_token == weth_lower and buy_token == usdc_lower:
                 return Decimal("2.4e-9")  # 2400 USDC/WETH
             elif sell_token == usdc_lower and buy_token == weth_lower:
@@ -357,7 +357,7 @@ class TestUnifiedCowEBBOEndToEnd:
         # Mock AMM with spread [2400, 2600] - clearing at 3000 is above
         mock_router = Mock()
 
-        def mock_get_reference_price(sell_token, buy_token, **kwargs):
+        def mock_get_reference_price(sell_token, buy_token, **_kwargs):
             if sell_token == weth_lower and buy_token == usdc_lower:
                 return Decimal("2.4e-9")  # 2400 USDC/WETH (ebbo_min)
             elif sell_token == usdc_lower and buy_token == weth_lower:
@@ -406,7 +406,7 @@ class TestUnifiedCowEBBOEndToEnd:
         # Both directions return consistent inverse values
         mock_router = Mock()
 
-        def mock_get_reference_price(sell_token, buy_token, **kwargs):
+        def mock_get_reference_price(sell_token, buy_token, **_kwargs):
             if sell_token == weth_lower and buy_token == usdc_lower:
                 # WETH→USDC: 2500 USDC/WETH = 2.5e-9 USDC per wei (exact)
                 return Decimal("2.5e-9")

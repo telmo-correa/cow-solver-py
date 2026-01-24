@@ -4,7 +4,7 @@ from decimal import Decimal
 
 import pytest
 
-from solver.models.auction import Order
+from solver.models.auction import AuctionInstance, Order
 from solver.models.order_groups import OrderGroup
 from solver.strategies.components import find_order_components, find_token_components
 from solver.strategies.graph import UnionFind, find_spanning_tree
@@ -918,8 +918,6 @@ class TestLargeComponentPriceConsistency:
 
     def test_clearing_prices_match_fill_rates(self) -> None:
         """Clearing prices should produce correct rates for all fills."""
-        from decimal import Decimal
-
         from solver.models.auction import AuctionInstance
 
         # Create a simple A/B pair
@@ -955,9 +953,9 @@ class TestLargeComponentPriceConsistency:
 class TestMultiPairEBBO:
     """Tests for EBBO validation in MultiPairCowStrategy."""
 
-    def _make_auction_with_tokens(self, orders: list[Order]) -> "AuctionInstance":
+    def _make_auction_with_tokens(self, orders: list[Order]) -> AuctionInstance:
         """Create auction with token decimals for EBBO validation."""
-        from solver.models.auction import AuctionInstance, Token
+        from solver.models.auction import Token
 
         tokens = {}
         for order in orders:
@@ -1010,7 +1008,7 @@ class TestMultiPairEBBO:
         # Mock router with AMM rate 2.0 B/A and spread
         # - Selling A: get 2.0 B/A (ebbo_min)
         # - Selling B: get 0.45 A/B → ebbo_max = 1/0.45 ≈ 2.22 B/A
-        def mock_get_ref_price(sell_token, buy_token, **_kwargs):
+        def mock_get_ref_price(sell_token, _buy_token, **_kwargs):
             if sell_token == token_a_lower:
                 return Decimal("2.0")  # Selling A gets 2 B
             elif sell_token == token_b_lower:

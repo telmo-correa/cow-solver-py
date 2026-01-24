@@ -108,10 +108,7 @@ def verify_fok_constraint(solution: Solution, orders: list[Order]) -> None:
         if not order.partially_fillable:
             # FOK order - must be fully filled
             exec_amount = int(trade.executed_amount)
-            if order.is_sell_order:
-                expected = int(order.sell_amount)
-            else:
-                expected = int(order.buy_amount)
+            expected = int(order.sell_amount) if order.is_sell_order else int(order.buy_amount)
 
             assert exec_amount == expected, (
                 f"FOK order {trade.order[:18]}... partially filled: "
