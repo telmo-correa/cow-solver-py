@@ -39,7 +39,7 @@ This directory tracks progress across AI-assisted development sessions.
 - **Tests:** 1082 passing
 - **Liquidity:** V2, V3, Balancer weighted, Balancer stable, 0x limit orders
 - **Parity:** Complete liquidity parity with Rust baseline solver
-- **Next:** Gap analysis - why 36.53% potential vs 0.12% matched?
+- **CoW Analysis:** See docs/evaluations/cow-potential-analysis.md for why match rate is low
 
 ## Session Archive
 

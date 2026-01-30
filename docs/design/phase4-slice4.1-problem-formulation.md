@@ -384,7 +384,7 @@ The double auction can match N orders in a single clearing, whereas 2-order matc
 |--------|-------|----------------|
 | Auctions with CoW potential | 100% | Every auction has matching opportunities |
 | Total CoW pairs | 3,614 (avg 181/auction) | Significant cross-direction order flow |
-| Total CoW orders | 40,959 (36.5% of all) | Over a third of orders could benefit |
+| Total CoW orders | 40,959 (36.5% of all) | Orders on bidirectional pairs (NOT actual matchable - see note below) |
 | Avg orders per CoW pair | 11.3 | Multi-order matching is common |
 
 **CoW Pair Size Distribution:**
@@ -395,6 +395,13 @@ The double auction can match N orders in a single clearing, whereas 2-order matc
 | 10+ orders (double auction) | 858 | 23.7% | 29,684 |
 
 **Key Finding:** 858 pairs with 10+ orders contain 29,684 orders - these are prime candidates for double auction matching. The top pair (USDC/WETH) had **440 orders** (157 selling USDC, 283 selling WETH).
+
+> **IMPORTANT NOTE on "36.5% CoW Potential":** This figure is misleading. It only counts orders where both directions exist on a pair - it does NOT account for:
+> - Price compatibility (only ~40% have crossing prices where ask <= bid)
+> - EBBO constraint (AMM often offers better rate than CoW clearing)
+> - Uniform price constraint (overlapping pairs create conflicts)
+>
+> After all constraints, the actual matchable rate is ~0.1-0.2%, not 36.5%. See `docs/evaluations/cow-potential-analysis.md` for details.
 
 #### Ring Trade Analysis
 
@@ -427,9 +434,9 @@ The double auction can match N orders in a single clearing, whereas 2-order matc
 #### Conclusions & Recommendations
 
 1. **[HIGH PRIORITY] Multi-order CoW matching:**
-   - 36.5% of orders could participate in CoW
+   - 36.5% of orders are on bidirectional pairs (but only ~14% have crossing prices)
    - 858 pairs with 10+ orders are ideal for double auction
-   - Expected to capture significant surplus vs 2-order matching
+   - After EBBO/uniform price constraints, ~0.1% can actually match
 
 2. **[MEDIUM PRIORITY] Ring trades:**
    - Present in 100% of auctions
