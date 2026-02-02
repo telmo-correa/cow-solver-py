@@ -487,3 +487,90 @@ Both solvers accept the same auction JSON body and return the same response form
 Benchmarks generate reports in `benchmarks/results/`:
 - `benchmark_YYYYMMDD_HHMMSS.md` - Human-readable markdown
 - `benchmark_YYYYMMDD_HHMMSS.json` - Machine-readable JSON
+
+## Historical Auction Performance
+
+The solver has been optimized to handle large historical auctions efficiently. This section documents performance on real mainnet auction data.
+
+### Test Data
+
+- **Location**: `data/historical_auctions/`
+- **Auctions**: 50 mainnet auctions (blocks 11985000-11985049)
+- **Typical auction size**:
+  - Orders: ~5,600
+  - Tokens: ~987
+  - Liquidity sources: ~2,428 (V2, V3, Balancer, limit orders)
+  - Unique token pairs: ~1,454
+
+### Solver Performance
+
+Measured on Apple M-series hardware (single-threaded):
+
+| Metric | Value |
+|--------|-------|
+| **Solve time per auction** | ~9.2s |
+| **Time per order** | ~1.6ms |
+| **Solutions per auction** | ~90 |
+| **Path checking (1,454 pairs)** | ~0.6s |
+| **Registry build** | ~15ms |
+
+### Performance Breakdown
+
+```
+Component                    Time      % of Total
+─────────────────────────────────────────────────
+Path estimation              ~4.3s     47%
+Pathfinding (BFS)            ~3.1s     34%
+Pool selection               ~3.0s     33%
+AMM simulation               ~2.3s     25%
+Multi-pair CoW matching      ~0.7s      8%
+Registry build               ~0.02s    <1%
+```
+
+### Strategy Performance on Historical Data
+
+Benchmarked on 10 consecutive auctions (56,289 total orders):
+
+| Strategy | Orders Matched | Match Rate | Avg Time/Auction | EBBO Compliance |
+|----------|---------------|------------|------------------|-----------------|
+| **MultiPairCow** | 190 | 0.34% | 133ms | 100% |
+| **RingTrade** | 30 | 0.05% | 390ms | 100% |
+| **CowMatch** | 0 | 0.00% | <1ms | N/A |
+| **HybridCow** | 0 | 0.00% | 19ms | N/A |
+
+**Notes**:
+- CoW potential (orders on bidirectional pairs): 36.53%
+- Actual matches are much lower due to price misalignment and EBBO constraints
+- All matched orders pass EBBO validation (clearing price >= AMM reference price)
+
+### Performance Optimization History
+
+The solver has undergone significant performance optimization:
+
+| Version | Solve Time | Improvement |
+|---------|-----------|-------------|
+| Initial | ~92s | - |
+| + Path caching | ~17s | 5.4x |
+| + BFS optimization | ~10s | 1.7x |
+| + Reduced normalization | ~9s | 1.1x |
+| **Total** | **~9s** | **~10x faster** |
+
+Key optimizations:
+1. **Path caching**: Cache pathfinding results for repeated token pair queries
+2. **Direct path fast-path**: Check direct paths before BFS exploration
+3. **Set intersection for 2-hop**: Use O(min(n,m)) set intersection instead of BFS
+4. **V3 pool index**: Secondary index for O(1) V3 pool lookup by token pair
+5. **Reduced address normalization**: Skip redundant normalize_address calls in hot paths
+
+### Running Historical Benchmarks
+
+```bash
+# Profile solver on historical auctions
+python scripts/profile_solver.py --limit 5 --top 20
+
+# Quick timing breakdown
+python scripts/quick_timing.py
+
+# Strategy comparison with EBBO checking
+python scripts/benchmark_strategies.py --limit 10 --check-ebbo
+```
