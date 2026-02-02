@@ -514,7 +514,7 @@ Measured on Apple M-series hardware with parallel path cache pre-warming:
 | **Path prewarm (1,454 pairs)** | ~0.7s |
 | **Registry build** | ~15ms |
 
-Parallel path cache pre-warming uses `ProcessPoolExecutor` to discover paths for all unique token pairs concurrently before routing orders.
+Parallel path cache pre-warming uses `ProcessPoolExecutor` (14 workers on M-series) to discover paths for all unique token pairs concurrently before routing orders.
 
 ### Strategy Performance on Historical Data
 
