@@ -61,6 +61,8 @@ class PoolRegistry:
         self._limit_order_ids: set[str] = set()
         # Lazy-initialized PathFinder for graph operations
         self._pathfinder: PathFinder | None = None
+        # Cache for get_pools_for_pair (invalidated on pool add)
+        self._pools_for_pair_cache: dict[tuple[str, str], list[AnyPool]] = {}
 
         if pools:
             for pool in pools:
@@ -80,9 +82,10 @@ class PoolRegistry:
         return self._pathfinder
 
     def _invalidate_pathfinder(self) -> None:
-        """Invalidate the cached pathfinder after pool changes."""
+        """Invalidate the cached pathfinder and pools cache after pool changes."""
         if self._pathfinder is not None:
             self._pathfinder.invalidate()
+        self._pools_for_pair_cache.clear()
 
     def add_any_pool(self, pool: AnyPool) -> None:
         """Add a pool of any supported type to the registry.
@@ -335,6 +338,11 @@ class PoolRegistry:
         token_a_norm = normalize_address(token_a)
         token_b_norm = normalize_address(token_b)
 
+        # Check cache first (directional key for limit orders)
+        cache_key = (token_a_norm, token_b_norm)
+        if cache_key in self._pools_for_pair_cache:
+            return self._pools_for_pair_cache[cache_key]
+
         pools: list[AnyPool] = []
 
         # Add V2 pool if exists (bidirectional) - use frozenset for order-independent lookup
@@ -361,6 +369,8 @@ class PoolRegistry:
         limit_key = (token_a_norm, token_b_norm)
         pools.extend(self._limit_orders.get(limit_key, []))
 
+        # Cache the result
+        self._pools_for_pair_cache[cache_key] = pools
         return pools
 
     @property

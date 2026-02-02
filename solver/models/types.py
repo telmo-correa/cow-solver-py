@@ -3,6 +3,7 @@
 These types are used across auction and solution models.
 """
 
+from functools import lru_cache
 from typing import Annotated, Any
 
 from pydantic import BeforeValidator, Field
@@ -69,6 +70,15 @@ Bytes = Annotated[str, Field(pattern=r"^0x[a-fA-F0-9]*$")]
 OrderUid = Annotated[str, Field(pattern=r"^0x[a-fA-F0-9]{112}$")]
 
 
+@lru_cache(maxsize=4096)
+def _normalize_address_cached(address: str) -> str:
+    """Cached address normalization (lowercase with 0x prefix)."""
+    addr = address.lower()
+    if not addr.startswith("0x"):
+        addr = "0x" + addr
+    return addr
+
+
 def normalize_address(address: str, *, validate: bool = False) -> str:
     """Normalize an Ethereum address to lowercase.
 
@@ -88,9 +98,7 @@ def normalize_address(address: str, *, validate: bool = False) -> str:
         address. It simply lowercases and adds 0x prefix. Use is_valid_address()
         to check validity, or pass validate=True for combined normalization+validation.
     """
-    addr = address.lower()
-    if not addr.startswith("0x"):
-        addr = "0x" + addr
+    addr = _normalize_address_cached(address)
 
     if validate and not is_valid_address(addr):
         raise ValueError(f"Invalid address: {address}")

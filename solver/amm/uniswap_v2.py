@@ -112,12 +112,12 @@ class UniswapV2(AMM):
         if reserve_in <= 0 or reserve_out <= 0:
             return 0
 
-        # Use SafeInt for explicit integer arithmetic with overflow detection
-        amount_in_with_fee = S(amount_in) * S(fee_multiplier)
-        numerator = amount_in_with_fee * S(reserve_out)
-        denominator = S(reserve_in) * S(10000) + amount_in_with_fee
+        # Pure int arithmetic - Python 3 ints have unlimited precision
+        amount_in_with_fee = amount_in * fee_multiplier
+        numerator = amount_in_with_fee * reserve_out
+        denominator = reserve_in * 10000 + amount_in_with_fee
 
-        return (numerator // denominator).value
+        return numerator // denominator
 
     def get_amount_in(
         self,
@@ -147,12 +147,12 @@ class UniswapV2(AMM):
             # Can't extract more than the reserve
             return 2**256 - 1  # Max uint256
 
-        # Use SafeInt for explicit integer arithmetic with overflow detection
+        # Pure int arithmetic - Python 3 ints have unlimited precision
         # Ceiling division: (numerator // denominator) + 1
-        numerator = S(reserve_in) * S(amount_out) * S(10000)
-        denominator = (S(reserve_out) - S(amount_out)) * S(fee_multiplier)
+        numerator = reserve_in * amount_out * 10000
+        denominator = (reserve_out - amount_out) * fee_multiplier
 
-        return ((numerator // denominator) + S(1)).value
+        return (numerator // denominator) + 1
 
     def max_fill_sell_order(
         self,
