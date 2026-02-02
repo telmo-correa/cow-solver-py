@@ -504,28 +504,17 @@ Performance on real mainnet auction data.
 
 ### Solver Performance
 
-Measured on Apple M-series hardware (single-threaded):
+Measured on Apple M-series hardware with parallel path cache pre-warming:
 
 | Metric | Value |
 |--------|-------|
-| **Solve time per auction** | ~9.2s |
-| **Time per order** | ~1.6ms |
+| **Solve time per auction** | ~3.5s |
+| **Time per order** | ~0.6ms |
 | **Solutions per auction** | ~90 |
-| **Path checking (1,454 pairs)** | ~0.6s |
+| **Path prewarm (1,454 pairs)** | ~0.7s |
 | **Registry build** | ~15ms |
 
-### Performance Breakdown
-
-```
-Component                    Time      % of Total
-─────────────────────────────────────────────────
-Path estimation              ~4.3s     47%
-Pathfinding (BFS)            ~3.1s     34%
-Pool selection               ~3.0s     33%
-AMM simulation               ~2.3s     25%
-Multi-pair CoW matching      ~0.7s      8%
-Registry build               ~0.02s    <1%
-```
+Parallel path cache pre-warming uses `ProcessPoolExecutor` to discover paths for all unique token pairs concurrently before routing orders.
 
 ### Strategy Performance on Historical Data
 

@@ -299,8 +299,8 @@ class AmmRoutingStrategy(AMMBackedStrategy):
         reserves are updated so subsequent orders use accurate reserve data.
         Orders that fail routing are skipped (partial success is OK).
 
-        Performance optimization: Pre-filters orders by checking path existence
-        at the token pair level before attempting full routing.
+        Performance optimization: Pre-warms path cache in parallel for all
+        unique token pairs before routing.
 
         Args:
             auction: The auction containing multiple orders
@@ -316,19 +316,33 @@ class AmmRoutingStrategy(AMMBackedStrategy):
         total_gas = 0
         failed_order_uids: list[str] = []
 
-        # Pre-filter: check which token pairs have any routing paths
-        # This avoids expensive per-order routing for pairs with no liquidity
-        # Skip pre-filter when using an injected router (tests) or empty registry
+        # Collect unique token pairs and pre-warm path cache in parallel
+        # Skip when using an injected router (tests) or empty registry
         pairs_without_paths: set[tuple[str, str]] = set()
 
         if self._injected_router is None and pool_registry.pool_count > 0:
-            pairs_with_paths: set[tuple[str, str]] = set()
+            # Collect unique pairs
+            unique_pairs: list[tuple[str, str]] = []
+            seen_pairs: set[tuple[str, str]] = set()
 
             for order in auction.orders:
                 pair = (normalize_address(order.sell_token), normalize_address(order.buy_token))
-                if pair in pairs_with_paths or pair in pairs_without_paths:
-                    continue
-                # Check if any path exists for this pair
+                if pair not in seen_pairs:
+                    seen_pairs.add(pair)
+                    unique_pairs.append(pair)
+
+            # Pre-warm path cache in parallel
+            if unique_pairs:
+                prewarmed = pool_registry.pathfinder.prewarm_paths_parallel(unique_pairs)
+                logger.debug(
+                    "amm_routing_path_prewarm",
+                    unique_pairs=len(unique_pairs),
+                    prewarmed=prewarmed,
+                )
+
+            # Now check which pairs have paths (fast - hits cache)
+            pairs_with_paths: set[tuple[str, str]] = set()
+            for pair in unique_pairs:
                 paths = pool_registry.get_all_candidate_paths(pair[0], pair[1])
                 if paths:
                     pairs_with_paths.add(pair)

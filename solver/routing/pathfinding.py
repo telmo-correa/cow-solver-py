@@ -4,18 +4,126 @@ This module provides graph-based pathfinding for discovering multi-hop
 routes through available liquidity. It separates the graph structure
 and pathfinding algorithms from pool storage.
 
-Phase 4 will extend these primitives for:
-- Split routing path enumeration
-- Ring trade detection
-- Joint optimization path selection
+Supports parallel path cache pre-warming via ProcessPoolExecutor for
+improved performance on large auctions.
 """
 
 from __future__ import annotations
 
+import os
 from collections import deque
+from concurrent.futures import ProcessPoolExecutor
 from typing import TYPE_CHECKING, Any, Protocol
 
+import structlog
+
 from solver.models.types import normalize_address
+
+logger = structlog.get_logger()
+
+
+# Module-level BFS function for use in worker processes.
+# Must be at module level for pickling by ProcessPoolExecutor.
+def _bfs_find_paths(
+    adjacency: dict[str, set[str]],
+    token_in: str,
+    token_out: str,
+    max_hops: int = 3,
+    max_paths: int = 20,
+) -> list[list[str]]:
+    """Find paths using BFS (standalone function for multiprocessing).
+
+    This is a copy of the BFS logic from PathFinder.find_all_paths,
+    extracted to a module-level function so it can be pickled and
+    run in worker processes.
+
+    Args:
+        adjacency: Token graph adjacency dict (token -> set of neighbors)
+        token_in: Starting token (already normalized)
+        token_out: Target token (already normalized)
+        max_hops: Maximum number of swaps
+        max_paths: Maximum paths to return
+
+    Returns:
+        List of paths found
+    """
+    if token_in == token_out:
+        return []
+
+    if token_in not in adjacency or token_out not in adjacency:
+        return []
+
+    candidates: list[list[str]] = []
+    start_neighbors = adjacency.get(token_in, set())
+    end_neighbors = adjacency.get(token_out, set())
+
+    # Check direct path first
+    if token_out in start_neighbors:
+        candidates.append([token_in, token_out])
+        if len(candidates) >= max_paths or max_hops == 1:
+            return candidates
+
+    if max_hops < 2:
+        return candidates
+
+    # For 2-hop paths, find common neighbors
+    common_neighbors = start_neighbors & end_neighbors
+    for intermediate in common_neighbors:
+        if intermediate != token_in and intermediate != token_out:
+            candidates.append([token_in, intermediate, token_out])
+            if len(candidates) >= max_paths:
+                return candidates
+
+    if max_hops < 3:
+        return candidates
+
+    # For 3+ hops, use BFS
+    queue: deque[tuple[list[str], frozenset[str]]] = deque()
+    for neighbor in start_neighbors:
+        if neighbor != token_out:
+            queue.append(([token_in, neighbor], frozenset([token_in, neighbor])))
+
+    while queue and len(candidates) < max_paths:
+        path, visited = queue.popleft()
+
+        if len(path) >= max_hops + 1:
+            continue
+
+        current = path[-1]
+        current_neighbors = adjacency.get(current, set())
+
+        if token_out in current_neighbors:
+            new_path = path + [token_out]
+            if len(new_path) > 3 or current not in common_neighbors:
+                candidates.append(new_path)
+                if len(candidates) >= max_paths:
+                    break
+
+        if len(path) < max_hops:
+            for neighbor in current_neighbors:
+                if neighbor not in visited and neighbor != token_out:
+                    new_path = path + [neighbor]
+                    new_visited = visited | frozenset([neighbor])
+                    queue.append((new_path, new_visited))
+
+    return candidates
+
+
+def _worker_find_paths(
+    args: tuple[dict[str, set[str]], str, str, int, int],
+) -> tuple[str, str, int, list[list[str]]]:
+    """Worker function for parallel path finding.
+
+    Args:
+        args: Tuple of (adjacency, token_in, token_out, max_hops, max_paths)
+
+    Returns:
+        Tuple of (token_in, token_out, max_hops, paths) for cache population
+    """
+    adjacency, token_in, token_out, max_hops, max_paths = args
+    paths = _bfs_find_paths(adjacency, token_in, token_out, max_hops, max_paths)
+    return (token_in, token_out, max_hops, paths)
+
 
 if TYPE_CHECKING:
     from solver.pools.registry import PoolRegistry
@@ -366,6 +474,102 @@ class PathFinder:
 
         self._shortest_path_cache[cache_key] = None
         return None
+
+    def prewarm_paths_parallel(
+        self,
+        token_pairs: list[tuple[str, str]],
+        max_hops: int = 3,
+        max_paths: int = 20,
+        max_workers: int | None = None,
+    ) -> int:
+        """Pre-warm the path cache for multiple token pairs in parallel.
+
+        Uses ProcessPoolExecutor to run BFS for each pair concurrently,
+        then populates the cache with results. This can significantly
+        speed up subsequent routing when there are many unique token pairs.
+
+        Args:
+            token_pairs: List of (token_in, token_out) pairs to pre-warm
+            max_hops: Maximum number of swaps (default 3)
+            max_paths: Maximum paths per pair (default 20)
+            max_workers: Number of worker processes. Defaults to CPU count.
+
+        Returns:
+            Number of pairs that were pre-warmed (excludes cache hits)
+        """
+        if not token_pairs:
+            return 0
+
+        # Normalize pairs and filter out those already cached
+        pairs_to_process: list[tuple[str, str]] = []
+        for token_in, token_out in token_pairs:
+            token_in_norm = normalize_address(token_in)
+            token_out_norm = normalize_address(token_out)
+
+            if token_in_norm == token_out_norm:
+                continue
+
+            cache_key = (token_in_norm, token_out_norm, max_hops)
+            if cache_key not in self._path_cache:
+                pairs_to_process.append((token_in_norm, token_out_norm))
+
+        if not pairs_to_process:
+            return 0
+
+        # Ensure graph is built before we extract adjacency
+        graph = self.graph
+        adjacency = graph._adjacency
+
+        # Determine worker count
+        if max_workers is None:
+            max_workers = os.cpu_count() or 4
+
+        # For small workloads, skip multiprocessing overhead
+        if len(pairs_to_process) < max_workers * 2:
+            # Sequential fallback for small batches
+            for token_in, token_out in pairs_to_process:
+                self.find_all_paths(token_in, token_out, max_hops, max_paths)
+            return len(pairs_to_process)
+
+        # Prepare work items
+        work_items = [
+            (adjacency, token_in, token_out, max_hops, max_paths)
+            for token_in, token_out in pairs_to_process
+        ]
+
+        # Run BFS in parallel
+        logger.debug(
+            "prewarm_paths_parallel_start",
+            pairs=len(pairs_to_process),
+            workers=max_workers,
+        )
+
+        try:
+            with ProcessPoolExecutor(max_workers=max_workers) as executor:
+                results = list(executor.map(_worker_find_paths, work_items))
+
+            # Populate cache with results
+            for token_in, token_out, hops, paths in results:
+                cache_key = (token_in, token_out, hops)
+                self._path_cache[cache_key] = paths
+
+            logger.debug(
+                "prewarm_paths_parallel_done",
+                pairs=len(results),
+            )
+
+            return len(results)
+
+        except Exception as e:
+            # Fall back to sequential on any error
+            logger.warning(
+                "prewarm_paths_parallel_fallback",
+                error=str(e),
+                pairs=len(pairs_to_process),
+            )
+            for token_in, token_out in pairs_to_process:
+                self.find_all_paths(token_in, token_out, max_hops, max_paths)
+            return len(pairs_to_process)
 
 
 __all__ = ["TokenGraph", "PathFinder", "PoolGraphSource"]

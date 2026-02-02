@@ -246,3 +246,89 @@ class TestPoolRegistryPathfindingDelegation:
 
         # Should return same instance
         assert registry.pathfinder is finder
+
+
+class TestPathFinderParallelPrewarm:
+    """Tests for parallel path cache pre-warming."""
+
+    def test_prewarm_populates_cache(self) -> None:
+        """Pre-warming should populate the path cache."""
+        registry = PoolRegistry()
+        registry.add_pool(make_v2_pool(TOKEN_A, TOKEN_B, "01"))
+        registry.add_pool(make_v2_pool(TOKEN_B, TOKEN_C, "02"))
+        registry.add_pool(make_v2_pool(TOKEN_C, TOKEN_D, "03"))
+
+        finder = registry.pathfinder
+
+        # Cache should be empty initially
+        assert len(finder._path_cache) == 0
+
+        # Pre-warm multiple pairs
+        pairs = [
+            (TOKEN_A, TOKEN_B),
+            (TOKEN_A, TOKEN_C),
+            (TOKEN_B, TOKEN_D),
+        ]
+        prewarmed = finder.prewarm_paths_parallel(pairs)
+
+        # Should have pre-warmed all pairs
+        assert prewarmed == 3
+        assert len(finder._path_cache) == 3
+
+    def test_prewarm_skips_cached_pairs(self) -> None:
+        """Pre-warming should skip pairs already in cache."""
+        registry = PoolRegistry()
+        registry.add_pool(make_v2_pool(TOKEN_A, TOKEN_B, "01"))
+        registry.add_pool(make_v2_pool(TOKEN_B, TOKEN_C, "02"))
+
+        finder = registry.pathfinder
+
+        # Manually populate cache for one pair
+        finder.find_all_paths(TOKEN_A, TOKEN_B)
+        assert len(finder._path_cache) == 1
+
+        # Pre-warm including the cached pair
+        pairs = [
+            (TOKEN_A, TOKEN_B),  # Already cached
+            (TOKEN_A, TOKEN_C),  # New
+        ]
+        prewarmed = finder.prewarm_paths_parallel(pairs)
+
+        # Should only prewarm the new pair
+        assert prewarmed == 1
+        assert len(finder._path_cache) == 2
+
+    def test_prewarm_empty_list(self) -> None:
+        """Pre-warming empty list should return 0."""
+        registry = PoolRegistry()
+        finder = registry.pathfinder
+
+        prewarmed = finder.prewarm_paths_parallel([])
+        assert prewarmed == 0
+
+    def test_prewarm_results_match_sequential(self) -> None:
+        """Pre-warmed paths should match sequential find_all_paths."""
+        registry = PoolRegistry()
+        registry.add_pool(make_v2_pool(TOKEN_A, TOKEN_B, "01"))
+        registry.add_pool(make_v2_pool(TOKEN_B, TOKEN_C, "02"))
+        registry.add_pool(make_v2_pool(TOKEN_A, TOKEN_C, "03"))
+
+        finder = registry.pathfinder
+
+        # Get expected paths sequentially
+        expected_ab = finder.find_all_paths(TOKEN_A, TOKEN_B)
+        expected_ac = finder.find_all_paths(TOKEN_A, TOKEN_C)
+
+        # Clear cache
+        finder.invalidate()
+
+        # Pre-warm in parallel
+        pairs = [(TOKEN_A, TOKEN_B), (TOKEN_A, TOKEN_C)]
+        finder.prewarm_paths_parallel(pairs)
+
+        # Compare cached results
+        cache_key_ab = (TOKEN_A.lower(), TOKEN_B.lower(), 3)
+        cache_key_ac = (TOKEN_A.lower(), TOKEN_C.lower(), 3)
+
+        assert finder._path_cache[cache_key_ab] == expected_ab
+        assert finder._path_cache[cache_key_ac] == expected_ac
