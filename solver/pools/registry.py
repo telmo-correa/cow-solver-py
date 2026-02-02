@@ -331,24 +331,35 @@ class PoolRegistry:
         Returns:
             List of all pools for this pair
         """
+        # Normalize once, use for all lookups
+        token_a_norm = normalize_address(token_a)
+        token_b_norm = normalize_address(token_b)
+
         pools: list[AnyPool] = []
 
-        # Add V2 pool if exists (bidirectional)
-        v2_pool = self.get_pool(token_a, token_b)
+        # Add V2 pool if exists (bidirectional) - use frozenset for order-independent lookup
+        v2_key = frozenset([token_a_norm, token_b_norm])
+        v2_pool = self._pools.get(v2_key)
         if v2_pool is not None:
             pools.append(v2_pool)
 
-        # Add all V3 pools (bidirectional)
-        pools.extend(self.get_v3_pools(token_a, token_b))
+        # Add all V3 pools (bidirectional) - canonical ordering for V3
+        if token_a_norm > token_b_norm:
+            v3_pair_key = (token_b_norm, token_a_norm)
+        else:
+            v3_pair_key = (token_a_norm, token_b_norm)
+        pools.extend(self._v3_pools_by_pair.get(v3_pair_key, []))
 
-        # Add all Balancer weighted pools (bidirectional)
-        pools.extend(self.get_weighted_pools(token_a, token_b))
+        # Add all Balancer weighted pools (bidirectional) - canonical ordering
+        balancer_pair = (min(token_a_norm, token_b_norm), max(token_a_norm, token_b_norm))
+        pools.extend(self._weighted_pools.get(balancer_pair, []))
 
         # Add all Balancer stable pools (bidirectional)
-        pools.extend(self.get_stable_pools(token_a, token_b))
+        pools.extend(self._stable_pools.get(balancer_pair, []))
 
         # Add all limit orders (unidirectional: token_a -> token_b only)
-        pools.extend(self.get_limit_orders(token_a, token_b))
+        limit_key = (token_a_norm, token_b_norm)
+        pools.extend(self._limit_orders.get(limit_key, []))
 
         return pools
 

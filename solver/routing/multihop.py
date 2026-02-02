@@ -12,7 +12,6 @@ from solver.amm.balancer import (
 )
 from solver.amm.uniswap_v2 import UniswapV2
 from solver.models.auction import Order
-from solver.models.types import normalize_address
 from solver.pools import AnyPool, LimitOrderPool, PoolRegistry
 from solver.routing.types import HopResult, RoutingResult
 
@@ -78,8 +77,9 @@ class MultihopRouter:
         total_gas = 0
 
         for i, pool in enumerate(pools):
-            token_in = normalize_address(path[i])
-            token_out = normalize_address(path[i + 1])
+            # Path tokens are already normalized from pathfinding
+            token_in = path[i]
+            token_out = path[i + 1]
 
             # Use handler registry if available, otherwise fall back to isinstance
             if self._handler_registry is not None and self._handler_registry.is_registered(pool):
@@ -226,8 +226,9 @@ class MultihopRouter:
         # Build hop results with actual amounts from forward pass
         hops: list[HopResult] = []
         for i, pool in enumerate(pools):
-            token_in = normalize_address(path[i])
-            token_out = normalize_address(path[i + 1])
+            # Path tokens are already normalized from pathfinding
+            token_in = path[i]
+            token_out = path[i + 1]
             hops.append(
                 HopResult(
                     pool=pool,
