@@ -47,6 +47,9 @@ class PoolRegistry:
         self._pools: dict[frozenset[str], UniswapV2Pool] = {}
         # V3 pools keyed by (token0, token1, fee) for multiple fee tiers per pair
         self._v3_pools: dict[tuple[str, str, int], UniswapV3Pool] = {}
+        # Secondary index for V3: (token0, token1) -> list of pools (all fee tiers)
+        # This avoids O(n) iteration in get_v3_pools
+        self._v3_pools_by_pair: dict[tuple[str, str], list[UniswapV3Pool]] = {}
         # Balancer pools indexed by canonical token pair (for N-token pools, create N*(N-1)/2 entries)
         self._weighted_pools: dict[tuple[str, str], list[BalancerWeightedPool]] = {}
         self._stable_pools: dict[tuple[str, str], list[BalancerStablePool]] = {}
@@ -146,7 +149,27 @@ class PoolRegistry:
         if token0_norm > token1_norm:
             token0_norm, token1_norm = token1_norm, token0_norm
         key = (token0_norm, token1_norm, pool.fee)
-        self._v3_pools[key] = pool
+        pair_key = (token0_norm, token1_norm)
+
+        # Check if this exact pool (same fee tier) already exists
+        if key in self._v3_pools:
+            # Replace existing pool (same behavior as before)
+            self._v3_pools[key] = pool
+            # Update secondary index - replace the old pool with new one
+            if pair_key in self._v3_pools_by_pair:
+                pools = self._v3_pools_by_pair[pair_key]
+                for i, p in enumerate(pools):
+                    if p.fee == pool.fee:
+                        pools[i] = pool
+                        break
+        else:
+            # New pool
+            self._v3_pools[key] = pool
+            # Update secondary index
+            if pair_key not in self._v3_pools_by_pair:
+                self._v3_pools_by_pair[pair_key] = []
+            self._v3_pools_by_pair[pair_key].append(pool)
+
         self._invalidate_pathfinder()
 
     def get_v3_pools(self, token_a: str, token_b: str) -> list[UniswapV3Pool]:
@@ -165,11 +188,8 @@ class PoolRegistry:
         if token_a_norm > token_b_norm:
             token_a_norm, token_b_norm = token_b_norm, token_a_norm
 
-        result = []
-        for (t0, t1, _fee), pool in self._v3_pools.items():
-            if t0 == token_a_norm and t1 == token_b_norm:
-                result.append(pool)
-        return result
+        pair_key = (token_a_norm, token_b_norm)
+        return self._v3_pools_by_pair.get(pair_key, [])
 
     def add_weighted_pool(self, pool: BalancerWeightedPool) -> None:
         """Add a Balancer weighted pool to the registry.

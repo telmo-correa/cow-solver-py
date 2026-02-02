@@ -119,16 +119,28 @@ class TokenGraph:
         """Get all tokens directly tradeable with given token.
 
         Args:
-            token: Token address (normalized)
+            token: Token address (any case, will be normalized)
 
         Returns:
             Set of token addresses connected by at least one pool
         """
         return self._adjacency.get(normalize_address(token), set())
 
+    def _get_neighbors_fast(self, token_normalized: str) -> set[str]:
+        """Get neighbors for an already-normalized token address.
+
+        Internal method for performance-critical paths where token
+        is known to be normalized.
+        """
+        return self._adjacency.get(token_normalized, set())
+
     def has_token(self, token: str) -> bool:
         """Check if a token exists in the graph."""
         return normalize_address(token) in self._adjacency
+
+    def _has_token_fast(self, token_normalized: str) -> bool:
+        """Check if token exists (already-normalized address)."""
+        return token_normalized in self._adjacency
 
     @property
     def token_count(self) -> int:
@@ -224,43 +236,73 @@ class PathFinder:
             return self._path_cache[cache_key]
 
         graph = self.graph
-        if not graph.has_token(token_in_norm) or not graph.has_token(token_out_norm):
+        if not graph._has_token_fast(token_in_norm) or not graph._has_token_fast(token_out_norm):
             self._path_cache[cache_key] = []
             return []
 
         candidates: list[list[str]] = []
+        start_neighbors = graph._get_neighbors_fast(token_in_norm)
+        end_neighbors = graph._get_neighbors_fast(token_out_norm)
 
-        # BFS to find paths up to max_hops (limited by max_paths)
-        # Each queue entry is (path_so_far, visited_set)
-        queue: deque[tuple[list[str], set[str]]] = deque()
-        queue.append(([token_in_norm], {token_in_norm}))
+        # Optimization 1: Check direct path first (very common case)
+        if token_out_norm in start_neighbors:
+            candidates.append([token_in_norm, token_out_norm])
+            if len(candidates) >= max_paths or max_hops == 1:
+                self._path_cache[cache_key] = candidates
+                return candidates
+
+        if max_hops < 2:
+            self._path_cache[cache_key] = candidates
+            return candidates
+
+        # Optimization 2: For 2-hop paths, find common neighbors (intersection)
+        # A 2-hop path exists if there's a common neighbor between start and end
+        common_neighbors = start_neighbors & end_neighbors
+        for intermediate in common_neighbors:
+            if intermediate != token_in_norm and intermediate != token_out_norm:
+                candidates.append([token_in_norm, intermediate, token_out_norm])
+                if len(candidates) >= max_paths:
+                    self._path_cache[cache_key] = candidates
+                    return candidates
+
+        if max_hops < 3:
+            self._path_cache[cache_key] = candidates
+            return candidates
+
+        # For 3+ hops, use BFS but skip paths we've already found
+        # Track visited to avoid cycles within a single path
+        queue: deque[tuple[list[str], frozenset[str]]] = deque()
+        # Start with 2-hop partial paths (not including destination)
+        for neighbor in start_neighbors:
+            if neighbor != token_out_norm:  # Skip direct paths (already handled)
+                queue.append(([token_in_norm, neighbor], frozenset([token_in_norm, neighbor])))
 
         while queue and len(candidates) < max_paths:
             path, visited = queue.popleft()
 
-            # Early termination: skip paths that already exceed hop limit.
-            # This check handles paths that were queued before we knew their length.
-            # Path with N nodes has N-1 hops, so max allowed length is max_hops + 1.
-            if len(path) > max_hops + 1:
+            # Only explore if we have room for more hops
+            if len(path) >= max_hops + 1:
                 continue
 
             current = path[-1]
+            current_neighbors = graph._get_neighbors_fast(current)
 
-            for neighbor in graph.get_neighbors(current):
-                if neighbor == token_out_norm:
-                    # Found valid path to destination
-                    new_path = path + [neighbor]
-                    # Second hop check: verify final path is within limit.
-                    # Needed because we check current path length above, but
-                    # adding destination increases length by 1.
-                    if len(new_path) <= max_hops + 1:
-                        candidates.append(new_path)
-                        if len(candidates) >= max_paths:
-                            break
-                elif neighbor not in visited and len(path) < max_hops + 1:
-                    # Continue exploring
-                    new_visited = visited | {neighbor}
-                    queue.append((path + [neighbor], new_visited))
+            # Check if destination is reachable
+            if token_out_norm in current_neighbors:
+                new_path = path + [token_out_norm]
+                # Skip if this is a 2-hop path (already found above)
+                if len(new_path) > 3 or current not in common_neighbors:
+                    candidates.append(new_path)
+                    if len(candidates) >= max_paths:
+                        break
+
+            # Continue exploring (only if we haven't reached hop limit)
+            if len(path) < max_hops:
+                for neighbor in current_neighbors:
+                    if neighbor not in visited and neighbor != token_out_norm:
+                        new_path = path + [neighbor]
+                        new_visited = visited | frozenset([neighbor])
+                        queue.append((new_path, new_visited))
 
         # Cache result before returning
         self._path_cache[cache_key] = candidates
@@ -299,7 +341,7 @@ class PathFinder:
             return self._shortest_path_cache[cache_key]
 
         graph = self.graph
-        if not graph.has_token(token_in_norm) or not graph.has_token(token_out_norm):
+        if not graph._has_token_fast(token_in_norm) or not graph._has_token_fast(token_out_norm):
             self._shortest_path_cache[cache_key] = None
             return None
 
@@ -312,7 +354,8 @@ class PathFinder:
                 continue
 
             current = path[-1]
-            for neighbor in graph.get_neighbors(current):
+            # Use fast neighbor lookup since all tokens in BFS are already normalized
+            for neighbor in graph._get_neighbors_fast(current):
                 if neighbor == token_out_norm:
                     result = path + [neighbor]
                     self._shortest_path_cache[cache_key] = result

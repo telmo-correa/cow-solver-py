@@ -61,9 +61,9 @@ def main():
     )
     parser.add_argument(
         "--sort",
-        choices=["cumtime", "tottime", "calls", "ncalls"],
-        default="cumtime",
-        help="Sort key for profile output (default: cumtime)",
+        choices=["cumulative", "tottime", "calls", "ncalls"],
+        default="cumulative",
+        help="Sort key for profile output (default: cumulative)",
     )
     parser.add_argument(
         "--callers",
