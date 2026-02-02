@@ -299,6 +299,9 @@ class AmmRoutingStrategy(AMMBackedStrategy):
         reserves are updated so subsequent orders use accurate reserve data.
         Orders that fail routing are skipped (partial success is OK).
 
+        Performance optimization: Pre-filters orders by checking path existence
+        at the token pair level before attempting full routing.
+
         Args:
             auction: The auction containing multiple orders
             pool_registry: Registry of available liquidity pools
@@ -313,7 +316,37 @@ class AmmRoutingStrategy(AMMBackedStrategy):
         total_gas = 0
         failed_order_uids: list[str] = []
 
+        # Pre-filter: check which token pairs have any routing paths
+        # This avoids expensive per-order routing for pairs with no liquidity
+        # Skip pre-filter when using an injected router (tests) or empty registry
+        pairs_without_paths: set[tuple[str, str]] = set()
+
+        if self._injected_router is None and pool_registry.pool_count > 0:
+            pairs_with_paths: set[tuple[str, str]] = set()
+
+            for order in auction.orders:
+                pair = (normalize_address(order.sell_token), normalize_address(order.buy_token))
+                if pair in pairs_with_paths or pair in pairs_without_paths:
+                    continue
+                # Check if any path exists for this pair
+                paths = pool_registry.get_all_candidate_paths(pair[0], pair[1])
+                if paths:
+                    pairs_with_paths.add(pair)
+                else:
+                    pairs_without_paths.add(pair)
+
+            logger.debug(
+                "amm_routing_pair_prefilter",
+                pairs_with_paths=len(pairs_with_paths),
+                pairs_without_paths=len(pairs_without_paths),
+            )
+
         for order in auction.orders:
+            # Quick rejection for pairs with no paths
+            pair = (normalize_address(order.sell_token), normalize_address(order.buy_token))
+            if pair in pairs_without_paths:
+                failed_order_uids.append(order.uid[:18] + "...")
+                continue
             result = self._route_and_build(order, pool_registry)
 
             if result is not None:

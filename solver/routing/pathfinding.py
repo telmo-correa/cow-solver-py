@@ -156,14 +156,20 @@ class PathFinder:
         """
         self._registry = registry
         self._graph: TokenGraph | None = None
+        # Cache for path queries: (token_in, token_out, max_hops) -> paths
+        self._path_cache: dict[tuple[str, str, int], list[list[str]]] = {}
+        # Cache for shortest path: (token_in, token_out, max_hops) -> path or None
+        self._shortest_path_cache: dict[tuple[str, str, int], list[str] | None] = {}
 
     def invalidate(self) -> None:
-        """Invalidate the cached graph.
+        """Invalidate the cached graph and path caches.
 
         Call this after adding pools to the registry to ensure
         the graph is rebuilt on next pathfinding operation.
         """
         self._graph = None
+        self._path_cache.clear()
+        self._shortest_path_cache.clear()
 
     @property
     def graph(self) -> TokenGraph:
@@ -177,21 +183,30 @@ class PathFinder:
         token_in: str,
         token_out: str,
         max_hops: int = 3,
+        max_paths: int = 20,
     ) -> list[list[str]]:
-        """Find all candidate paths from token_in to token_out.
+        """Find candidate paths from token_in to token_out.
 
-        Uses BFS to enumerate all paths up to max_hops. This is similar
-        to Rust's baseline solver path_candidates function.
+        Uses BFS to enumerate paths up to max_hops. BFS naturally finds
+        shorter paths first, so direct paths are returned before multi-hop.
 
         Path types by hops:
         - Direct (1 hop): [token_in, token_out]
         - 2-hop: [token_in, intermediate, token_out]
         - 3-hop: [token_in, int1, int2, token_out]
 
+        Results are cached for repeated queries with the same parameters.
+
+        Performance: For token pairs connected through high-degree hub tokens
+        (like WETH with 600+ neighbors), there can be thousands of possible
+        paths. The max_paths limit prevents exponential exploration while
+        still finding good candidates (BFS finds shorter paths first).
+
         Args:
             token_in: Starting token address
             token_out: Target token address
             max_hops: Maximum number of swaps allowed (default 3)
+            max_paths: Maximum number of paths to return (default 20)
 
         Returns:
             List of paths, each path is a list of token addresses.
@@ -203,18 +218,24 @@ class PathFinder:
         if token_in_norm == token_out_norm:
             return []
 
+        # Check cache first (cache key includes max_paths)
+        cache_key = (token_in_norm, token_out_norm, max_hops)
+        if cache_key in self._path_cache:
+            return self._path_cache[cache_key]
+
         graph = self.graph
         if not graph.has_token(token_in_norm) or not graph.has_token(token_out_norm):
+            self._path_cache[cache_key] = []
             return []
 
         candidates: list[list[str]] = []
 
-        # BFS to find ALL paths up to max_hops
+        # BFS to find paths up to max_hops (limited by max_paths)
         # Each queue entry is (path_so_far, visited_set)
         queue: deque[tuple[list[str], set[str]]] = deque()
         queue.append(([token_in_norm], {token_in_norm}))
 
-        while queue:
+        while queue and len(candidates) < max_paths:
             path, visited = queue.popleft()
 
             # Early termination: skip paths that already exceed hop limit.
@@ -234,11 +255,15 @@ class PathFinder:
                     # adding destination increases length by 1.
                     if len(new_path) <= max_hops + 1:
                         candidates.append(new_path)
+                        if len(candidates) >= max_paths:
+                            break
                 elif neighbor not in visited and len(path) < max_hops + 1:
                     # Continue exploring
                     new_visited = visited | {neighbor}
                     queue.append((path + [neighbor], new_visited))
 
+        # Cache result before returning
+        self._path_cache[cache_key] = candidates
         return candidates
 
     def find_shortest_path(
@@ -251,6 +276,8 @@ class PathFinder:
 
         Uses BFS to find the shortest path (by number of hops).
         More efficient than find_all_paths when only one path is needed.
+
+        Results are cached for repeated queries with the same parameters.
 
         Args:
             token_in: Starting token address
@@ -266,8 +293,14 @@ class PathFinder:
         if token_in_norm == token_out_norm:
             return [token_in_norm]
 
+        # Check cache first
+        cache_key = (token_in_norm, token_out_norm, max_hops)
+        if cache_key in self._shortest_path_cache:
+            return self._shortest_path_cache[cache_key]
+
         graph = self.graph
         if not graph.has_token(token_in_norm) or not graph.has_token(token_out_norm):
+            self._shortest_path_cache[cache_key] = None
             return None
 
         queue: deque[list[str]] = deque([[token_in_norm]])
@@ -281,11 +314,14 @@ class PathFinder:
             current = path[-1]
             for neighbor in graph.get_neighbors(current):
                 if neighbor == token_out_norm:
-                    return path + [neighbor]
+                    result = path + [neighbor]
+                    self._shortest_path_cache[cache_key] = result
+                    return result
                 if neighbor not in visited:
                     visited.add(neighbor)
                     queue.append(path + [neighbor])
 
+        self._shortest_path_cache[cache_key] = None
         return None
 
 

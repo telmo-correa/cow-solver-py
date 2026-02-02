@@ -504,7 +504,7 @@ Flash loans provide temporary capital within a single transaction, enabling:
 
 **Current Production Chain:** CowMatch → MultiPair → AmmRouting (992 tests passing)
 
-**Gap Under Investigation:** 36.53% CoW potential vs 0.12% actual match rate
+**CoW Match Rate:** 0.12% — this is near-optimal given market constraints (see `docs/evaluations/cow-potential-analysis.md`)
 
 ---
 
