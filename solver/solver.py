@@ -36,7 +36,7 @@ class Solver:
 
     Default strategies (in priority order):
     1. CowMatchStrategy - Simple 2-order CoW matching (handles fill-or-kill)
-    2. HybridCowStrategy - N-order CoW matching using AMM reference prices
+    2. MultiPairCowStrategy - N-order CoW matching with joint price optimization
     3. AmmRoutingStrategy - Route through liquidity pools
 
     Args:
