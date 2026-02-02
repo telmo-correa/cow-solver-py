@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# Pre-commit hook to run ruff format and lint checks
+
+set -e
+
+echo "Running ruff format check..."
+ruff format --check solver tests benchmarks scripts
+if [ $? -ne 0 ]; then
+    echo ""
+    echo "Formatting issues found. Run 'ruff format solver tests benchmarks scripts' to fix."
+    exit 1
+fi
+
+echo "Running ruff linter..."
+ruff check solver tests benchmarks scripts
+if [ $? -ne 0 ]; then
+    echo ""
+    echo "Lint issues found. Run 'ruff check --fix solver tests benchmarks scripts' to fix."
+    exit 1
+fi
+
+echo "All checks passed!"
