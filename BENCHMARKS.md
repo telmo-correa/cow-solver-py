@@ -490,7 +490,7 @@ Benchmarks generate reports in `benchmarks/results/`:
 
 ## Historical Auction Performance
 
-The solver has been optimized to handle large historical auctions efficiently. This section documents performance on real mainnet auction data.
+Performance on real mainnet auction data.
 
 ### Test Data
 
@@ -538,29 +538,7 @@ Benchmarked on 10 consecutive auctions (56,289 total orders):
 | **CowMatch** | 0 | 0.00% | <1ms | N/A |
 | **HybridCow** | 0 | 0.00% | 19ms | N/A |
 
-**Notes**:
-- CoW potential (orders on bidirectional pairs): 36.53%
-- Actual matches are much lower due to price misalignment and EBBO constraints
-- All matched orders pass EBBO validation (clearing price >= AMM reference price)
-
-### Performance Optimization History
-
-The solver has undergone significant performance optimization:
-
-| Version | Solve Time | Improvement |
-|---------|-----------|-------------|
-| Initial | ~92s | - |
-| + Path caching | ~17s | 5.4x |
-| + BFS optimization | ~10s | 1.7x |
-| + Reduced normalization | ~9s | 1.1x |
-| **Total** | **~9s** | **~10x faster** |
-
-Key optimizations:
-1. **Path caching**: Cache pathfinding results for repeated token pair queries
-2. **Direct path fast-path**: Check direct paths before BFS exploration
-3. **Set intersection for 2-hop**: Use O(min(n,m)) set intersection instead of BFS
-4. **V3 pool index**: Secondary index for O(1) V3 pool lookup by token pair
-5. **Reduced address normalization**: Skip redundant normalize_address calls in hot paths
+All matched orders pass EBBO validation (clearing price >= AMM reference price).
 
 ### Running Historical Benchmarks
 
