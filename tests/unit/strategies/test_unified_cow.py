@@ -273,9 +273,7 @@ class TestUnifiedCowEBBOEndToEnd:
 
         mock_router.get_reference_price.side_effect = mock_get_reference_price
 
-        with patch(
-            "solver.strategies.unified_cow.SingleOrderRouter", return_value=mock_router
-        ):
+        with patch("solver.strategies.unified_cow.SingleOrderRouter", return_value=mock_router):
             strategy = UnifiedCowStrategy(enforce_ebbo=True)
             result = strategy.try_solve(auction)
 
@@ -320,9 +318,7 @@ class TestUnifiedCowEBBOEndToEnd:
 
         mock_router.get_reference_price.side_effect = mock_get_reference_price
 
-        with patch(
-            "solver.strategies.unified_cow.SingleOrderRouter", return_value=mock_router
-        ):
+        with patch("solver.strategies.unified_cow.SingleOrderRouter", return_value=mock_router):
             strategy = UnifiedCowStrategy(enforce_ebbo=True)
             result = strategy.try_solve(auction)
 
@@ -366,9 +362,7 @@ class TestUnifiedCowEBBOEndToEnd:
 
         mock_router.get_reference_price.side_effect = mock_get_reference_price
 
-        with patch(
-            "solver.strategies.unified_cow.SingleOrderRouter", return_value=mock_router
-        ):
+        with patch("solver.strategies.unified_cow.SingleOrderRouter", return_value=mock_router):
             strategy = UnifiedCowStrategy(enforce_ebbo=True)
             result = strategy.try_solve(auction)
 
@@ -417,9 +411,7 @@ class TestUnifiedCowEBBOEndToEnd:
 
         mock_router.get_reference_price.side_effect = mock_get_reference_price
 
-        with patch(
-            "solver.strategies.unified_cow.SingleOrderRouter", return_value=mock_router
-        ):
+        with patch("solver.strategies.unified_cow.SingleOrderRouter", return_value=mock_router):
             strategy = UnifiedCowStrategy(enforce_ebbo=True)
             result = strategy.try_solve(auction)
 

@@ -9,13 +9,15 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from solver.models.auction import AuctionInstance
-from solver.pools import build_registry_from_liquidity
 from solver.models.types import normalize_address
+from solver.pools import build_registry_from_liquidity
 
 
 def main():
     # Load auction
-    auction_path = Path(__file__).parent.parent / "data" / "historical_auctions" / "mainnet_11985000.json"
+    auction_path = (
+        Path(__file__).parent.parent / "data" / "historical_auctions" / "mainnet_11985000.json"
+    )
     with open(auction_path) as f:
         data = json.load(f)
     auction = AuctionInstance.model_validate(data)
@@ -28,7 +30,7 @@ def main():
     start = time.perf_counter()
     registry = build_registry_from_liquidity(auction.liquidity)
     build_time = time.perf_counter() - start
-    print(f"\nRegistry build: {build_time*1000:.1f}ms")
+    print(f"\nRegistry build: {build_time * 1000:.1f}ms")
     print(f"  Pools: {registry.pool_count}")
 
     # Count unique token pairs
@@ -49,7 +51,7 @@ def main():
         else:
             pairs_without_paths += 1
     path_check_time = time.perf_counter() - start
-    print(f"\nPath checking (all unique pairs): {path_check_time*1000:.1f}ms")
+    print(f"\nPath checking (all unique pairs): {path_check_time * 1000:.1f}ms")
     print(f"  Pairs with paths: {pairs_with_paths}")
     print(f"  Pairs without paths: {pairs_without_paths}")
 
@@ -65,7 +67,7 @@ def main():
             orders_without_paths += 1
     print(f"\nOrders with routable pairs: {orders_with_paths}")
     print(f"Orders with no route: {orders_without_paths}")
-    print(f"  → {orders_without_paths/len(auction.orders)*100:.1f}% can be pre-filtered out")
+    print(f"  → {orders_without_paths / len(auction.orders) * 100:.1f}% can be pre-filtered out")
 
 
 if __name__ == "__main__":

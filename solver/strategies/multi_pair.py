@@ -462,7 +462,9 @@ class MultiPairCowStrategy(AMMBackedStrategy):
                 continue
             try:
                 # Use explicit rounding to nearest for price output
-                scaled_price = (price * Decimal(10**18)).quantize(Decimal("1"), rounding=ROUND_HALF_UP)
+                scaled_price = (price * Decimal(10**18)).quantize(
+                    Decimal("1"), rounding=ROUND_HALF_UP
+                )
                 all_prices[token] = str(int(scaled_price))
             except (InvalidOperation, Overflow):
                 logger.warning(

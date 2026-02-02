@@ -7,7 +7,6 @@ import json
 import pstats
 import sys
 import time
-from io import StringIO
 from pathlib import Path
 
 # Add project root to path
@@ -101,12 +100,14 @@ def main():
     total_solutions = 0
 
     for auction_file in auction_files:
-        print(f"\n{'='*60}")
+        print(f"\n{'=' * 60}")
         print(f"Profiling: {auction_file.name}")
-        print(f"{'='*60}")
+        print(f"{'=' * 60}")
 
         auction = load_auction(auction_file)
-        print(f"Orders: {len(auction.orders)}, Tokens: {len(auction.tokens)}, Liquidity: {len(auction.liquidity)}")
+        print(
+            f"Orders: {len(auction.orders)}, Tokens: {len(auction.tokens)}, Liquidity: {len(auction.liquidity)}"
+        )
 
         elapsed, stats, result = profile_solve(auction, solver)
         total_time += elapsed
@@ -122,9 +123,9 @@ def main():
             all_stats.add(stats)
 
     # Print summary
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print("AGGREGATE PROFILE RESULTS")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
     print(f"Auctions profiled: {len(auction_files)}")
     print(f"Total orders: {total_orders}")
     print(f"Total solutions: {total_solutions}")
@@ -133,17 +134,17 @@ def main():
     print(f"Avg time per order: {total_time / total_orders * 1000:.3f}ms")
 
     # Print top functions
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(f"TOP {args.top} FUNCTIONS BY {args.sort.upper()}")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
 
     all_stats.sort_stats(args.sort)
     all_stats.print_stats(args.top)
 
     if args.callers:
-        print(f"\n{'='*60}")
+        print(f"\n{'=' * 60}")
         print("CALLERS FOR TOP FUNCTIONS")
-        print(f"{'='*60}")
+        print(f"{'=' * 60}")
         all_stats.print_callers(args.top // 2)
 
     # Save stats if requested

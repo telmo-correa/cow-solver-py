@@ -124,15 +124,27 @@ class TestRingTradeIntegration:
         # Product < 1: traders are generous, surplus exists
         # Use partially_fillable=True since surplus rings may partially fill
         alice = make_order(
-            "alice", WETH, USDC, "1000000000000000000", "1900000000",
+            "alice",
+            WETH,
+            USDC,
+            "1000000000000000000",
+            "1900000000",
             partially_fillable=True,
         )  # Asking 1900 USDC
         bob = make_order(
-            "bob", USDC, DAI, "2000000000", "1900000000000000000000",
+            "bob",
+            USDC,
+            DAI,
+            "2000000000",
+            "1900000000000000000000",
             partially_fillable=True,
         )  # Asking 1900 DAI
         carol = make_order(
-            "carol", DAI, WETH, "2000000000000000000000", "1000000000000000000",
+            "carol",
+            DAI,
+            WETH,
+            "2000000000000000000000",
+            "1000000000000000000",
             partially_fillable=True,
         )  # Asking 1 WETH
 

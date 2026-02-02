@@ -111,8 +111,7 @@ def verify_fok_constraint(solution: Solution, orders: list[Order]) -> None:
             expected = int(order.sell_amount) if order.is_sell_order else int(order.buy_amount)
 
             assert exec_amount == expected, (
-                f"FOK order {trade.order[:18]}... partially filled: "
-                f"{exec_amount} != {expected}"
+                f"FOK order {trade.order[:18]}... partially filled: {exec_amount} != {expected}"
             )
 
 
@@ -228,9 +227,7 @@ class TestLimitPriceEnforcement:
         response = solver.solve(auction)
 
         # No solution possible - limits don't overlap
-        assert len(response.solutions) == 0 or all(
-            len(s.trades) == 0 for s in response.solutions
-        )
+        assert len(response.solutions) == 0 or all(len(s.trades) == 0 for s in response.solutions)
 
 
 class TestUniformPriceEnforcement:
