@@ -35,9 +35,8 @@ class Solver:
     strategies are tried on the remainder orders.
 
     Default strategies (in priority order):
-    1. CowMatchStrategy - Simple 2-order CoW matching (handles fill-or-kill)
-    2. MultiPairCowStrategy - N-order CoW matching with joint price optimization
-    3. AmmRoutingStrategy - Route through liquidity pools
+    1. MultiPairCowStrategy - N-order CoW matching with joint price optimization
+    2. AmmRoutingStrategy - Route through liquidity pools
 
     Args:
         strategies: List of strategies to try in order. If None, uses defaults.
@@ -92,17 +91,13 @@ class Solver:
             # Backwards compatibility: create strategies from legacy params
             from solver.strategies import (
                 AmmRoutingStrategy,
-                CowMatchStrategy,
                 MultiPairCowStrategy,
             )
 
             self.strategies = [
-                # CowMatchStrategy handles 2-order cases with "price improvement"
-                # logic that correctly handles fill-or-kill orders
-                CowMatchStrategy(),
-                # MultiPairCowStrategy handles N-order cases with multi-pair price
-                # coordination using LP optimization. It finds connected components
-                # of overlapping token pairs and optimizes prices jointly.
+                # MultiPairCowStrategy handles N-order CoW matching with multi-pair
+                # price coordination using LP optimization. It finds connected
+                # components of overlapping token pairs and optimizes prices jointly.
                 MultiPairCowStrategy(
                     amm=amm,
                     router=router,
@@ -124,17 +119,13 @@ class Solver:
             # Default strategies
             from solver.strategies import (
                 AmmRoutingStrategy,
-                CowMatchStrategy,
                 MultiPairCowStrategy,
             )
 
             self.strategies = [
-                # CowMatchStrategy handles 2-order cases with "price improvement"
-                # logic that correctly handles fill-or-kill orders
-                CowMatchStrategy(),
-                # MultiPairCowStrategy handles N-order cases with multi-pair price
-                # coordination using LP optimization. It finds connected components
-                # of overlapping token pairs and optimizes prices jointly.
+                # MultiPairCowStrategy handles N-order CoW matching with multi-pair
+                # price coordination using LP optimization. It finds connected
+                # components of overlapping token pairs and optimizes prices jointly.
                 MultiPairCowStrategy(),
                 AmmRoutingStrategy(),
             ]

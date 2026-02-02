@@ -11,7 +11,7 @@ to maximize matched volume while maintaining EBBO compliance.
 from __future__ import annotations
 
 from collections import defaultdict
-from decimal import ROUND_HALF_UP, Decimal, InvalidOperation, Overflow
+from decimal import ROUND_HALF_UP, Decimal
 from fractions import Fraction
 from typing import TYPE_CHECKING
 
@@ -452,7 +452,7 @@ class MultiPairCowStrategy(AMMBackedStrategy):
                 processed_uids.add(fill.order.uid)
 
         for token, price in result.prices.items():
-            # Skip invalid prices (overflow protection)
+            # Skip invalid prices
             if not price.is_finite() or price <= 0:
                 logger.warning(
                     "multi_pair_invalid_price",
@@ -460,19 +460,9 @@ class MultiPairCowStrategy(AMMBackedStrategy):
                     price=str(price),
                 )
                 continue
-            try:
-                # Use explicit rounding to nearest for price output
-                scaled_price = (price * Decimal(10**18)).quantize(
-                    Decimal("1"), rounding=ROUND_HALF_UP
-                )
-                all_prices[token] = str(int(scaled_price))
-            except (InvalidOperation, Overflow):
-                logger.warning(
-                    "multi_pair_price_overflow",
-                    token=token[-8:],
-                    price=str(price),
-                )
-                continue
+            # Convert Decimal to int string (prices are already raw token amounts)
+            rounded_price = price.quantize(Decimal("1"), rounding=ROUND_HALF_UP)
+            all_prices[token] = str(int(rounded_price))
 
     def _build_result(
         self,

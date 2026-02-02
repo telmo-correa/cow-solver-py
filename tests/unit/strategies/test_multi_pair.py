@@ -428,6 +428,67 @@ class TestMultiPairCowStrategy:
             # If there are fills, prices should be consistent
             assert isinstance(result.prices, dict)
 
+    def test_large_amounts_no_price_overflow(self) -> None:
+        """Large token amounts (e.g., 18 decimals) should not cause price overflow.
+
+        Regression test for bug where prices were incorrectly scaled by 10^18,
+        causing overflow for tokens with large amounts.
+        """
+        from solver.models.auction import AuctionInstance
+
+        # WETH-like token with 18 decimals: 1 token = 1e18 units
+        WETH = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
+        # USDC-like token with 6 decimals: 3000 tokens = 3e9 units
+        USDC = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
+
+        # Order 1: Sell 1 WETH (1e18) for at least 3000 USDC (3e9)
+        ask = make_order(
+            "weth_seller",
+            WETH,
+            USDC,
+            sell_amount=10**18,  # 1 WETH
+            buy_amount=3000 * 10**6,  # 3000 USDC
+        )
+
+        # Order 2: Sell 3000 USDC (3e9) for at least 1 WETH (1e18)
+        bid = make_order(
+            "usdc_seller",
+            USDC,
+            WETH,
+            sell_amount=3000 * 10**6,  # 3000 USDC
+            buy_amount=10**18,  # 1 WETH
+        )
+
+        auction = AuctionInstance(orders=[ask, bid], tokens={}, liquidity=[])
+        strategy = MultiPairCowStrategy()
+        result = strategy.try_solve(auction)
+
+        # Should find a match
+        assert result is not None
+        assert result.has_fills
+        assert len(result.fills) == 2
+
+        # Should have prices for BOTH tokens (not skipped due to overflow)
+        assert len(result.prices) == 2
+        assert WETH.lower() in result.prices
+        assert USDC.lower() in result.prices
+
+        # Prices should be the raw amounts (not scaled by 10^18)
+        # In CoW protocol, price[token] represents the "value" of that token
+        # For a match: price[sell_token] * sell_amount == price[buy_token] * buy_amount
+        weth_price = int(result.prices[WETH.lower()])
+        usdc_price = int(result.prices[USDC.lower()])
+
+        # Verify prices are reasonable (not overflowed or zero)
+        assert weth_price > 0
+        assert usdc_price > 0
+
+        # The key assertion: prices should NOT be scaled by 10^18
+        # If they were scaled, USDC price would be 3e9 * 1e18 = 3e27 (overflow)
+        # Instead, prices should be the matched amounts (cross-assigned)
+        assert usdc_price == 10**18  # USDC price = WETH amount matched
+        assert weth_price == 3000 * 10**6  # WETH price = USDC amount matched
+
 
 class TestMultiPairIntegration:
     """Integration tests with realistic scenarios."""

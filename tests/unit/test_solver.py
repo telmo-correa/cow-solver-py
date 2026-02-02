@@ -248,13 +248,11 @@ class TestSolverDefaultStrategies:
         assert len(solver.strategies) > 0
 
     def test_default_solver_strategy_order(self):
-        """Default solver has CowMatch, MultiPairCow, AmmRouting in order."""
+        """Default solver has MultiPairCow, AmmRouting in order."""
         solver = Solver()
 
         strategy_names = [type(s).__name__ for s in solver.strategies]
-        assert "CowMatchStrategy" in strategy_names
-        assert "MultiPairCowStrategy" in strategy_names
-        assert "AmmRoutingStrategy" in strategy_names
+        assert strategy_names == ["MultiPairCowStrategy", "AmmRoutingStrategy"]
 
 
 class TestSolverSubAuction:
