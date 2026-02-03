@@ -156,9 +156,13 @@ class MultiPairCowStrategy(AMMBackedStrategy):
         logger.debug("multi_pair_phase1_complete", fills=len(all_fills))
 
         # Phase 2: Find and solve cycles
+        # Skip cycles that would conflict with Phase 1 prices to avoid limit violations
+        priced_tokens = set(all_prices.keys())
         remaining_orders = [o for o in auction.orders if o.uid not in processed_uids]
         if remaining_orders and self.max_tokens >= 3:
-            cycle_fills = self._solve_cycles(remaining_orders, router, auction, processed_uids)
+            cycle_fills = self._solve_cycles(
+                remaining_orders, router, auction, processed_uids, priced_tokens
+            )
             for fill in cycle_fills:
                 if fill.order.uid not in processed_uids:
                     all_fills.append(fill)
@@ -331,8 +335,19 @@ class MultiPairCowStrategy(AMMBackedStrategy):
         router: SingleOrderRouter,
         auction: AuctionInstance,
         already_matched: set[str],
+        priced_tokens: set[str] | None = None,
     ) -> list[OrderFill]:
-        """Find and solve cycles in the order graph."""
+        """Find and solve cycles in the order graph.
+
+        Args:
+            orders: Orders to consider for cycle detection
+            router: Router for EBBO validation
+            auction: Auction context
+            already_matched: UIDs of orders already matched (will be skipped)
+            priced_tokens: Tokens that already have prices from Phase 1.
+                If provided, cycles containing any of these tokens are skipped
+                to avoid price conflicts.
+        """
         graph = OrderGraph.from_orders(orders)
 
         cycles: list[tuple[str, ...]] = []
@@ -348,6 +363,15 @@ class MultiPairCowStrategy(AMMBackedStrategy):
         matched_uids: set[str] = set(already_matched)
 
         for cycle_tokens in cycles:
+            # Skip cycles that would conflict with Phase 1 prices
+            if priced_tokens and any(token in priced_tokens for token in cycle_tokens):
+                logger.debug(
+                    "multi_pair_skip_cycle_price_conflict",
+                    cycle=[t[-8:] for t in cycle_tokens],
+                    reason="tokens already have prices from Phase 1",
+                )
+                continue
+
             cycle_orders = self._get_cycle_orders(cycle_tokens, graph, matched_uids)
             if not cycle_orders:
                 continue
