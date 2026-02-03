@@ -83,7 +83,7 @@ docs/
 
 **Rust Baseline Limitations:** The Rust solver is single-order AMM routing only. It does NOT support CoW matching or multi-order optimization.
 
-**CoW Match Rate:** 0.12% of orders — this is near-optimal given market constraints (price incompatibility, EBBO, uniform price). See `docs/evaluations/cow-potential-analysis.md`.
+**CoW Match Rate:** 0.18% of orders (100% EBBO compliant) — this is near-optimal given market constraints (price incompatibility, EBBO, uniform price). See `docs/evaluations/cow-potential-analysis.md`.
 
 ## Strategy Chain
 

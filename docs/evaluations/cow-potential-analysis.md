@@ -1,7 +1,7 @@
 # CoW Matching Potential Analysis
 
-**Date:** 2026-01-29
-**Status:** Complete
+**Date:** 2026-02-02
+**Status:** Complete (Updated)
 
 This document explains why the "36.53% CoW potential" figure is misleading and what the actual matchable order rate is after accounting for all constraints.
 
@@ -88,11 +88,21 @@ When multiple pairs share a token (e.g., WETH/USDC and WETH/DAI both exist), the
 | Crossing Prices | 14.6% | Orders where ask <= bid (price compatible) |
 | After EBBO | ~5-10% | Orders where CoW beats AMM (estimate) |
 | After Uniform Price | ~1-2% | Orders that can actually clear together |
-| **Actual Matched** | 0.12% | What strategies achieve |
+| **Actual Matched** | 0.18% | What MultiPairCowStrategy achieves |
+
+## Latest Benchmark Results (20 auctions, 112,457 orders)
+
+| Metric | Value |
+|--------|-------|
+| Orders matched | 200 (0.18%) |
+| Auctions with matches | 20/20 (100%) |
+| EBBO compliance | 100% (0 violations) |
+| Limit price compliance | 100% (0 violations) |
+| Avg time per auction | 73ms |
 
 ## Key Insights
 
-1. **The 0.12% match rate is close to optimal** given all constraints, not a failure
+1. **The 0.18% match rate is close to optimal** given all constraints, not a failure
 2. **Most "potential" is illusory** - users on opposite sides want incompatible prices
 3. **EBBO is working correctly** - it prevents matches worse than AMM execution
 4. **The gap is market structure**, not solver limitations
@@ -101,7 +111,7 @@ When multiple pairs share a token (e.g., WETH/USDC and WETH/DAI both exist), the
 
 Remove references to "36.53% CoW potential" from documentation as it creates false expectations. The correct framing is:
 
-> ~14.6% of orders have price-compatible counterparties. After EBBO and uniform price constraints, ~0.1% can actually be matched via CoW. This is near-optimal given market conditions.
+> ~14.6% of orders have price-compatible counterparties. After EBBO and uniform price constraints, ~0.2% can actually be matched via CoW. This is near-optimal given market conditions.
 
 ## Files Reference
 
