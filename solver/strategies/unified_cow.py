@@ -133,9 +133,7 @@ class UnifiedCowStrategy:
         )
 
         all_fills: list[OrderFill] = []
-        all_prices: dict[str, int] = {}  # Track prices from each structure
         processed_uids: set[str] = set()
-        priced_tokens: set[str] = set()  # Tokens that already have prices
 
         # Build combined list with type tag for sorting
         structures: list[tuple[str, CycleViability | tuple[set[str], list[Order]]]] = []
@@ -169,29 +167,19 @@ class UnifiedCowStrategy:
                 if any(o.uid in processed_uids for o in viability.orders):
                     continue
 
-                # Skip cycles with already-priced tokens (would create inconsistent prices)
-                cycle_tokens = {normalize_address(o.sell_token) for o in viability.orders}
-                if cycle_tokens & priced_tokens:
-                    continue
-
-                fills, prices = self._solve_cycle_with_prices(viability, router, auction)
+                fills, _prices = self._solve_cycle_with_prices(viability, router, auction)
             else:
                 tokens, pair_orders = struct  # type: ignore
                 # Skip if any order already matched
                 if any(o.uid in processed_uids for o in pair_orders):
                     continue
 
-                # Skip pairs with already-priced tokens (would create inconsistent prices)
-                if tokens & priced_tokens:
-                    continue
-
                 if self.use_lp_solver:
                     fills = self._solve_pair_lp(
                         pair_orders, tokens, router, auction, processed_uids
                     )
-                    prices = {}  # LP solver doesn't return prices
                 else:
-                    fills, prices = self._solve_pair_with_prices(
+                    fills, _prices = self._solve_pair_with_prices(
                         pair_orders, tokens, router, auction, processed_uids
                     )
 
@@ -200,15 +188,12 @@ class UnifiedCowStrategy:
                     all_fills.append(fill)
                     processed_uids.add(fill.order.uid)
 
-            # Track prices and priced tokens
-            for token, price in prices.items():
-                all_prices[token] = price
-                priced_tokens.add(token)
-
         if not all_fills:
             return None
 
-        return self._build_result_with_prices(all_fills, all_prices, auction)
+        # Use _build_result which normalizes prices using aggregate rates per edge
+        # This ensures EBBO compliance since aggregate rates match run_hybrid_auction's totals
+        return self._build_result(all_fills, auction)
 
     def _find_matchable_structures(
         self, orders: list[Order]
@@ -960,16 +945,17 @@ class UnifiedCowStrategy:
         For each fill, conservation requires:
             sell_filled * sell_price = buy_filled * buy_price
 
-        We set a reference price and propagate through the fill graph using BFS.
-        This ensures all prices are consistent with the fill amounts.
+        We aggregate all fills per token pair edge to compute the clearing rate,
+        then propagate through the fill graph using BFS. This ensures prices
+        reflect the aggregate exchange rate, matching run_hybrid_auction's
+        total_cow_a/total_cow_b which are EBBO-compliant.
         """
         if not fills:
             return {}
 
-        # Build adjacency: token -> [(other_token, rate)]
-        # where rate = buy_filled / sell_filled for order selling token
-        # (i.e., how many other_token you get per token)
-        token_rates: dict[str, list[tuple[str, Decimal]]] = defaultdict(list)
+        # Aggregate fills by directed edge (sell_token, buy_token)
+        # This gives us the total amounts exchanged per edge
+        edge_totals: dict[tuple[str, str], tuple[int, int]] = defaultdict(lambda: (0, 0))
 
         for fill in fills:
             if fill.sell_filled <= 0 or fill.buy_filled <= 0:
@@ -977,15 +963,26 @@ class UnifiedCowStrategy:
 
             sell_token = normalize_address(fill.order.sell_token)
             buy_token = normalize_address(fill.order.buy_token)
+            edge = (sell_token, buy_token)
+            sell_total, buy_total = edge_totals[edge]
+            edge_totals[edge] = (sell_total + fill.sell_filled, buy_total + fill.buy_filled)
 
-            # Rate from sell_token's perspective: buy_token per sell_token
+        # Build adjacency with aggregate rates
+        # token -> [(other_token, rate)] where rate = total_buy / total_sell
+        token_rates: dict[str, list[tuple[str, Decimal]]] = defaultdict(list)
+
+        for (sell_token, buy_token), (sell_total, buy_total) in edge_totals.items():
+            if sell_total <= 0:
+                continue
+
+            # Aggregate rate from sell_token's perspective
             with decimal.localcontext(_DECIMAL_HIGH_PREC_CONTEXT):
-                rate = Decimal(fill.buy_filled) / Decimal(fill.sell_filled)
+                rate = Decimal(buy_total) / Decimal(sell_total)
             token_rates[sell_token].append((buy_token, rate))
 
-            # Inverse rate from buy_token's perspective: sell_token per buy_token
+            # Inverse rate from buy_token's perspective
             with decimal.localcontext(_DECIMAL_HIGH_PREC_CONTEXT):
-                inv_rate = Decimal(fill.sell_filled) / Decimal(fill.buy_filled)
+                inv_rate = Decimal(sell_total) / Decimal(buy_total)
             token_rates[buy_token].append((sell_token, inv_rate))
 
         all_tokens = set(token_rates.keys())
