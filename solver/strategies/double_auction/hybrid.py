@@ -202,7 +202,11 @@ def run_hybrid_auction(
     # With AMM price: match orders that can clear at AMM price
     # Convert AMM price to integer ratio for exact calculations
     # Use round-to-nearest for reference price conversion
-    amm_price_scaled = (amm_price * AMM_PRICE_SCALE).quantize(Decimal("1"), rounding=ROUND_HALF_UP)
+    # Use high-precision context to handle very large AMM prices (e.g., 10^11 * 10^18 = 10^29)
+    with decimal.localcontext(_DECIMAL_HIGH_PREC_CONTEXT):
+        amm_price_scaled = (amm_price * AMM_PRICE_SCALE).quantize(
+            Decimal("1"), rounding=ROUND_HALF_UP
+        )
     amm_price_ratio: PriceRatio = (int(amm_price_scaled), AMM_PRICE_SCALE)
     amm_num, amm_denom = amm_price_ratio
 
