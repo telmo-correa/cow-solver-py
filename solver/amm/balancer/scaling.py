@@ -8,7 +8,7 @@ IMPORTANT: All financial calculations use SafeInt for overflow protection.
 
 from decimal import Decimal
 
-from solver.math.fixed_point import Bfp
+from solver.math.fixed_point_fast import Bfp
 from solver.safe_int import S
 
 from .errors import InvalidFeeError, InvalidScalingFactorError

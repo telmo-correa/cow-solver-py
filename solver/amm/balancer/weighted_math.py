@@ -5,7 +5,7 @@ Core math functions for weighted product pools.
 
 from typing import Literal
 
-from solver.math.fixed_point import MAX_IN_RATIO, MAX_OUT_RATIO, ONE_18, Bfp
+from solver.math.fixed_point_fast import MAX_IN_RATIO, MAX_OUT_RATIO, ONE_18, Bfp
 
 from .errors import MaxInRatioError, MaxOutRatioError, ZeroBalanceError, ZeroWeightError
 

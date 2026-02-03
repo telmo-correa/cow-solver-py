@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any
 
 import structlog
 
-from solver.math.fixed_point import AMP_PRECISION, Bfp
+from solver.math.fixed_point_fast import AMP_PRECISION, Bfp
 from solver.models.types import normalize_address
 from solver.safe_int import UINT256_MAX, S
 
