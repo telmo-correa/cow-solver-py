@@ -90,15 +90,16 @@ When multiple pairs share a token (e.g., WETH/USDC and WETH/DAI both exist), the
 | After Uniform Price | ~1-2% | Orders that can actually clear together |
 | **Actual Matched** | 0.18% | What MultiPairCowStrategy achieves |
 
-## Latest Benchmark Results (20 auctions, 112,457 orders)
+## Latest Benchmark Results (50 auctions, 280,920 orders)
 
 | Metric | Value |
 |--------|-------|
-| Orders matched | 200 (0.18%) |
-| Auctions with matches | 20/20 (100%) |
+| Orders matched | 509 (0.18%) |
+| Auctions with matches | 50/50 (100%) |
+| Fills per auction | 9-16 (avg ~10.2) |
 | EBBO compliance | 100% (0 violations) |
 | Limit price compliance | 100% (0 violations) |
-| Avg time per auction | 73ms |
+| Avg time per auction | ~73ms |
 
 ## Key Insights
 

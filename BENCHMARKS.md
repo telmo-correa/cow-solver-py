@@ -518,19 +518,18 @@ Parallel path cache pre-warming uses `ProcessPoolExecutor` (14 workers on M-seri
 
 ### Strategy Performance on Historical Data
 
-Benchmarked on 20 consecutive auctions (112,457 total orders):
+Benchmarked on 50 consecutive auctions (280,920 total orders):
 
 | Strategy | Orders Matched | Match Rate | Avg Time/Auction | EBBO Compliance |
 |----------|---------------|------------|------------------|-----------------|
-| **MultiPairCow** | 200 | 0.18% | 73ms | 100% (200/200) |
-| **CowMatch** | 0 | 0.00% | 4ms | N/A |
+| **MultiPairCow** | 509 | 0.18% | ~73ms | 100% |
+| **CowMatch** | 0 | 0.00% | ~4ms | N/A |
 
 All matched orders pass EBBO validation (clearing price >= AMM reference price).
 
 **Notes:**
-- MultiPairCow found matches in all 20/20 auctions
-- Total volume matched: 19.9 × 10¹⁸ wei
-- Total surplus generated: 3.19 × 10¹⁸ wei
+- MultiPairCow found matches in all 50/50 auctions
+- Fills per auction: 9-16 (avg ~10.2)
 - Cycles with price conflicts are skipped to maintain constraint compliance
 
 ### Running Historical Benchmarks
