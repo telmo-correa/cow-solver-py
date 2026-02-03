@@ -1829,8 +1829,11 @@ class TestCowMatchEBBO:
         )
 
         # Mock router that returns AMM rate better than clearing
+        # Raw rate: 2500 USDC/WETH = 2500 * 10^(6-18) = 2.5e-9
         mock_router = Mock()
-        mock_router.get_reference_price.return_value = Decimal("2500")  # AMM offers 2500 USDC/WETH
+        mock_router.get_reference_price.return_value = Decimal(
+            "2.5e-9"
+        )  # AMM offers 2500 USDC/WETH (raw)
 
         strategy = CowMatchStrategy(router=mock_router)
         auction = self._make_auction_with_tokens([order_a, order_b])
@@ -1878,14 +1881,14 @@ class TestCowMatchEBBO:
         weth_lower = WETH.lower()
         usdc_lower = USDC.lower()
 
-        # Mock router with realistic AMM spread (~4%):
-        # - Selling WETH: get 2400 USDC/WETH
-        # - Selling USDC: get 0.000385 WETH/USDC (= 1/2600)
+        # Mock router with realistic AMM spread (~4%) in RAW units:
+        # - Selling WETH: get 2400 USDC/WETH = 2400 * 10^(6-18) = 2.4e-9 raw
+        # - Selling USDC: get 0.000385 WETH/USDC = 0.000385 * 10^(18-6) = 3.85e8 raw
         def mock_get_ref_price(sell_token, buy_token, **_kwargs):
             if sell_token == weth_lower and buy_token == usdc_lower:
-                return Decimal("2400")  # Selling WETH gets 2400 USDC
+                return Decimal("2.4e-9")  # Selling WETH gets 2400 USDC (raw)
             elif sell_token == usdc_lower and buy_token == weth_lower:
-                return Decimal("0.000385")  # Selling USDC gets 0.000385 WETH (= 1/2600)
+                return Decimal("3.85e8")  # Selling USDC gets 0.000385 WETH (raw)
             return None
 
         mock_router = Mock()
@@ -1957,9 +1960,10 @@ class TestCowMatchEBBO:
             buy_amount="1000000000000000000",  # 1 WETH
         )
 
-        # Mock router - AMM offers 2000 (just 0.05% better)
+        # Mock router - AMM offers 2000 USDC/WETH (just 0.05% better)
+        # Raw rate: 2000 * 10^(6-18) = 2.0e-9
         mock_router = Mock()
-        mock_router.get_reference_price.return_value = Decimal("2000")
+        mock_router.get_reference_price.return_value = Decimal("2.0e-9")
 
         strategy = CowMatchStrategy(router=mock_router)
         auction = self._make_auction_with_tokens([order_a, order_b])

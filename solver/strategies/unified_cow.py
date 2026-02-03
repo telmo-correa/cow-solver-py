@@ -133,7 +133,9 @@ class UnifiedCowStrategy:
         )
 
         all_fills: list[OrderFill] = []
+        all_prices: dict[str, int] = {}  # Track prices from each structure
         processed_uids: set[str] = set()
+        priced_tokens: set[str] = set()  # Tokens that already have prices
 
         # Build combined list with type tag for sorting
         structures: list[tuple[str, CycleViability | tuple[set[str], list[Order]]]] = []
@@ -167,29 +169,46 @@ class UnifiedCowStrategy:
                 if any(o.uid in processed_uids for o in viability.orders):
                     continue
 
-                fills = self._solve_cycle(viability, router, auction)
+                # Skip cycles with already-priced tokens (would create inconsistent prices)
+                cycle_tokens = {normalize_address(o.sell_token) for o in viability.orders}
+                if cycle_tokens & priced_tokens:
+                    continue
+
+                fills, prices = self._solve_cycle_with_prices(viability, router, auction)
             else:
                 tokens, pair_orders = struct  # type: ignore
                 # Skip if any order already matched
                 if any(o.uid in processed_uids for o in pair_orders):
                     continue
 
+                # Skip pairs with already-priced tokens (would create inconsistent prices)
+                if tokens & priced_tokens:
+                    continue
+
                 if self.use_lp_solver:
                     fills = self._solve_pair_lp(
                         pair_orders, tokens, router, auction, processed_uids
                     )
+                    prices = {}  # LP solver doesn't return prices
                 else:
-                    fills = self._solve_pair(pair_orders, tokens, router, auction, processed_uids)
+                    fills, prices = self._solve_pair_with_prices(
+                        pair_orders, tokens, router, auction, processed_uids
+                    )
 
             for fill in fills:
                 if fill.order.uid not in processed_uids:
                     all_fills.append(fill)
                     processed_uids.add(fill.order.uid)
 
+            # Track prices and priced tokens
+            for token, price in prices.items():
+                all_prices[token] = price
+                priced_tokens.add(token)
+
         if not all_fills:
             return None
 
-        return self._build_result(all_fills, auction)
+        return self._build_result_with_prices(all_fills, all_prices, auction)
 
     def _find_matchable_structures(
         self, orders: list[Order]
@@ -242,24 +261,28 @@ class UnifiedCowStrategy:
 
         return cycles, pairs
 
-    def _solve_cycle(
+    def _solve_cycle_with_prices(
         self,
         viability: CycleViability,
         router: SingleOrderRouter,
         auction: AuctionInstance,
-    ) -> list[OrderFill]:
-        """Solve a viable cycle using RingTrade's settlement algorithm."""
+    ) -> tuple[list[OrderFill], dict[str, int]]:
+        """Solve a viable cycle using RingTrade's settlement algorithm.
+
+        Returns:
+            Tuple of (fills, prices) where prices are from cycle settlement.
+        """
         settlement = calculate_cycle_settlement(viability)
         if not settlement:
-            return []
+            return [], {}
 
         # Verify EBBO
         if self.enforce_ebbo and not self._verify_cycle_ebbo(
             settlement.fills, settlement.clearing_prices, router, auction
         ):
-            return []
+            return [], {}
 
-        return settlement.fills
+        return settlement.fills, settlement.clearing_prices
 
     def _verify_cycle_ebbo(
         self,
@@ -329,27 +352,31 @@ class UnifiedCowStrategy:
 
         return result
 
-    def _solve_pair(
+    def _solve_pair_with_prices(
         self,
         orders: list[Order],
         tokens: set[str],
         router: SingleOrderRouter,
         auction: AuctionInstance,
         already_matched: set[str],
-    ) -> list[OrderFill]:
-        """Solve a bidirectional pair using double auction (same as MultiPair)."""
+    ) -> tuple[list[OrderFill], dict[str, int]]:
+        """Solve a bidirectional pair using double auction (same as MultiPair).
+
+        Returns:
+            Tuple of (fills, prices) where prices are from run_hybrid_auction totals.
+        """
         from solver.models.order_groups import OrderGroup
         from solver.strategies.double_auction import run_hybrid_auction
 
         # Filter out already-matched orders
         available_orders = [o for o in orders if o.uid not in already_matched]
         if len(available_orders) < 2:
-            return []
+            return [], {}
 
         # Get the two tokens
         token_list = sorted(tokens)
         if len(token_list) != 2:
-            return []
+            return [], {}
 
         token_a, token_b = token_list
 
@@ -365,7 +392,7 @@ class UnifiedCowStrategy:
                 sellers_of_b.append(order)
 
         if not sellers_of_a or not sellers_of_b:
-            return []  # No bidirectional flow
+            return [], {}  # No bidirectional flow
 
         group = OrderGroup(
             token_a=token_a,
@@ -375,7 +402,7 @@ class UnifiedCowStrategy:
         )
 
         if group.order_count < 2:
-            return []
+            return [], {}
 
         # Get two-sided EBBO bounds
         bounds = get_ebbo_bounds(token_a, token_b, router, auction)
@@ -389,7 +416,7 @@ class UnifiedCowStrategy:
         )
 
         if not result.cow_matches:
-            return []
+            return [], {}
 
         # EBBO validation is now handled by run_hybrid_auction with both bounds
 
@@ -403,7 +430,15 @@ class UnifiedCowStrategy:
                 OrderFill(order=match.buyer, sell_filled=match.amount_b, buy_filled=match.amount_a)
             )
 
-        return fills
+        # Use prices from hybrid auction (CoW Protocol standard format)
+        # price[token_a] = total_b (amount of B exchanged)
+        # price[token_b] = total_a (amount of A exchanged)
+        prices = {
+            token_a: result.total_cow_b,
+            token_b: result.total_cow_a,
+        }
+
+        return fills, prices
 
     def _solve_pair_lp(
         self,
@@ -832,12 +867,59 @@ class UnifiedCowStrategy:
 
         return valid_fills
 
+    def _build_result_with_prices(
+        self,
+        fills: list[OrderFill],
+        prices: dict[str, int],
+        auction: AuctionInstance,
+    ) -> StrategyResult:
+        """Build final StrategyResult using pre-computed prices.
+
+        Args:
+            fills: Order fills from matched structures
+            prices: Prices collected from each structure (token -> price)
+            auction: The auction instance
+        """
+        # Validate FOK constraint before building result
+        fills = self._validate_fok_fills(fills)
+        if not fills:
+            return StrategyResult(
+                fills=[],
+                interactions=[],
+                prices={},
+                gas=0,
+            )
+
+        filled_uids = {f.order.uid for f in fills}
+
+        # Remainder orders
+        remainder_orders: list[Order] = []
+        for order in auction.orders:
+            if order.uid not in filled_uids:
+                remainder_orders.append(order)
+
+        for fill in fills:
+            remainder = fill.get_remainder_order()
+            if remainder:
+                remainder_orders.append(remainder)
+
+        # Convert prices to strings
+        str_prices = {token: str(price) for token, price in prices.items()}
+
+        return StrategyResult(
+            fills=fills,
+            interactions=[],
+            prices=str_prices,
+            gas=0,
+            remainder_orders=remainder_orders,
+        )
+
     def _build_result(
         self,
         fills: list[OrderFill],
         auction: AuctionInstance,
     ) -> StrategyResult:
-        """Build final StrategyResult."""
+        """Build final StrategyResult (legacy, uses _normalize_prices)."""
         # Validate FOK constraint before building result
         fills = self._validate_fok_fills(fills)
         if not fills:

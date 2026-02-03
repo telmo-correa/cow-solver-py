@@ -145,11 +145,9 @@ def verify_fills_against_ebbo(
         if sell_price <= 0 or buy_price <= 0:
             continue
 
-        # Get token decimals for both tokens
+        # Get sell token decimals for probe amount scaling in price query
         sell_info = auction.tokens.get(sell_token)
-        buy_info = auction.tokens.get(buy_token)
         sell_decimals = sell_info.decimals if sell_info and sell_info.decimals else 18
-        buy_decimals = buy_info.decimals if buy_info and buy_info.decimals else 18
 
         # Get AMM reference rate as integer ratio for exact comparison
         # Try the new ratio method first, with fallback to the Decimal method
@@ -170,11 +168,10 @@ def verify_fills_against_ebbo(
             if amm_rate is None:
                 continue
 
-            # Use high-precision context for exact division
+            # Clearing rate = sell_price / buy_price (both in raw amounts)
+            # No decimal scaling needed - both prices and AMM rate are in raw units
             with decimal.localcontext(_DECIMAL_HIGH_PREC_CONTEXT):
-                raw_rate = Decimal(sell_price) / Decimal(buy_price)
-            decimal_scale = Decimal(10) ** (sell_decimals - buy_decimals)
-            clearing_rate = raw_rate * decimal_scale
+                clearing_rate = Decimal(sell_price) / Decimal(buy_price)
 
             if _decimal_lt(clearing_rate, amm_rate):
                 return False
@@ -183,25 +180,15 @@ def verify_fills_against_ebbo(
         amm_out, amm_in = amm_ratio
 
         # EBBO check using cross-multiplication (exact integer arithmetic):
-        # clearing_rate = (sell_price / buy_price) * 10^(sell_decimals - buy_decimals)
-        # amm_rate = amm_out / amm_in
+        # clearing_rate = sell_price / buy_price (both in raw amounts)
+        # amm_rate = amm_out / amm_in (also in raw units)
+        #
+        # No decimal scaling needed - both prices and AMM rate are in raw units.
         #
         # Check: clearing_rate >= amm_rate
-        # (sell_price / buy_price) * decimal_scale >= amm_out / amm_in
-        # sell_price * decimal_scale * amm_in >= buy_price * amm_out
-        #
-        # Handle decimal_scale which can be positive or negative exponent:
-        decimal_diff = sell_decimals - buy_decimals
-        if decimal_diff >= 0:
-            # Multiply left side by 10^diff
-            lhs = sell_price * (10**decimal_diff) * amm_in
-            rhs = buy_price * amm_out
-        else:
-            # Multiply right side by 10^(-diff)
-            lhs = sell_price * amm_in
-            rhs = buy_price * amm_out * (10 ** (-decimal_diff))
-
-        if lhs < rhs:
+        # sell_price / buy_price >= amm_out / amm_in
+        # sell_price * amm_in >= buy_price * amm_out
+        if sell_price * amm_in < buy_price * amm_out:
             return False
 
     return True

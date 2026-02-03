@@ -296,15 +296,17 @@ def run_hybrid_auction(
                 # Ask can't be partially filled, skip to next bid
                 bid_idx += 1
                 continue
-            # bid_fill_amount = match_a * amm_num / amm_denom
-            bid_fill_amount = (S(match_a) * S(amm_num)) // S(amm_denom)
+            # bid_fill_amount = match_a * amm_num / amm_denom (rounded up for EBBO)
+            bid_fill_amount = (S(match_a) * S(amm_num) + S(amm_denom) - S(1)) // S(amm_denom)
             if bid_fill_amount.value < bid_remaining_amount and not bid_order.partially_fillable:
                 # Bid can't be partially filled, skip to next ask
                 ask_idx += 1
                 continue
 
         # Calculate B amount at AMM price: match_b = match_a * amm_num / amm_denom
-        match_b = (S(match_a) * S(amm_num)) // S(amm_denom)
+        # IMPORTANT: Round UP to ensure EBBO compliance (seller gets at least AMM rate)
+        # ceil(a*b/c) = (a*b + c - 1) // c
+        match_b = (S(match_a) * S(amm_num) + S(amm_denom) - S(1)) // S(amm_denom)
 
         if match_b.value <= 0:
             bid_idx += 1
