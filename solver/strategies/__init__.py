@@ -4,14 +4,8 @@ Strategies are tried in order by the Solver. Each strategy returns a StrategyRes
 if it can handle the auction (even partially), or None to pass to the next strategy.
 
 **Default Production Chain:**
-    1. CowMatchStrategy - 2-order direct peer-to-peer matching
-    2. MultiPairCowStrategy - N-order joint optimization across overlapping pairs
-    3. AmmRoutingStrategy - AMM routing fallback
-
-**Research/Experimental (not exported here):**
-    Import from `solver.strategies.research` if needed:
-    - HybridCowStrategy - Superseded by MultiPairCowStrategy
-    - RingTradeStrategy - Low ROI (0.12% match rate)
+    1. MultiPairCowStrategy - N-order joint optimization across overlapping pairs
+    2. AmmRoutingStrategy - AMM routing fallback
 
 StrategyResults can be composed - e.g., CoW matching fills part of an order,
 then AMM routing fills the remainder.
@@ -49,9 +43,6 @@ from solver.strategies.pricing import (
 )
 from solver.strategies.settlement import CycleViability
 
-# Research strategies are NOT re-exported here.
-# Import directly from solver.strategies.research if needed.
-
 __all__ = [
     # === Base Protocol ===
     "SolutionStrategy",
@@ -83,6 +74,4 @@ __all__ = [
     "solve_fills_at_prices",
     # === Settlement Utilities ===
     "CycleViability",
-    # NOTE: Research strategies (HybridCowStrategy, RingTradeStrategy, OrderGraph, RingTrade)
-    # are NOT exported here. Import from solver.strategies.research directly.
 ]

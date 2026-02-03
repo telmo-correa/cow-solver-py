@@ -92,26 +92,17 @@ The solver uses a **strategy chain** where each strategy processes remaining ord
 ```python
 # Default chain in solver/solver.py
 strategies = [
-    CowMatchStrategy(),      # 1. 2-order direct matching (fast path)
-    MultiPairCowStrategy(),  # 2. N-order joint optimization (LP-based)
-    AmmRoutingStrategy(),    # 3. AMM routing fallback
+    MultiPairCowStrategy(),  # 1. N-order joint optimization (LP-based)
+    AmmRoutingStrategy(),    # 2. AMM routing fallback
 ]
 ```
 
-### Production Strategies
+### Strategies
 
 | Strategy | File | Purpose |
 |----------|------|---------|
-| `CowMatchStrategy` | `strategies/cow_match.py` | 2-order peer-to-peer matching |
 | `MultiPairCowStrategy` | `strategies/multi_pair.py` | N-order CoW with joint price optimization across overlapping pairs |
 | `AmmRoutingStrategy` | `strategies/amm_routing.py` | Single-order AMM routing through V2/V3/Balancer/limit orders |
-
-### Research/Experimental Strategies (not in default chain)
-
-| Strategy | File | Purpose | Notes |
-|----------|------|---------|-------|
-| `HybridCowStrategy` | `strategies/hybrid_cow.py` | N-order with AMM reference price | **Superseded** by MultiPairCowStrategy |
-| `RingTradeStrategy` | `strategies/ring_trade.py` | Cyclic trades (A→B→C→A) | Low ROI (0.12% match rate) |
 
 ## Key Files
 
@@ -128,7 +119,6 @@ strategies = [
 | `solver/strategies/amm_routing.py` | AMM routing strategy |
 | `solver/strategies/double_auction.py` | Double auction algorithm (used by multi_pair) |
 | `solver/strategies/ebbo_bounds.py` | Two-sided EBBO bounds calculation helper |
-| `solver/strategies/ring_trade.py` | Ring trade detection (research) |
 | `solver/amm/uniswap_v2.py` | V2 AMM math and encoding |
 | `solver/amm/uniswap_v3/` | V3 package (quoter, encoding, etc.) |
 | `solver/amm/balancer/` | Balancer package (weighted, stable) |

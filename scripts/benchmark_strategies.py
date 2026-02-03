@@ -2,9 +2,8 @@
 """Benchmark existing strategies on historical auction data.
 
 This script establishes a baseline for strategy performance:
-1. CowMatchStrategy (2-order direct matching)
-2. HybridCowStrategy (N-order with AMM price reference)
-3. RingTradeStrategy (N-token cycles)
+1. MultiPairCowStrategy (N-order joint optimization)
+2. CowMatchStrategy (2-order direct matching)
 
 Metrics collected:
 - Orders matched (count and percentage)
@@ -35,8 +34,6 @@ from solver.models.auction import AuctionInstance
 from solver.models.types import normalize_address
 from solver.strategies.cow_match import CowMatchStrategy
 from solver.strategies.multi_pair import MultiPairCowStrategy
-from solver.strategies.research.hybrid_cow import HybridCowStrategy
-from solver.strategies.research.ring_trade import RingTradeStrategy
 
 
 @dataclass
@@ -182,7 +179,7 @@ def analyze_matching_potential(auction: AuctionInstance) -> dict:
     from collections import defaultdict
 
     from solver.models.types import normalize_address
-    from solver.strategies.research.ring_trade import OrderGraph
+    from solver.strategies.graph import OrderGraph
 
     # Build pair statistics
     pair_orders: dict[tuple[str, str], list] = defaultdict(list)
@@ -252,14 +249,6 @@ def main():
     strategies = [
         ("CowMatch", CowMatchStrategy()),
         (
-            "HybridCow",
-            HybridCowStrategy(
-                weighted_amm=weighted_amm,
-                stable_amm=stable_amm,
-                limit_order_amm=limit_order_amm,
-            ),
-        ),
-        (
             "MultiPair",
             MultiPairCowStrategy(
                 weighted_amm=weighted_amm,
@@ -267,7 +256,6 @@ def main():
                 limit_order_amm=limit_order_amm,
             ),
         ),
-        ("RingTrade", RingTradeStrategy(max_4_cycles=100)),
     ]
 
     results = {name: BenchmarkResult(strategy_name=name) for name, _ in strategies}
