@@ -13,7 +13,7 @@ from __future__ import annotations
 import os
 from collections import deque
 from concurrent.futures import ProcessPoolExecutor
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Protocol
 
 import structlog
 
@@ -134,31 +134,9 @@ class PoolGraphSource(Protocol):
 
     This allows PathFinder to work with any pool storage that
     provides the necessary token pair information.
-
-    Implementation Note:
-        This protocol accesses internal storage attributes of PoolRegistry.
-        This is intentional - PathFinder is tightly coupled to PoolRegistry
-        as an internal implementation detail. The protocol exists to:
-        1. Document the required interface explicitly
-        2. Enable testing with mock registries
-        3. Allow future refactoring of the storage layer
-
-        If PoolRegistry's internal structure changes, this protocol and
-        TokenGraph._build_from_registry must be updated together.
-
-        Value types use Any because we only iterate over keys for graph edges.
     """
 
-    @property
-    def _pools(self) -> dict[frozenset[str], Any]: ...
-    @property
-    def _v3_pools(self) -> dict[tuple[str, str, int], Any]: ...
-    @property
-    def _weighted_pools(self) -> dict[tuple[str, str], Any]: ...
-    @property
-    def _stable_pools(self) -> dict[tuple[str, str], Any]: ...
-    @property
-    def _limit_orders(self) -> dict[tuple[str, str], Any]: ...
+    def get_all_token_pairs(self) -> set[tuple[str, str]]: ...
 
 
 class TokenGraph:
@@ -190,29 +168,14 @@ class TokenGraph:
         return graph
 
     def _build_from_registry(self, registry: PoolGraphSource) -> None:
-        """Build adjacency list from all pool types in registry."""
-        # Add V2 pools
-        for token_pair in registry._pools:
-            tokens = list(token_pair)
-            self._add_edge(tokens[0], tokens[1])
+        """Build adjacency list from all pool types in registry.
 
-        # Add V3 pools
-        for token_a, token_b, _fee in registry._v3_pools:
+        Uses get_all_token_pairs() to discover edges. All pairs are added
+        as bidirectional edges for path discovery (routing validates actual
+        tradability for unidirectional sources like limit orders).
+        """
+        for token_a, token_b in registry.get_all_token_pairs():
             self._add_edge(token_a, token_b)
-
-        # Add weighted pools
-        for (token_a, token_b), _ in registry._weighted_pools.items():
-            self._add_edge(token_a, token_b)
-
-        # Add stable pools
-        for (token_a, token_b), _ in registry._stable_pools.items():
-            self._add_edge(token_a, token_b)
-
-        # Add limit orders (bidirectional for path discovery)
-        # Note: Limit orders are unidirectional for trading, but we add
-        # both directions for path finding. Routing validates actual tradability.
-        for (taker_token, maker_token), _ in registry._limit_orders.items():
-            self._add_edge(taker_token, maker_token)
 
     def _add_edge(self, token_a: str, token_b: str) -> None:
         """Add a bidirectional edge between two tokens."""

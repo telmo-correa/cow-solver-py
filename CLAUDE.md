@@ -10,7 +10,7 @@ This file provides context for AI assistants working on this project. Read this 
 
 **What:** A Python implementation of a CoW Protocol solver, built as a learning project to explore AI-assisted development and benchmark Python vs Rust performance.
 
-**Status:** Phase 1-3 + Phase 4 (Slices 4.1-4.6) complete. Full liquidity parity with Rust baseline. 992 tests passing.
+**Status:** Phase 1-3 + Phase 4 (Slices 4.1-4.6) complete. Full code review remediation complete. 1023 tests passing.
 
 ## What is CoW Protocol?
 
@@ -56,14 +56,14 @@ solver/                # Main package
 └── constants.py       # Centralized addresses
 
 tests/
-├── unit/              # Unit tests by module (712 tests)
-├── integration/       # Integration tests (106 tests)
+├── unit/              # Unit tests by module
+├── integration/       # Integration tests
 └── fixtures/          # JSON test data
     ├── benchmark/     # Python vs Rust comparison
     └── benchmark_python_only/  # CoW matching (Python-only)
 
 docs/
-├── sessions/          # Session handoff logs (52 sessions)
+├── sessions/          # Session handoff logs (65+ sessions)
 ├── design/            # Architecture and algorithm designs
 ├── evaluations/       # Benchmark analysis
 └── research/          # Future explorations (flash loans)
@@ -72,6 +72,7 @@ docs/
 ## Current State
 
 **Phase 4 Complete:** Multi-order CoW optimization with EBBO validation.
+**Code Review Complete:** 93 issues identified, 46 fixed, 42 deferred (accept risk), 5 remaining low-priority. See `docs/reviews/2026-02-06-summary.md`.
 
 **Capabilities:**
 - All 5 Rust liquidity types (V2, V3, Balancer weighted/stable, 0x limit orders)
@@ -80,6 +81,8 @@ docs/
 - EBBO validation with zero tolerance
 - Partial fills with solver fee in limit price validation
 - Per-pool gas estimates from auction data
+- Input validation (order tokens, amounts, pool parameters)
+- API hardening (request size limit, solver timeout, health checks)
 
 **Rust Baseline Limitations:** The Rust solver is single-order AMM routing only. It does NOT support CoW matching or multi-order optimization.
 
@@ -119,6 +122,7 @@ strategies = [
 | `solver/strategies/amm_routing.py` | AMM routing strategy |
 | `solver/strategies/double_auction.py` | Double auction algorithm (used by multi_pair) |
 | `solver/strategies/ebbo_bounds.py` | Two-sided EBBO bounds calculation helper |
+| `solver/strategies/decimal_utils.py` | Shared high-precision Decimal utilities |
 | `solver/amm/uniswap_v2.py` | V2 AMM math and encoding |
 | `solver/amm/uniswap_v3/` | V3 package (quoter, encoding, etc.) |
 | `solver/amm/balancer/` | Balancer package (weighted, stable) |
@@ -136,7 +140,7 @@ strategies = [
 pip install -e ".[dev]"
 
 # Test
-pytest                          # All tests (992)
+pytest                          # All tests (1023)
 pytest tests/unit/ -v           # Unit tests verbose
 ruff check .                    # Lint
 mypy solver/                    # Type check

@@ -502,9 +502,11 @@ Flash loans provide temporary capital within a single transaction, enabling:
 | 4.7 Split Routing | Deferred | Lower priority than token overlap |
 | 4.8 Flash Loans | Future | Requires 4.7 first |
 
-**Current Production Chain:** CowMatch → MultiPair → AmmRouting (992 tests passing)
+**Current Production Chain:** MultiPair → AmmRouting (1023 tests passing)
 
-**CoW Match Rate:** 0.12% — this is near-optimal given market constraints (see `docs/evaluations/cow-potential-analysis.md`)
+**CoW Match Rate:** 0.18% of orders (100% EBBO compliant) — this is near-optimal given market constraints (see `docs/evaluations/cow-potential-analysis.md`)
+
+**Code Review (2026-02-06):** 93 issues identified across 5 review areas. 46 fixed (all 4 critical, 7 high, 16 medium, 12 low, 7 test gaps), 42 deferred (accept risk), 5 remaining low-priority. See `docs/reviews/2026-02-06-summary.md`.
 
 ---
 

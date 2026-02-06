@@ -4,11 +4,13 @@ These tests verify that AmmRoutingStrategy properly:
 - Routes orders through AMM pools
 - Respects limit price constraints
 - Handles partial fills
+- Guards against negative reserves (H7)
 """
 
 from unittest.mock import Mock
 
 from solver.models.auction import AuctionInstance, Order, Token
+from solver.pools.types import UniswapV2Pool
 from solver.routing.types import RoutingResult
 from solver.strategies.amm_routing import AmmRoutingStrategy
 
@@ -599,3 +601,55 @@ class TestAmmRoutingPriceConflict:
         # Final prices should be from Order B (last order)
         assert result is not None
         assert result.prices[WETH.lower()] == "2450000000"  # Order B's price
+
+
+class TestNegativeReserveGuard:
+    """H7: Pool reserves should never go negative after a swap."""
+
+    def test_amount_out_exceeding_reserve_returns_original(self) -> None:
+        """When amount_out > reserve, _create_updated_pool returns original pool."""
+        strategy = AmmRoutingStrategy()
+
+        pool = UniswapV2Pool(
+            address="0x" + "aa" * 20,
+            token0=WETH,
+            token1=USDC,
+            reserve0=1000,
+            reserve1=2000,
+            fee_bps=30,
+        )
+
+        # amount_out > reserve1 would make reserve1 negative
+        result = strategy._create_updated_pool(
+            pool=pool,
+            token_in=WETH,
+            amount_in=500,
+            amount_out=3000,  # > reserve1 (2000)
+        )
+
+        # Should return original pool unchanged
+        assert result.reserve0 == pool.reserve0
+        assert result.reserve1 == pool.reserve1
+
+    def test_valid_swap_updates_reserves(self) -> None:
+        """Normal swap correctly updates reserves."""
+        strategy = AmmRoutingStrategy()
+
+        pool = UniswapV2Pool(
+            address="0x" + "aa" * 20,
+            token0=WETH,
+            token1=USDC,
+            reserve0=1000,
+            reserve1=2000,
+            fee_bps=30,
+        )
+
+        result = strategy._create_updated_pool(
+            pool=pool,
+            token_in=WETH,
+            amount_in=100,
+            amount_out=190,
+        )
+
+        assert result.reserve0 == 1100  # 1000 + 100
+        assert result.reserve1 == 1810  # 2000 - 190

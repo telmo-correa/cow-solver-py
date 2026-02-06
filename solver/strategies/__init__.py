@@ -19,9 +19,6 @@ from solver.strategies.base import (
     StrategyResult,
 )
 from solver.strategies.base_amm import AMMBackedStrategy
-
-# Import from new modular files
-from solver.strategies.components import find_token_components
 from solver.strategies.cow_match import CowMatchStrategy
 from solver.strategies.double_auction import (
     AMMRoute,
@@ -32,16 +29,7 @@ from solver.strategies.double_auction import (
     run_double_auction,
     run_hybrid_auction,
 )
-from solver.strategies.graph import UnionFind, build_token_graph, find_spanning_tree
 from solver.strategies.multi_pair import MultiPairCowStrategy
-from solver.strategies.pricing import (
-    LPResult,
-    PriceCandidates,
-    build_price_candidates,
-    enumerate_price_combinations,
-    solve_fills_at_prices,
-)
-from solver.strategies.settlement import CycleViability
 
 __all__ = [
     # === Base Protocol ===
@@ -49,12 +37,12 @@ __all__ = [
     "StrategyResult",
     "OrderFill",
     "PriceWorsened",
-    "AMMBackedStrategy",  # Base class for AMM-backed strategies
+    "AMMBackedStrategy",
     # === Production Strategies ===
-    "CowMatchStrategy",  # 2-order matching
-    "MultiPairCowStrategy",  # N-order joint optimization (Slice 4.6)
-    "AmmRoutingStrategy",  # AMM routing fallback
-    # === Double Auction Utilities ===
+    "CowMatchStrategy",
+    "MultiPairCowStrategy",
+    "AmmRoutingStrategy",
+    # === Double Auction (public API) ===
     "DoubleAuctionMatch",
     "DoubleAuctionResult",
     "AMMRoute",
@@ -62,16 +50,4 @@ __all__ = [
     "run_double_auction",
     "run_hybrid_auction",
     "calculate_surplus",
-    # === Multi-Pair Utilities (Slice 4.6) ===
-    "UnionFind",
-    "find_token_components",
-    "PriceCandidates",
-    "build_price_candidates",
-    "build_token_graph",
-    "find_spanning_tree",
-    "enumerate_price_combinations",
-    "LPResult",
-    "solve_fills_at_prices",
-    # === Settlement Utilities ===
-    "CycleViability",
 ]

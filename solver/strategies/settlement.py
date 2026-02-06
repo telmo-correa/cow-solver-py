@@ -338,6 +338,19 @@ def calculate_cycle_settlement(viability: CycleViability) -> CycleSettlement | N
         sell_filled = (numerator // denominator).value
         sell_filled_amounts.append(sell_filled)
 
+    # Validate fill-or-kill constraints before building fills
+    for i in range(n):
+        order = orders[i]
+        if not order.partially_fillable and sell_filled_amounts[i] < order.sell_amount_int:
+            logger.debug(
+                "cycle_fok_violation",
+                order_idx=i,
+                sell_filled=sell_filled_amounts[i],
+                sell_amount=order.sell_amount_int,
+                order_uid=order.uid[:18] + "...",
+            )
+            return None
+
     # Set buy_filled = sell_filled of next order (ensures conservation)
     # Verify limit prices are respected using exact integer comparison
     fills: list[OrderFill] = []
@@ -492,6 +505,19 @@ def solve_cycle(orders: list[Order]) -> CycleSettlement | None:
             return None
         sell_filled = (numerator // denominator).value
         sell_filled_amounts.append(sell_filled)
+
+    # Validate fill-or-kill constraints before building fills
+    for i in range(n):
+        order = orders[i]
+        if not order.partially_fillable and sell_filled_amounts[i] < order.sell_amount_int:
+            logger.debug(
+                "cycle_fok_violation",
+                order_idx=i,
+                sell_filled=sell_filled_amounts[i],
+                sell_amount=order.sell_amount_int,
+                order_uid=order.uid[:18] + "...",
+            )
+            return None
 
     fills: list[OrderFill] = []
     for i in range(n):

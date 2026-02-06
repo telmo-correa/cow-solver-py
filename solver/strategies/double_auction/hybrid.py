@@ -17,10 +17,16 @@ import structlog
 from solver.models.auction import Order
 from solver.models.order_groups import OrderGroup
 from solver.safe_int import S
+from solver.strategies.decimal_utils import (
+    DECIMAL_HIGH_PREC_CONTEXT,
+    decimal_gt,
+    decimal_le,
+    decimal_lt,
+)
 
 from .core import (
     PriceRatio,
-    _price_ratio_sort_key,
+    _exact_price_key,
     _price_ratio_to_decimal,
     get_limit_price_ratio,
     run_double_auction,
@@ -32,30 +38,6 @@ from .types import (
 )
 
 logger = structlog.get_logger()
-
-# Use context with high precision for Decimal operations to ensure exactness
-_DECIMAL_HIGH_PREC_CONTEXT = decimal.Context(prec=78)
-
-
-def _decimal_le(a: Decimal, b: Decimal) -> bool:
-    """Compare a <= b with high precision for exactness."""
-    with decimal.localcontext(_DECIMAL_HIGH_PREC_CONTEXT):
-        diff = a - b
-        return diff <= 0
-
-
-def _decimal_lt(a: Decimal, b: Decimal) -> bool:
-    """Compare a < b with high precision for exactness."""
-    with decimal.localcontext(_DECIMAL_HIGH_PREC_CONTEXT):
-        diff = a - b
-        return diff < 0
-
-
-def _decimal_gt(a: Decimal, b: Decimal) -> bool:
-    """Compare a > b with high precision for exactness."""
-    with decimal.localcontext(_DECIMAL_HIGH_PREC_CONTEXT):
-        diff = a - b
-        return diff > 0
 
 
 # Scale factor for converting Decimal AMM prices to integer ratios
@@ -137,7 +119,7 @@ def run_hybrid_auction(
 
     # Validate AMM price is positive
     # Use high-precision comparison for exactness
-    if _decimal_le(amm_price, Decimal(0)):
+    if decimal_le(amm_price, Decimal(0)):
         logger.warning(
             "hybrid_auction_invalid_amm_price",
             amm_price=float(amm_price),
@@ -155,7 +137,7 @@ def run_hybrid_auction(
     # - ebbo_min: sellers of A must get at least this rate
     # - ebbo_max: buyers of A must pay at most this rate
     # Use high-precision comparison for exactness
-    if ebbo_min is not None and _decimal_lt(amm_price, ebbo_min):
+    if ebbo_min is not None and decimal_lt(amm_price, ebbo_min):
         logger.debug(
             "hybrid_auction_amm_below_ebbo_min",
             amm_price=float(amm_price),
@@ -177,7 +159,7 @@ def run_hybrid_auction(
             total_cow_b=0,
         )
 
-    if ebbo_max is not None and _decimal_gt(amm_price, ebbo_max):
+    if ebbo_max is not None and decimal_gt(amm_price, ebbo_max):
         logger.debug(
             "hybrid_auction_amm_above_ebbo_max",
             amm_price=float(amm_price),
@@ -203,7 +185,7 @@ def run_hybrid_auction(
     # Convert AMM price to integer ratio for exact calculations
     # Use round-to-nearest for reference price conversion
     # Use high-precision context to handle very large AMM prices (e.g., 10^11 * 10^18 = 10^29)
-    with decimal.localcontext(_DECIMAL_HIGH_PREC_CONTEXT):
+    with decimal.localcontext(DECIMAL_HIGH_PREC_CONTEXT):
         amm_price_scaled = (amm_price * AMM_PRICE_SCALE).quantize(
             Decimal("1"), rounding=ROUND_HALF_UP
         )
@@ -217,8 +199,8 @@ def run_hybrid_auction(
     ]
     asks: list[tuple[Order, PriceRatio, int]] = [(o, p, a) for o, p, a in asks_raw if p is not None]
     invalid_asks = [o for o, p, _ in asks_raw if p is None]
-    # Sort by price ratio ascending (cheapest first)
-    asks.sort(key=lambda x: _price_ratio_sort_key(x[1]))
+    # Sort by price ratio ascending (cheapest first) using exact comparison
+    asks.sort(key=lambda x: _exact_price_key(x[1]))
 
     # Sort bids descending (highest bidders first)
     bids_raw = [
@@ -227,8 +209,8 @@ def run_hybrid_auction(
     ]
     bids: list[tuple[Order, PriceRatio, int]] = [(o, p, a) for o, p, a in bids_raw if p is not None]
     invalid_bids = [o for o, p, _ in bids_raw if p is None]
-    # Sort by price ratio descending (highest bidders first)
-    bids.sort(key=lambda x: _price_ratio_sort_key(x[1]), reverse=True)
+    # Sort by price ratio descending (highest bidders first) using exact comparison
+    bids.sort(key=lambda x: _exact_price_key(x[1]), reverse=True)
 
     # Log invalid orders
     if invalid_asks or invalid_bids:

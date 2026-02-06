@@ -1,5 +1,9 @@
 """Coincidence of Wants (CoW) matching strategy.
 
+DEPRECATED: This module is superseded by MultiPairCowStrategy (multi_pair.py),
+which handles N-order matching, multi-pair coordination, and cycle detection.
+Kept for backward compatibility but should not be used in new code.
+
 Detects when orders can be settled directly against each other without
 needing AMM liquidity, saving users from swap fees.
 

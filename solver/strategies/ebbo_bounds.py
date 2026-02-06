@@ -20,17 +20,7 @@ from typing import TYPE_CHECKING
 
 from solver.fees.price_estimation import get_token_info
 from solver.models.types import normalize_address
-
-# Use context with high precision for Decimal operations to ensure exactness
-_DECIMAL_HIGH_PREC_CONTEXT = decimal.Context(prec=78)
-
-
-def _decimal_lt(a: Decimal, b: Decimal) -> bool:
-    """Compare a < b with high precision for exactness."""
-    with decimal.localcontext(_DECIMAL_HIGH_PREC_CONTEXT):
-        diff = a - b
-        return diff < 0
-
+from solver.strategies.decimal_utils import DECIMAL_HIGH_PREC_CONTEXT, decimal_lt
 
 if TYPE_CHECKING:
     from solver.models.auction import AuctionInstance
@@ -97,7 +87,7 @@ def get_ebbo_bounds(
     ebbo_b_to_a = router.get_reference_price(token_b, token_a, token_in_decimals=decimals_b)
     # Use high-precision context for exact inversion
     if ebbo_b_to_a and ebbo_b_to_a > 0:
-        with decimal.localcontext(_DECIMAL_HIGH_PREC_CONTEXT):
+        with decimal.localcontext(DECIMAL_HIGH_PREC_CONTEXT):
             ebbo_max = Decimal(1) / ebbo_b_to_a
     else:
         ebbo_max = None
@@ -117,8 +107,7 @@ def verify_fills_against_ebbo(
     """Verify that all fills satisfy EBBO constraints.
 
     This is a shared utility for verifying EBBO compliance across strategies.
-    Used by MultiPairCowStrategy, UnifiedCowStrategy, and RingTradeStrategy
-    for cycle/ring verification.
+    Used by MultiPairCowStrategy for cycle/ring verification.
 
     For each fill, checks that the clearing rate (buy_price / sell_price)
     is at least as good as the AMM reference rate for that order's token pair.
@@ -170,10 +159,10 @@ def verify_fills_against_ebbo(
 
             # Clearing rate = sell_price / buy_price (both in raw amounts)
             # No decimal scaling needed - both prices and AMM rate are in raw units
-            with decimal.localcontext(_DECIMAL_HIGH_PREC_CONTEXT):
+            with decimal.localcontext(DECIMAL_HIGH_PREC_CONTEXT):
                 clearing_rate = Decimal(sell_price) / Decimal(buy_price)
 
-            if _decimal_lt(clearing_rate, amm_rate):
+            if decimal_lt(clearing_rate, amm_rate):
                 return False
             continue
 

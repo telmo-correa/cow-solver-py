@@ -338,7 +338,12 @@ cdef class BfpCy:
 
     @staticmethod
     def from_decimal(dec):
-        """Create from decimal (will be scaled by 10^18)."""
+        """Create from decimal (will be scaled by 10^18).
+
+        Requires non-negative input (matches Solidity unsigned semantics).
+        """
+        if dec < 0:
+            raise ValueError(f"BfpCy.from_decimal requires non-negative input, got {dec}")
         from decimal import ROUND_HALF_UP, Decimal
         scaled = (dec * ONE_18).quantize(Decimal("1"), rounding=ROUND_HALF_UP)
         return BfpCy(int(scaled))
@@ -384,8 +389,8 @@ cdef class BfpCy:
         return BfpCy((numerator - 1) // other_val + 1)
 
     def complement(self):
-        """Return 1 - self."""
-        return BfpCy(ONE_18 - self.value)
+        """Return 1 - self. Clamps to 0 if self > 1."""
+        return BfpCy(max(0, ONE_18 - self.value))
 
     def add(self, other):
         """Add two Bfp values."""
@@ -393,9 +398,12 @@ cdef class BfpCy:
         return BfpCy(self.value + other_val)
 
     def sub(self, other):
-        """Subtract other from self."""
+        """Subtract other from self. Clamps to 0 if result would be negative."""
         cdef object other_val = _get_bfp_value(other)
-        return BfpCy(self.value - other_val)
+        cdef object result = self.value - other_val
+        if result < 0:
+            return BfpCy(0)
+        return BfpCy(result)
 
     def __eq__(self, other):
         if not hasattr(other, 'value'):

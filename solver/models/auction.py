@@ -7,9 +7,9 @@ https://github.com/cowprotocol/services/blob/main/crates/solvers/openapi.yml
 from datetime import datetime
 from decimal import Decimal
 from enum import Enum
-from typing import Any
+from typing import Any, Self
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator, model_validator
 from typing_extensions import TypedDict
 
 from solver.models.types import Address, Bytes, OrderUid, Uint256, normalize_address
@@ -149,6 +149,21 @@ class Order(BaseModel):
     fee_policies: list[FeePolicy] | None = Field(default=None, alias="feePolicies")
 
     model_config = {"populate_by_name": True}
+
+    @field_validator("sell_amount", "buy_amount")
+    @classmethod
+    def validate_nonzero(cls, v: str) -> str:
+        """Reject zero amounts at input boundary."""
+        if int(v) == 0:
+            raise ValueError("Amount must be non-zero")
+        return v
+
+    @model_validator(mode="after")
+    def validate_order_tokens(self) -> Self:
+        """Ensure sell_token and buy_token are different."""
+        if normalize_address(self.sell_token) == normalize_address(self.buy_token):
+            raise ValueError("sell_token and buy_token must differ")
+        return self
 
     @property
     def sell_amount_int(self) -> int:

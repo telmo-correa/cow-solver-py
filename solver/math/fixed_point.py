@@ -382,7 +382,10 @@ class Bfp:
         """Create from decimal (will be scaled by 10^18).
 
         Uses ROUND_HALF_UP for consistent rounding behavior.
+        Requires non-negative input (matches Solidity unsigned semantics).
         """
+        if d < 0:
+            raise ValueError(f"Bfp.from_decimal requires non-negative input, got {d}")
         scaled = (d * cls.ONE).quantize(Decimal("1"), rounding=ROUND_HALF_UP)
         return cls(int(scaled))
 
@@ -422,16 +425,19 @@ class Bfp:
         return Bfp((numerator - 1) // other.value + 1)
 
     def complement(self) -> Bfp:
-        """Return 1 - self. Requires self <= 1."""
-        return Bfp(self.ONE - self.value)
+        """Return 1 - self. Clamps to 0 if self > 1."""
+        return Bfp(max(0, self.ONE - self.value))
 
     def add(self, other: Bfp) -> Bfp:
         """Add two Bfp values."""
         return Bfp(self.value + other.value)
 
     def sub(self, other: Bfp) -> Bfp:
-        """Subtract other from self."""
-        return Bfp(self.value - other.value)
+        """Subtract other from self. Clamps to 0 if result would be negative."""
+        result = self.value - other.value
+        if result < 0:
+            return Bfp(0)
+        return Bfp(result)
 
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, Bfp):

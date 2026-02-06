@@ -36,7 +36,7 @@ This directory tracks progress across AI-assisted development sessions.
 - **Slice 4.5:** Complete (Settlement optimization formulation and analysis)
 - **Slice 4.6:** Complete (Multi-pair price coordination, EBBO zero-tolerance enforcement)
 - **EBBO:** Complete (Zero tolerance across all strategies, 100% compliance)
-- **Tests:** 1082 passing
+- **Tests:** 1023 passing
 - **Liquidity:** V2, V3, Balancer weighted, Balancer stable, 0x limit orders
 - **Parity:** Complete liquidity parity with Rust baseline solver
 - **CoW Analysis:** See docs/evaluations/cow-potential-analysis.md for why match rate is low
@@ -112,6 +112,9 @@ Individual session logs are preserved in the `archive/` directory for reference.
 | [63](archive/session-63-safe-math-ci.md) | 2026-01-24 | Safe Math CI Integration |
 | [64](archive/session-64-constraint-enforcement-phase2.md) | 2026-01-24 | Constraint Enforcement Phase 2 |
 | [65](archive/session-65-constraint-enforcement-complete.md) | 2026-01-24 | Constraint Enforcement Complete |
+| 66 | 2026-02-06 | Code Review (93 issues across 5 areas) |
+| 67 | 2026-02-06 | Code Review Remediation Pass 1 (C1-C4, H5-H11) |
+| 68 | 2026-02-06 | Code Review Remediation Pass 2 (Phases 1-7) |
 
 ## Session Template
 

@@ -59,7 +59,9 @@ class TestSolveEndpoint:
         """Health endpoint returns ok."""
         response = client.get("/health")
         assert response.status_code == 200
-        assert response.json() == {"status": "ok"}
+        data = response.json()
+        assert data["status"] == "ok"
+        assert "scipy_available" in data
 
     def test_accepts_empty_auction(self, client):
         """Endpoint accepts an auction with no orders."""

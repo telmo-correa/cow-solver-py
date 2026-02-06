@@ -11,7 +11,7 @@ to maximize matched volume while maintaining EBBO compliance.
 from __future__ import annotations
 
 from collections import defaultdict
-from decimal import ROUND_HALF_UP, Decimal
+from decimal import ROUND_DOWN, Decimal
 from fractions import Fraction
 from typing import TYPE_CHECKING
 
@@ -160,13 +160,14 @@ class MultiPairCowStrategy(AMMBackedStrategy):
         priced_tokens = set(all_prices.keys())
         remaining_orders = [o for o in auction.orders if o.uid not in processed_uids]
         if remaining_orders and self.max_tokens >= 3:
-            cycle_fills = self._solve_cycles(
+            cycle_fills, cycle_prices = self._solve_cycles(
                 remaining_orders, router, auction, processed_uids, priced_tokens
             )
             for fill in cycle_fills:
                 if fill.order.uid not in processed_uids:
                     all_fills.append(fill)
                     processed_uids.add(fill.order.uid)
+            all_prices.update(cycle_prices)
             logger.debug("multi_pair_phase2_complete", cycle_fills=len(cycle_fills))
 
         if not all_fills:
@@ -336,7 +337,7 @@ class MultiPairCowStrategy(AMMBackedStrategy):
         auction: AuctionInstance,
         already_matched: set[str],
         priced_tokens: set[str] | None = None,
-    ) -> list[OrderFill]:
+    ) -> tuple[list[OrderFill], dict[str, str]]:
         """Find and solve cycles in the order graph.
 
         Args:
@@ -347,6 +348,10 @@ class MultiPairCowStrategy(AMMBackedStrategy):
             priced_tokens: Tokens that already have prices from Phase 1.
                 If provided, cycles containing any of these tokens are skipped
                 to avoid price conflicts.
+
+        Returns:
+            Tuple of (fills, clearing_prices) where clearing_prices maps
+            token address to price string for all cycle tokens.
         """
         graph = OrderGraph.from_orders(orders)
 
@@ -357,9 +362,10 @@ class MultiPairCowStrategy(AMMBackedStrategy):
             cycles.extend(graph.find_4_cycles(limit=50))
 
         if not cycles:
-            return []
+            return [], {}
 
         all_fills: list[OrderFill] = []
+        all_cycle_prices: dict[str, str] = {}
         matched_uids: set[str] = set(already_matched)
 
         for cycle_tokens in cycles:
@@ -391,7 +397,11 @@ class MultiPairCowStrategy(AMMBackedStrategy):
                     all_fills.append(fill)
                     matched_uids.add(fill.order.uid)
 
-        return all_fills
+            # Collect clearing prices from this cycle
+            for token, price in settlement.clearing_prices.items():
+                all_cycle_prices[token] = str(price)
+
+        return all_fills, all_cycle_prices
 
     def _get_cycle_orders(
         self,
@@ -423,12 +433,16 @@ class MultiPairCowStrategy(AMMBackedStrategy):
                         valid = False
                         break
 
-                    # Use Fraction for exact rational comparison (no float precision loss)
+                    # Prefer partially-fillable orders (less likely to cause FOK violations)
+                    # then cheapest rate using Fraction for exact comparison
                     best = min(
                         available,
-                        key=lambda o: Fraction(o.buy_amount_int, o.sell_amount_int)
-                        if o.sell_amount_int > 0
-                        else Fraction(10**100, 1),
+                        key=lambda o: (
+                            0 if o.partially_fillable else 1,
+                            Fraction(o.buy_amount_int, o.sell_amount_int)
+                            if o.sell_amount_int > 0
+                            else Fraction(10**100, 1),
+                        ),
                     )
                     cycle_orders.append(best)
 
@@ -485,7 +499,8 @@ class MultiPairCowStrategy(AMMBackedStrategy):
                 )
                 continue
             # Convert Decimal to int string (prices are already raw token amounts)
-            rounded_price = price.quantize(Decimal("1"), rounding=ROUND_HALF_UP)
+            # ROUND_DOWN is conservative — never promises users more tokens than available
+            rounded_price = price.quantize(Decimal("1"), rounding=ROUND_DOWN)
             all_prices[token] = str(int(rounded_price))
 
     def _build_result(
@@ -525,7 +540,12 @@ class MultiPairCowStrategy(AMMBackedStrategy):
         )
 
     def _normalize_prices(self, fills: list[OrderFill]) -> dict[str, str]:
-        """Normalize prices to maintain token conservation."""
+        """Normalize prices to maintain token conservation.
+
+        Fallback when Decimal prices aren't available. Uses max(sells, buys)
+        which is intentionally conservative: over-pricing tokens avoids
+        under-delivery to users.
+        """
         token_sells: dict[str, int] = defaultdict(int)
         token_buys: dict[str, int] = defaultdict(int)
 

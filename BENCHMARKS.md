@@ -523,7 +523,6 @@ Benchmarked on 50 consecutive auctions (280,920 total orders):
 | Strategy | Orders Matched | Match Rate | Avg Time/Auction | EBBO Compliance |
 |----------|---------------|------------|------------------|-----------------|
 | **MultiPairCow** | 518 | 0.18% | ~61ms | 100% |
-| **CowMatch** | 0 | 0.00% | ~4ms | N/A |
 
 All matched orders pass EBBO validation (clearing price >= AMM reference price).
 
@@ -532,6 +531,8 @@ All matched orders pass EBBO validation (clearing price >= AMM reference price).
 - Fills per auction: 9-16 (avg ~10.4)
 - Cycles with price conflicts are skipped to maintain constraint compliance
 - Performance improved ~20% with Cython-optimized Balancer fixed-point math
+- CowMatch (2-order shortcut) is retained but removed from the default strategy chain since MultiPairCow subsumes it
+- **Production chain:** MultiPairCow → AmmRouting (1023 tests passing)
 
 ### Running Historical Benchmarks
 

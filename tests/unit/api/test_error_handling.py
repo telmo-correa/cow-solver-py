@@ -315,8 +315,8 @@ class TestMalformedJson:
 class TestValidEdgeCases:
     """Tests for edge cases that should be accepted."""
 
-    def test_accepts_zero_sell_amount(self, client):
-        """Zero sell amount is accepted (validation at solve time)."""
+    def test_rejects_zero_sell_amount(self, client):
+        """Zero sell amount is rejected at input validation."""
         auction = {
             "id": "test",
             "orders": [
@@ -324,7 +324,7 @@ class TestValidEdgeCases:
                     "uid": "0x" + "01" * 56,
                     "sellToken": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
                     "buyToken": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
-                    "sellAmount": "0",  # Zero is valid uint256
+                    "sellAmount": "0",
                     "buyAmount": "2000000000",
                     "kind": "sell",
                     "class": "limit",
@@ -334,8 +334,7 @@ class TestValidEdgeCases:
 
         response = client.post("/staging/mainnet", json=auction)
 
-        # Request accepted, but solver may return empty (business logic)
-        assert response.status_code == 200
+        assert response.status_code == 422
 
     def test_accepts_very_large_amounts(self, client):
         """Very large amounts are accepted if valid uint256."""

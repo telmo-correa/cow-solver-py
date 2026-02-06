@@ -8,8 +8,12 @@ liquidity sources. Unlike AMM pools, they have a fixed exchange rate
 from dataclasses import dataclass
 from typing import Any
 
+import structlog
+
 from solver.constants import GAS_PER_ZEROEX_ORDER
 from solver.models.types import normalize_address
+
+logger = structlog.get_logger()
 
 
 @dataclass(frozen=True)
@@ -43,6 +47,13 @@ class LimitOrderPool:
     taker_amount: int
     taker_token_fee_amount: int
     gas_estimate: int
+
+    def __post_init__(self) -> None:
+        """Validate amounts are positive."""
+        if self.taker_amount <= 0:
+            raise ValueError(f"taker_amount must be positive, got {self.taker_amount}")
+        if self.maker_amount <= 0:
+            raise ValueError(f"maker_amount must be positive, got {self.maker_amount}")
 
     @property
     def token0(self) -> str:
@@ -117,7 +128,8 @@ def parse_limit_order(liquidity: Any) -> LimitOrderPool | None:
                 taker_token_fee_amount=int(liquidity.get("takerTokenFeeAmount", "0")),
                 gas_estimate=int(liquidity.get("gasEstimate", str(GAS_PER_ZEROEX_ORDER))),
             )
-    except (KeyError, ValueError, TypeError, AttributeError):
+    except (KeyError, ValueError, TypeError, AttributeError) as e:
+        logger.debug("parse_limit_order_failed", error=str(e))
         return None
 
 

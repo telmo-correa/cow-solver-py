@@ -23,6 +23,7 @@ No tolerance/epsilon comparisons are allowed. Price ratios are represented as
 from __future__ import annotations
 
 from decimal import ROUND_DOWN, ROUND_UP, Decimal
+from functools import cmp_to_key
 
 import structlog
 
@@ -88,12 +89,26 @@ def _midpoint_price(p1: PriceRatio, p2: PriceRatio) -> PriceRatio:
 def _price_ratio_sort_key(ratio: PriceRatio) -> int:
     """Convert price ratio to integer sort key for list sorting.
 
-    Uses 10^18 scaling which is sufficient for token amounts (max 18 decimals).
+    DEPRECATED: Use _price_ratio_cmp_key instead. This 10^18 scaling can lose
+    precision for ratios differing by less than 1 part in 10^18.
+    Kept for backward compatibility.
     """
     num, denom = ratio
     if denom <= 0:
         return 0
     return num * 10**18 // denom
+
+
+def _price_ratio_cmp_key(ratio: PriceRatio) -> cmp_to_key:
+    """Sort key using exact integer comparison via cmp_to_key(_compare_prices).
+
+    This avoids precision loss from 10^18 scaling by using cross-multiplication.
+    """
+    return ratio  # The actual comparison is done by _compare_prices via cmp_to_key
+
+
+# Exact sort key for price ratios - uses integer cross-multiplication
+_exact_price_key = cmp_to_key(lambda a, b: _compare_prices(a, b))
 
 
 def get_limit_price_ratio(order: Order, is_selling_a: bool) -> PriceRatio | None:
@@ -228,8 +243,9 @@ def _execute_matches_at_price(
                 continue
 
             # Would bid be partially filled?
-            # bid_fill_amount = match_a * price_num / price_denom (floor)
-            bid_fill_amount = (S(match_a) * S(price_num)) // S(price_denom)
+            # bid_fill_amount = match_a * price_num / price_denom (ceiling)
+            # Use ceiling to match the match_b calculation below
+            bid_fill_amount = (S(match_a) * S(price_num) + S(price_denom) - S(1)) // S(price_denom)
             if bid_fill_amount.value < bid_remaining_amount and not bid_order.partially_fillable:
                 # This bid can't be partially filled, skip to next ask
                 ask_idx += 1
@@ -237,8 +253,10 @@ def _execute_matches_at_price(
 
         # Calculate B amount for this match at uniform clearing price
         # match_b = match_a * price_num / price_denom
-        # Use floor division (conservative for buyer, but we'll verify seller limit)
-        match_b = (S(match_a) * S(price_num)) // S(price_denom)
+        # Use ceiling division to ensure seller limit is satisfied (seller receives
+        # at least the clearing rate). This matches hybrid.py:309.
+        # ceil(a*b/c) = (a*b + c - 1) // c
+        match_b = (S(match_a) * S(price_num) + S(price_denom) - S(1)) // S(price_denom)
 
         if match_b.value <= 0:
             bid_idx += 1
@@ -362,8 +380,8 @@ def run_double_auction(
     # Separate valid and invalid orders
     asks: list[tuple[Order, PriceRatio, int]] = [(o, p, a) for o, p, a in asks_raw if p is not None]
     invalid_asks = [(o, a) for o, p, a in asks_raw if p is None]
-    # Sort by price ratio ascending (cheapest first)
-    asks.sort(key=lambda x: _price_ratio_sort_key(x[1]))
+    # Sort by price ratio ascending (cheapest first) using exact comparison
+    asks.sort(key=lambda x: _exact_price_key(x[1]))
 
     # Sellers of B: sorted descending (highest bidders first)
     bids_raw = [
@@ -373,8 +391,8 @@ def run_double_auction(
     # Separate valid and invalid orders
     bids: list[tuple[Order, PriceRatio, int]] = [(o, p, a) for o, p, a in bids_raw if p is not None]
     invalid_bids = [(o, a) for o, p, a in bids_raw if p is None]
-    # Sort by price ratio descending (highest bidders first)
-    bids.sort(key=lambda x: _price_ratio_sort_key(x[1]), reverse=True)
+    # Sort by price ratio descending (highest bidders first) using exact comparison
+    bids.sort(key=lambda x: _exact_price_key(x[1]), reverse=True)
 
     # Log invalid orders (zero/negative amounts)
     if invalid_asks or invalid_bids:
@@ -737,5 +755,6 @@ __all__ = [
     "calculate_surplus",
     "PriceRatio",
     "_price_ratio_sort_key",
+    "_exact_price_key",
     "_price_ratio_to_decimal",
 ]

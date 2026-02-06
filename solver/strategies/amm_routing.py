@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
 
 import structlog
 
@@ -17,9 +16,6 @@ from solver.pools import PoolRegistry, build_registry_from_liquidity
 from solver.routing.router import RoutingResult
 from solver.strategies.base import OrderFill, StrategyResult
 from solver.strategies.base_amm import AMMBackedStrategy
-
-if TYPE_CHECKING:
-    pass
 
 logger = structlog.get_logger()
 
@@ -272,6 +268,17 @@ class AmmRoutingStrategy(AMMBackedStrategy):
         else:
             new_reserve0 = pool.reserve0 - amount_out
             new_reserve1 = pool.reserve1 + amount_in
+
+        if new_reserve0 < 0 or new_reserve1 < 0:
+            logger.warning(
+                "pool_reserve_would_go_negative",
+                pool=pool.address[-8:],
+                new_reserve0=new_reserve0,
+                new_reserve1=new_reserve1,
+                amount_in=amount_in,
+                amount_out=amount_out,
+            )
+            return pool  # Return original unchanged
 
         logger.debug(
             "pool_reserves_updated",

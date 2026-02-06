@@ -24,30 +24,8 @@ from solver.models.auction import AuctionInstance, Order
 from solver.models.order_groups import OrderGroup
 from solver.models.types import normalize_address
 from solver.strategies.base import OrderFill, convert_fill_ratios_to_fills
+from solver.strategies.decimal_utils import DECIMAL_HIGH_PREC_CONTEXT, decimal_ge, decimal_le
 from solver.strategies.double_auction import get_limit_price
-
-# Use context with high precision for Decimal operations to ensure exactness
-_DECIMAL_HIGH_PREC_CONTEXT = decimal.Context(prec=78)  # Enough for 10^77
-
-
-def _decimal_ge(a: Decimal, b: Decimal) -> bool:
-    """Compare a >= b with high precision for exactness.
-
-    Uses a high-precision Decimal context to ensure comparison
-    is accurate even for very large values.
-    """
-    # Subtract with high precision and check sign
-    with decimal.localcontext(_DECIMAL_HIGH_PREC_CONTEXT):
-        diff = a - b
-        return diff >= 0
-
-
-def _decimal_le(a: Decimal, b: Decimal) -> bool:
-    """Compare a <= b with high precision for exactness."""
-    with decimal.localcontext(_DECIMAL_HIGH_PREC_CONTEXT):
-        diff = a - b
-        return diff <= 0
-
 
 if TYPE_CHECKING:
     from solver.routing.router import SingleOrderRouter
@@ -182,7 +160,7 @@ def build_price_candidates_from_orders(
 
         if sell_amt > 0 and buy_amt > 0:
             # Use high-precision context for exact division
-            with decimal.localcontext(_DECIMAL_HIGH_PREC_CONTEXT):
+            with decimal.localcontext(DECIMAL_HIGH_PREC_CONTEXT):
                 limit_price = Decimal(buy_amt) / Decimal(sell_amt)
             candidates.add_ratio(sell_token, buy_token, limit_price)
 
@@ -237,7 +215,7 @@ def enumerate_price_combinations(
             reverse_ratios = candidates.get_ratios(child, parent)
             if reverse_ratios:
                 # Invert ratios using high-precision context for exact arithmetic
-                with decimal.localcontext(_DECIMAL_HIGH_PREC_CONTEXT):
+                with decimal.localcontext(DECIMAL_HIGH_PREC_CONTEXT):
                     ratios = [Decimal(1) / r for r in reverse_ratios if r > 0]
 
         if not ratios:
@@ -355,17 +333,17 @@ def solve_fills_at_prices(
 
         # Current price ratio B/A at given prices
         # Use high-precision context for exact division
-        with decimal.localcontext(_DECIMAL_HIGH_PREC_CONTEXT):
+        with decimal.localcontext(DECIMAL_HIGH_PREC_CONTEXT):
             current_ratio = price_b / price_a
 
         # Check if order's limit is satisfied using integer comparison
         # Sellers of A want at least `limit` B per A -> current_ratio >= limit
         # Sellers of B want to pay at most `limit` B per A -> current_ratio <= limit
         if is_selling_a:
-            if _decimal_ge(current_ratio, limit):
+            if decimal_ge(current_ratio, limit):
                 eligible_orders.append((order, is_selling_a, token_a, token_b, limit))
         else:
-            if _decimal_le(current_ratio, limit):
+            if decimal_le(current_ratio, limit):
                 eligible_orders.append((order, is_selling_a, token_a, token_b, limit))
 
     if not eligible_orders:
@@ -537,7 +515,7 @@ def solve_fills_at_prices_v2(
             continue
 
         # Use high-precision context for exact division
-        with decimal.localcontext(_DECIMAL_HIGH_PREC_CONTEXT):
+        with decimal.localcontext(DECIMAL_HIGH_PREC_CONTEXT):
             limit_price = Decimal(buy_amt) / Decimal(sell_amt)
 
         # Get prices for both tokens
@@ -548,11 +526,16 @@ def solve_fills_at_prices_v2(
 
         # Current price ratio: buy_token/sell_token at given prices
         # Use high-precision context for exact division
-        with decimal.localcontext(_DECIMAL_HIGH_PREC_CONTEXT):
+        with decimal.localcontext(DECIMAL_HIGH_PREC_CONTEXT):
             current_ratio = price_buy / price_sell
 
-        # Check if order's limit is satisfied (gets at least limit price)
-        if _decimal_ge(current_ratio, limit_price):
+        # Check if order's limit is satisfied (gets at least limit price).
+        # This check works for both sell and buy orders: current_ratio is
+        # price_buy/price_sell, and limit_price is buy_amount/sell_amount.
+        # For sellers: they need current_ratio >= limit_price (get enough output).
+        # For buyers: same check — if the clearing rate exceeds the limit price,
+        # the buyer pays no more than their limit per unit received.
+        if decimal_ge(current_ratio, limit_price):
             eligible_orders.append((order, limit_price))
 
     if not eligible_orders:

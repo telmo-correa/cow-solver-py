@@ -71,9 +71,11 @@ class EBBOPrices:
         if isinstance(ebbo_prices, dict):
             for sell_token, buy_prices in ebbo_prices.items():
                 if isinstance(buy_prices, dict):
-                    prices[str(sell_token)] = {}
+                    sell_key = normalize_address(str(sell_token))
+                    prices[sell_key] = {}
                     for buy_token, price_str in buy_prices.items():
-                        prices[str(sell_token)][str(buy_token)] = Decimal(str(price_str))
+                        buy_key = normalize_address(str(buy_token))
+                        prices[sell_key][buy_key] = Decimal(str(price_str))
         auction_id = data.get("auction_id", "")
         return cls(auction_id=str(auction_id) if auction_id else "", prices=prices)
 
@@ -261,9 +263,13 @@ class EBBOValidator:
         if self.router is not None and auction is not None:
             token_info = auction.tokens.get(sell_token)
             decimals = token_info.decimals if token_info and token_info.decimals else 18
-            return self.router.get_reference_price_ratio(
-                sell_token, buy_token, token_in_decimals=decimals
-            )
+            try:
+                return self.router.get_reference_price_ratio(
+                    sell_token, buy_token, token_in_decimals=decimals
+                )
+            except AttributeError:
+                # Router doesn't have get_reference_price_ratio method
+                pass
 
         return None
 

@@ -20,7 +20,13 @@ if TYPE_CHECKING:
 from solver.amm.uniswap_v2 import UniswapV2
 from solver.ebbo import EBBO_TOLERANCE, EBBOPrices, EBBOValidator
 from solver.models.auction import AuctionInstance, Order
-from solver.models.solution import Interaction, Solution, SolverResponse
+from solver.models.solution import (
+    CustomInteraction,
+    Interaction,
+    LiquidityInteraction,
+    Solution,
+    SolverResponse,
+)
 from solver.models.types import normalize_address
 from solver.routing.router import SingleOrderRouter
 
@@ -264,7 +270,6 @@ class Solver:
         Returns:
             List of solutions, one per fill
         """
-        from solver.models.types import normalize_address
         from solver.strategies.base import StrategyResult
 
         solutions: list[Solution] = []
@@ -273,7 +278,7 @@ class Solver:
         # Key: (input_token, output_token) -> list of (index, interaction)
         interaction_index: dict[tuple[str, str], list[tuple[int, Interaction]]] = {}
         for j, interaction in enumerate(result.interactions):
-            if hasattr(interaction, "input_token") and hasattr(interaction, "output_token"):
+            if isinstance(interaction, LiquidityInteraction):
                 key = (
                     normalize_address(interaction.input_token),
                     normalize_address(interaction.output_token),
@@ -444,13 +449,43 @@ class Solver:
             )
 
         # Rebuild the result with valid fills only
-        # Keep only interactions that correspond to valid fills
+        # Keep only interactions that correspond to valid fills' token pairs
         valid_orders = {f.order.uid for f in valid_fills}
+        valid_token_pairs = {
+            (normalize_address(f.order.sell_token), normalize_address(f.order.buy_token))
+            for f in valid_fills
+        }
         valid_interactions = []
         for interaction in result.interactions:
-            # For AMM interactions, we keep all since they may be shared
-            # For CoW matches, there are no interactions
-            valid_interactions.append(interaction)
+            if isinstance(interaction, LiquidityInteraction):
+                pair = (
+                    normalize_address(interaction.input_token),
+                    normalize_address(interaction.output_token),
+                )
+                if pair in valid_token_pairs:
+                    valid_interactions.append(interaction)
+                else:
+                    logger.debug(
+                        "ebbo_dropped_interaction",
+                        input_token=interaction.input_token[-8:],
+                        output_token=interaction.output_token[-8:],
+                        reason="no valid fill for this token pair",
+                    )
+            elif isinstance(interaction, CustomInteraction):
+                interaction_tokens = {normalize_address(t.token) for t in interaction.inputs} | {
+                    normalize_address(t.token) for t in interaction.outputs
+                }
+                pair_tokens = {t for pair in valid_token_pairs for t in pair}
+                if interaction_tokens & pair_tokens:
+                    valid_interactions.append(interaction)
+                else:
+                    logger.debug(
+                        "ebbo_dropped_custom_interaction",
+                        reason="no token overlap with valid fills",
+                    )
+            else:
+                # Unknown interaction type - keep it to be safe
+                valid_interactions.append(interaction)
 
         # Recalculate remainder orders - add rejected orders back
         rejected_orders = [f.order for f in result.fills if f.order.uid not in valid_orders]
@@ -492,9 +527,12 @@ def _create_default_solver() -> Solver:
     rpc_url = os.environ.get("RPC_URL")
     if rpc_url:
         # V3 support enabled
+        from urllib.parse import urlparse
+
         from solver.amm.uniswap_v3 import UniswapV3AMM, Web3UniswapV3Quoter
 
-        logger.info("v3_support_enabled", rpc_url=rpc_url[:50] + "...")
+        parsed = urlparse(rpc_url)
+        logger.info("v3_support_enabled", rpc_host=parsed.hostname)
         quoter = Web3UniswapV3Quoter(rpc_url)
         v3_amm = UniswapV3AMM(quoter=quoter)
         return Solver(
@@ -512,4 +550,19 @@ def _create_default_solver() -> Solver:
         )
 
 
-solver = _create_default_solver()
+_default_solver: Solver | None = None
+
+
+def get_default_solver() -> Solver:
+    """Get or create the default solver instance (lazy singleton).
+
+    The solver is created on first access rather than at import time,
+    avoiding side effects during module import.
+
+    Returns:
+        The shared default Solver instance
+    """
+    global _default_solver
+    if _default_solver is None:
+        _default_solver = _create_default_solver()
+    return _default_solver

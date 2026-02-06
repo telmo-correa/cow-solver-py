@@ -23,26 +23,20 @@ class TestRouterErrorHandling:
         with pytest.raises(ValidationError, match="Uint256 must be a decimal integer"):
             make_order(buy_amount="invalid")
 
-    def test_zero_sell_amount(self, router):
-        """Zero sell amount returns failure."""
-        order = make_order(sell_amount="0")
-        result = router.route_order(order)
-
-        assert result.success is False
-        assert "Sell amount must be positive" in result.error
+    def test_zero_sell_amount(self):
+        """Zero sell amount is rejected at Pydantic validation."""
+        with pytest.raises(ValidationError, match="Amount must be non-zero"):
+            make_order(sell_amount="0")
 
     def test_negative_sell_amount(self):
         """Negative sell amount is rejected at Pydantic validation."""
         with pytest.raises(ValidationError, match="Uint256 cannot be negative"):
             make_order(sell_amount="-1000")
 
-    def test_zero_buy_amount(self, router):
-        """Zero buy amount returns failure."""
-        order = make_order(buy_amount="0")
-        result = router.route_order(order)
-
-        assert result.success is False
-        assert "Buy amount must be positive" in result.error
+    def test_zero_buy_amount(self):
+        """Zero buy amount is rejected at Pydantic validation."""
+        with pytest.raises(ValidationError, match="Amount must be non-zero"):
+            make_order(buy_amount="0")
 
     def test_negative_buy_amount(self):
         """Negative buy amount is rejected at Pydantic validation."""
@@ -162,10 +156,15 @@ class TestBuildSolution:
 
     def test_build_solution_returns_none_for_failed_routing(self, router):
         """build_solution returns None when routing failed."""
-        order = make_order(sell_amount="0")  # Will fail
-        routing_result = router.route_order(order)
+        # Create a valid order but simulate a failed routing result
+        order = make_order(sell_amount="1")
+        from solver.routing.types import RoutingResult
 
-        solution = router.build_solution(routing_result)
+        failed_result = RoutingResult(
+            order=order, amount_in=0, amount_out=0, pool=None, success=False, error="test failure"
+        )
+
+        solution = router.build_solution(failed_result)
         assert solution is None
 
     def test_build_solution_normalizes_addresses(self, router):

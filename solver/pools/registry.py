@@ -15,17 +15,20 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+import structlog
+
 from solver.amm.balancer import BalancerStablePool, BalancerWeightedPool
 from solver.amm.uniswap_v2 import UniswapV2Pool
 from solver.amm.uniswap_v3 import UniswapV3Pool
 from solver.models.types import normalize_address
 from solver.pools.limit_order import LimitOrderPool
+from solver.pools.types import AnyPool
+
+logger = structlog.get_logger()
 
 if TYPE_CHECKING:
     from solver.models.auction import Liquidity
     from solver.routing.pathfinding import PathFinder
-
-from .types import AnyPool
 
 
 class PoolRegistry:
@@ -121,6 +124,13 @@ class PoolRegistry:
         token0_norm = normalize_address(pool.token0)
         token1_norm = normalize_address(pool.token1)
         pair_key = frozenset([token0_norm, token1_norm])
+        if pair_key in self._pools:
+            logger.debug(
+                "v2_pool_replaced",
+                pool=pool.address[-8:],
+                token0=token0_norm[-8:],
+                token1=token1_norm[-8:],
+            )
         self._pools[pair_key] = pool
         self._invalidate_pathfinder()
 
@@ -468,6 +478,41 @@ class PoolRegistry:
 
             pools.append(selected_pool)
         return pools
+
+    def get_all_token_pairs(self) -> set[tuple[str, str]]:
+        """Get all unique token pairs with available liquidity.
+
+        Returns bidirectional pairs for AMM pools and unidirectional pairs
+        for limit orders. Each pair is (token_a, token_b) with canonical
+        ordering (token_a < token_b) for bidirectional pools.
+
+        Returns:
+            Set of (token_a, token_b) tuples representing tradeable pairs
+        """
+        pairs: set[tuple[str, str]] = set()
+
+        # V2 pools (bidirectional, canonical ordering)
+        for token_pair in self._pools:
+            tokens = sorted(token_pair)
+            pairs.add((tokens[0], tokens[1]))
+
+        # V3 pools (bidirectional, already canonical)
+        for token_a, token_b, _fee in self._v3_pools:
+            pairs.add((token_a, token_b))
+
+        # Weighted pools (bidirectional, already canonical)
+        for pair in self._weighted_pools:
+            pairs.add(pair)
+
+        # Stable pools (bidirectional, already canonical)
+        for pair in self._stable_pools:
+            pairs.add(pair)
+
+        # Limit orders (unidirectional: taker -> maker)
+        for pair in self._limit_orders:
+            pairs.add(pair)
+
+        return pairs
 
     @property
     def pool_count(self) -> int:

@@ -5,7 +5,8 @@ from unittest.mock import MagicMock
 
 from solver.ebbo import EBBOValidator, EBBOViolation
 from solver.models.auction import AuctionInstance, Order, OrderClass, OrderKind, Token
-from solver.solver import Solver
+from solver.models.solution import LiquidityInteraction
+from solver.solver import Solver, get_default_solver
 from solver.strategies.base import OrderFill, StrategyResult
 
 
@@ -499,3 +500,150 @@ class TestSolverEBBOFiltering:
 
         # Should have one solution (no validator to filter)
         assert len(response.solutions) == 1
+
+
+class TestSolverEBBOInteractionFiltering:
+    """C1: EBBO filter should only keep interactions for valid fills."""
+
+    def test_rejected_fill_drops_its_interaction(self):
+        """When a fill is rejected by EBBO, its interaction should also be dropped."""
+        # Use valid checksum addresses
+        token_a = "0xaAaAaAaaAaAaAaaAaAAAAAAAAaaaAaAaAaaAaaAa"
+        token_b = "0xbBbBBBBbbBBBbbbBbbBbbbbBBbBbbbbBbBbbBBbB"
+        token_c = "0xCcCCccccCCCCcCCCCCCcCcCccCcCCCcCcccccccC"
+        token_d = "0xdDdDDDDDDdDdDdDDddDDDDddDDDddDDdDdDDDDDd"
+
+        order1 = make_order(
+            uid="0x" + "01" * 56,
+            sell_token=token_a,
+            buy_token=token_b,
+        )
+        order2 = make_order(
+            uid="0x" + "02" * 56,
+            sell_token=token_c,
+            buy_token=token_d,
+        )
+
+        fill1 = OrderFill(order1, sell_filled=1000, buy_filled=2000)
+        fill2 = OrderFill(order2, sell_filled=3000, buy_filled=4000)
+
+        # Create interactions for both fills
+        interaction1 = LiquidityInteraction(
+            kind="liquidity",
+            id="pool1",
+            input_token=token_a,
+            output_token=token_b,
+            input_amount="1000",
+            output_amount="2000",
+        )
+        interaction2 = LiquidityInteraction(
+            kind="liquidity",
+            id="pool2",
+            input_token=token_c,
+            output_token=token_d,
+            input_amount="3000",
+            output_amount="4000",
+        )
+
+        result = StrategyResult(
+            fills=[fill1, fill2],
+            interactions=[interaction1, interaction2],
+            prices={
+                token_a.lower(): "2000",
+                token_b.lower(): "1000",
+                token_c.lower(): "4000",
+                token_d.lower(): "3000",
+            },
+            gas=0,
+            remainder_orders=[],
+        )
+
+        # Reject order1 only
+        def check_prices(_prices, orders, _auction):
+            if orders[0].uid == order1.uid:
+                return [
+                    EBBOViolation(
+                        sell_token=order1.sell_token,
+                        buy_token=order1.buy_token,
+                        clearing_rate=Decimal("0.5"),
+                        ebbo_rate=Decimal("1.0"),
+                        deficit_pct=50.0,
+                    )
+                ]
+            return []
+
+        mock_validator = MagicMock(spec=EBBOValidator)
+        mock_validator.check_clearing_prices.side_effect = check_prices
+
+        mock_strategy = MockStrategy(result=result)
+        solver = Solver(strategies=[mock_strategy])
+        solver.ebbo_validator = mock_validator
+
+        auction = make_auction([order1, order2])
+        response = solver.solve(auction)
+
+        # Only fill2 should survive
+        assert len(response.solutions) == 1
+        # The interaction for order1 should be dropped
+        solution = response.solutions[0]
+        for interaction in solution.interactions:
+            if hasattr(interaction, "input_token"):
+                # Should not have the rejected fill's interaction tokens
+                assert interaction.input_token.lower() != order1.sell_token.lower()
+
+    def test_cow_match_no_interactions_unaffected(self):
+        """CoW matches with no interactions should work fine through EBBO filter."""
+        order1 = make_order(
+            uid="0x" + "01" * 56,
+            sell_token="0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            buy_token="0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        )
+        order2 = make_order(
+            uid="0x" + "02" * 56,
+            sell_token="0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            buy_token="0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        )
+
+        fill1 = OrderFill(order1, sell_filled=1000, buy_filled=2000)
+        fill2 = OrderFill(order2, sell_filled=2000, buy_filled=1000)
+
+        result = StrategyResult(
+            fills=[fill1, fill2],
+            interactions=[],  # CoW match - no interactions
+            prices={
+                "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": "2000",
+                "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": "1000",
+            },
+            gas=0,
+            remainder_orders=[],
+        )
+
+        # All fills pass EBBO
+        mock_validator = MagicMock(spec=EBBOValidator)
+        mock_validator.check_clearing_prices.return_value = []
+
+        mock_strategy = MockStrategy(result=result)
+        solver = Solver(strategies=[mock_strategy])
+        solver.ebbo_validator = mock_validator
+
+        auction = make_auction([order1, order2])
+        response = solver.solve(auction)
+
+        assert len(response.solutions) == 1
+        assert len(response.solutions[0].trades) == 2
+        assert len(response.solutions[0].interactions) == 0
+
+
+class TestLazySingleton:
+    """H11: Lazy singleton for default solver."""
+
+    def test_get_default_solver_returns_solver(self):
+        """get_default_solver returns a Solver instance."""
+        solver = get_default_solver()
+        assert isinstance(solver, Solver)
+
+    def test_get_default_solver_returns_same_instance(self):
+        """get_default_solver returns the same instance on repeated calls."""
+        solver1 = get_default_solver()
+        solver2 = get_default_solver()
+        assert solver1 is solver2

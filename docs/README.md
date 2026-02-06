@@ -17,7 +17,7 @@ docs/
 
 ## Quick Links
 
-### Current Phase: Phase 4 (Unified Optimization)
+### Current Phase: Phase 4 Complete + Code Review Remediation
 
 - [Slice 4.1 Problem Formulation](design/phase4-slice4.1-problem-formulation.md) - Formal optimization problem definition
 - [Slice 4.3 Evaluation Results](evaluations/slice-4.3-evaluation-results.md) - Hybrid CoW+AMM evaluation
@@ -47,14 +47,20 @@ docs/
 
 | Document | Description |
 |----------|-------------|
-| [2026-01-23 Architecture Review](reviews/2026-01-23-architecture.md) | Uint256 validation, Balancer overflow, API hardening |
+| [2026-02-06 Review Summary](reviews/2026-02-06-summary.md) | Full codebase review: 93 issues, 46 fixed, 42 deferred |
+| [2026-02-06 Core Solver Logic](reviews/2026-02-06-core-solver-logic.md) | Solver, strategies, EBBO, settlement (21 issues) |
+| [2026-02-06 AMM Math](reviews/2026-02-06-amm-math.md) | AMM formulas, fixed-point arithmetic, SafeInt (10 issues) |
+| [2026-02-06 API & Infrastructure](reviews/2026-02-06-api-models-infrastructure.md) | API, models, pools, routing, fees (22 issues) |
+| [2026-02-06 Test Coverage](reviews/2026-02-06-test-coverage.md) | Coverage gaps, missing tests, weak assertions (22 issues) |
+| [2026-02-06 Architecture](reviews/2026-02-06-architecture.md) | Design patterns, dependencies, performance (18 issues) |
 
 ### Session Logs
 
 See [sessions/README.md](sessions/README.md) for the full development history.
 
 **Recent:**
-- Sessions 43-47: Phase 4 (Slice 4.1-4.3)
+- Sessions 66-68: Code Review & Remediation (93 issues, 46 fixed)
+- Sessions 43-65: Phase 4 (Slices 4.1-4.6) + Refactoring + Constraint Enforcement
 - Sessions 38-42: Phase 3.5 (0x Limit Orders) + Pre-Phase 4
 - Sessions 25-37: Phase 3.2 (Balancer Integration)
 

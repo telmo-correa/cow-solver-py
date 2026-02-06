@@ -1,13 +1,15 @@
 """API endpoints for the CoW solver."""
 
+import asyncio
 import os
+from datetime import UTC, datetime
 
 import structlog
 from fastapi import APIRouter, Depends
 
 from solver.models.auction import AuctionInstance
 from solver.models.solution import SolverResponse
-from solver.solver import Solver, solver
+from solver.solver import Solver, get_default_solver
 
 logger = structlog.get_logger()
 
@@ -30,7 +32,7 @@ def get_solver() -> Solver:
     Returns:
         The solver instance to use for solving auctions.
     """
-    return solver
+    return get_default_solver()
 
 
 @router.post("/{environment}/{network}", response_model_exclude_none=True)
@@ -87,10 +89,40 @@ async def solve(
         )
         return SolverResponse.empty()
 
+    # Calculate timeout from auction deadline
+    timeout_seconds: float | None = None
+    if auction.deadline is not None:
+        now = datetime.now(UTC)
+        remaining = (auction.deadline - now).total_seconds()
+        if remaining <= 0:
+            logger.warning(
+                "auction_deadline_passed",
+                auction_id=auction.id,
+                deadline=str(auction.deadline),
+            )
+            return SolverResponse.empty()
+        # Leave 0.5s buffer for response serialization
+        timeout_seconds = max(remaining - 0.5, 0.1)
+
     # Use the solver to find solutions
     # Wrap in try-except to prevent uncaught exceptions from crashing the server
     try:
-        response = solver_instance.solve(auction)
+        loop = asyncio.get_event_loop()
+        if timeout_seconds is not None:
+            response = await asyncio.wait_for(
+                loop.run_in_executor(None, solver_instance.solve, auction),
+                timeout=timeout_seconds,
+            )
+        else:
+            response = await loop.run_in_executor(None, solver_instance.solve, auction)
+    except TimeoutError:
+        logger.warning(
+            "solver_timeout",
+            auction_id=auction.id,
+            timeout_seconds=timeout_seconds,
+            message="Solver exceeded deadline, returning empty solution",
+        )
+        return SolverResponse.empty()
     except Exception:
         # Log error with full traceback for debugging
         logger.exception(

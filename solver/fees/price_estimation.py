@@ -22,7 +22,7 @@ from solver.models.types import normalize_address
 
 if TYPE_CHECKING:
     from solver.models.auction import AuctionInstance, Token
-    from solver.pools import AnyPool, PoolRegistry
+    from solver.pools import AnyPool
     from solver.routing.router import SingleOrderRouter
 
 logger = structlog.get_logger()
@@ -255,7 +255,7 @@ class PoolBasedPriceEstimator:
         native_amount = 10**18  # Amount of native token to buy
 
         # Simulate exact output swap: how much token do we need to get 1e18 native?
-        input_amount = self._simulate_path_exact_output(pools, path, native_amount, registry)
+        input_amount = self._simulate_path_exact_output(pools, path, native_amount)
         if input_amount is None or input_amount == 0:
             # Fallback to forward simulation if exact output fails.
             # This uses a different formula and may produce different prices.
@@ -264,7 +264,7 @@ class PoolBasedPriceEstimator:
                 token=token[-8:],
                 native=native_token[-8:],
             )
-            output = self._simulate_path_output(pools, path, 10**18, registry)
+            output = self._simulate_path_output(pools, path, 10**18)
             if output is None or output == 0:
                 return None
             price = output
@@ -289,7 +289,6 @@ class PoolBasedPriceEstimator:
         pools: list[AnyPool],
         path: list[str],
         amount_in: int,
-        registry: PoolRegistry,
     ) -> int | None:
         """Simulate swap through path and return output amount.
 
@@ -297,7 +296,6 @@ class PoolBasedPriceEstimator:
             pools: List of pools in the path
             path: Token addresses in path order
             amount_in: Input amount
-            registry: Pool registry for the multihop router
 
         Returns:
             Output amount, or None if simulation fails
@@ -305,26 +303,15 @@ class PoolBasedPriceEstimator:
         if self._router is None:
             return None
 
-        # Use the router's multihop capability
-        from solver.routing.multihop import MultihopRouter
-
-        # Create a minimal multihop router for simulation
-        multihop = MultihopRouter(
-            v2_amm=self._router.amm,
-            v3_amm=self._router.v3_amm,
-            weighted_amm=self._router.weighted_amm,
-            stable_amm=self._router.stable_amm,
-            registry=registry,
-            handler_registry=self._router._handler_registry,
-        )
+        handler_registry = self._router._handler_registry
 
         # Simulate forward through path
         current_amount = amount_in
         for i, pool in enumerate(pools):
-            output = multihop._simulate_hop_output(pool, path[i], path[i + 1], current_amount)
-            if output is None or output == 0:
+            result = handler_registry.simulate_swap(pool, path[i], path[i + 1], current_amount)
+            if result is None or result.amount_out == 0:
                 return None
-            current_amount = output
+            current_amount = result.amount_out
 
         return current_amount
 
@@ -333,7 +320,6 @@ class PoolBasedPriceEstimator:
         pools: list[AnyPool],
         path: list[str],
         amount_out: int,
-        registry: PoolRegistry,
     ) -> int | None:
         """Simulate exact output swap through path and return required input amount.
 
@@ -344,7 +330,6 @@ class PoolBasedPriceEstimator:
             pools: List of pools in the path
             path: Token addresses in path order
             amount_out: Desired output amount
-            registry: Pool registry for the multihop router
 
         Returns:
             Required input amount, or None if simulation fails
@@ -352,18 +337,7 @@ class PoolBasedPriceEstimator:
         if self._router is None:
             return None
 
-        # Use the router's multihop capability
-        from solver.routing.multihop import MultihopRouter
-
-        # Create a minimal multihop router for simulation
-        multihop = MultihopRouter(
-            v2_amm=self._router.amm,
-            v3_amm=self._router.v3_amm,
-            weighted_amm=self._router.weighted_amm,
-            stable_amm=self._router.stable_amm,
-            registry=registry,
-            handler_registry=self._router._handler_registry,
-        )
+        handler_registry = self._router._handler_registry
 
         # Work backwards through path to find required input
         # Start with desired output and calculate required input at each step
@@ -373,16 +347,15 @@ class PoolBasedPriceEstimator:
             token_in = path[i]
             token_out = path[i + 1]
 
-            # Use exact output simulation
-            result = multihop._simulate_hop_exact_output_legacy(
+            # Use exact output simulation via handler registry
+            result = handler_registry.simulate_swap_exact_output(
                 pool, token_in, token_out, current_amount
             )
             if result is None:
                 return None
-            amount_in, _gas = result
-            if amount_in == 0:
+            if result.amount_in == 0:
                 return None
-            current_amount = amount_in
+            current_amount = result.amount_in
 
         return current_amount
 

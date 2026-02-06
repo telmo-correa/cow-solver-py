@@ -41,6 +41,11 @@ class UniswapV2Pool:
     # Gas estimate from auction data (default from POOL_SWAP_GAS_COST for backwards compat)
     gas_estimate: int = POOL_SWAP_GAS_COST
 
+    def __post_init__(self) -> None:
+        """Validate fee_bps is within valid range."""
+        if not (0 <= self.fee_bps < 10000):
+            raise ValueError(f"fee_bps must be in [0, 10000), got {self.fee_bps}")
+
     @property
     def fee_multiplier(self) -> int:
         """Fee multiplier for AMM math (10000 - fee_bps).
